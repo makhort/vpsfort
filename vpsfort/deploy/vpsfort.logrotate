@@ -1,0 +1,33 @@
+# /etc/logrotate.d/vpsfort - the daemon keeps actions.jsonl open (append mode),
+# so copytruncate rotates it without a restart.
+/var/log/vpsfort/actions.jsonl {
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+
+# Written once a day by vpsfort-avscan; vpsfort remembers what it already reported.
+/var/log/vpsfort/avscan.log {
+    monthly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+}
+
+# vpsfort's own messages under OpenRC (Alpine, deploy/alpine/vpsfort.initd); under systemd
+# the journal has them and this file doesn't exist.
+/var/log/vpsfort/daemon.log {
+    weekly
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

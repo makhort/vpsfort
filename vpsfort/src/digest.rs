@@ -1,0 +1,773 @@
+//! Daily digest for admins, and TLS certificate expiry checks.
+//!
+//! Certificates are checked against the live endpoints with the `openssl` CLI
+//! (`s_client`, with `-starttls xmpp` for client ports), so expiry of whatever is
+//! actually served is caught - including failed ACME renewals.
+
+use std::path::PathBuf;
+use std::process::Command;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+
+use crate::engine::{DigestData, Snapshot};
+use crate::time::{self, fmt_duration, fmt_ts, Dur, Micros, SEC};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DigestCfg {
+    pub enabled: bool,
+    /// Time of day (UTC) to send the digest, `HH:MM`.
+    pub at: String,
+    /// TLS endpoints to check: `host:port`, or `host:port/xmpp` (STARTTLS) etc.
+    pub certs: Vec<String>,
+    /// Certificate files on disk (`*` wildcards allowed in the file name), e.g. ejabberd's
+    /// `acme/live/*`. If one covering an endpoint's host expires later than the certificate
+    /// actually served there, you're told to point the server at it and reload.
+    pub cert_files: Vec<String>,
+    /// Alert (and highlight in the digest) when a certificate expires within this many days.
+    pub cert_warn_days: i64,
+    pub check_certs_every: Dur,
+    pub openssl: PathBuf,
+    /// Compare each endpoint's certificate with the TLSA records published for it (DANE):
+    /// a mismatch is a warning. Needs `dig`; without it nothing is checked.
+    pub dane: bool,
+    pub dig: PathBuf,
+}
+
+impl Default for DigestCfg {
+    fn default() -> Self {
+        DigestCfg {
+            enabled: false,
+            at: "07:00".into(),
+            certs: vec![],
+            cert_files: vec![],
+            cert_warn_days: 21,
+            check_certs_every: Dur(6 * 3600),
+            openssl: "/usr/bin/openssl".into(),
+            dane: true,
+            dig: "/usr/bin/dig".into(),
+        }
+    }
+}
+
+impl DigestCfg {
+    /// Minutes after midnight UTC.
+    pub fn minute_of_day(&self) -> Option<i64> {
+        let (h, m) = self.at.split_once(':')?;
+        let (h, m): (i64, i64) = (h.parse().ok()?, m.parse().ok()?);
+        ((0..24).contains(&h) && (0..60).contains(&m)).then_some(h * 60 + m)
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.enabled && self.minute_of_day().is_none() {
+            anyhow::bail!("[digest] at must be HH:MM (UTC), got '{}'", self.at);
+        }
+        if let Some(bad) = self.certs.iter().find(|c| c.split('/').next().is_none_or(|hp| hp.rsplit_once(':').is_none())) {
+            anyhow::bail!("[digest] cert endpoint '{bad}' must be host:port[/starttls-protocol]");
+        }
+        Ok(())
+    }
+
+    /// The most recent scheduled time at or before `now`.
+    pub fn last_due(&self, now: Micros) -> Option<Micros> {
+        let day = 86_400 * SEC;
+        let midnight = now - now.rem_euclid(day);
+        let due = midnight + self.minute_of_day()? * 60 * SEC;
+        Some(if due <= now { due } else { due - day })
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CertStatus {
+    pub target: String,
+    pub checked: Micros,
+    pub not_after: Option<Micros>,
+    /// Start of validity: with it, short-lived certificates (Let's Encrypt's 6-day profile,
+    /// requested by recent Caddy) aren't mistaken for ones about to lapse.
+    #[serde(default)]
+    pub not_before: Option<Micros>,
+    pub error: Option<String>,
+    /// DNS names (subjectAltName) the certificate covers.
+    #[serde(default)]
+    pub names: Vec<String>,
+    /// A file on disk rather than a live endpoint.
+    #[serde(default)]
+    pub file: bool,
+    /// The certificate's DANE TLSA `3 1 1` value (SHA-256 of its public key).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tlsa: Option<String>,
+    /// The TLSA records published for the endpoint (`_port._tcp.host`), as `usage selector
+    /// matching hex`; empty when there are none or `dig` isn't there.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tlsa_published: Vec<String>,
+    /// Whether a published `3 1 1` record matches the certificate served; None without any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dane: Option<bool>,
+    /// A live endpoint's certificate doesn't name the host it was fetched for (the chain
+    /// of trust is not checked).
+    #[serde(default)]
+    pub wrong_name: Option<String>,
+}
+
+impl CertStatus {
+    pub fn days_left(&self, now: Micros) -> Option<i64> {
+        self.not_after.map(|t| (t - now).div_euclid(86_400 * SEC))
+    }
+
+    /// Whether the expiry needs attention: within `warn_days`, but never before a third of
+    /// the certificate's lifetime is left (renewals normally happen around half way), and
+    /// high within 7 days or a sixth of the lifetime.
+    pub fn expiry_concern(&self, now: Micros, warn_days: i64) -> Option<crate::engine::Severity> {
+        use crate::engine::Severity;
+        let day = 86_400 * SEC;
+        let not_after = self.not_after?;
+        let left = not_after - now;
+        let lifetime = self.not_before.map(|b| not_after - b).filter(|l| *l > 0).unwrap_or(90 * day);
+        if left <= (7 * day).min(lifetime / 6) {
+            Some(Severity::High)
+        } else if left <= (warn_days * day).min(lifetime / 3) {
+            Some(Severity::Warning)
+        } else {
+            None
+        }
+    }
+
+    /// What is wrong with the certificate, worst first: (severity, text after "certificate at
+    /// <target> "). None when nothing needs attention.
+    pub fn concern(&self, now: Micros, warn_days: i64) -> Option<(crate::engine::Severity, String)> {
+        use crate::engine::Severity;
+        if let Some(w) = &self.wrong_name {
+            return Some((Severity::High, w.clone()));
+        }
+        match (self.expiry_concern(now, warn_days), &self.error) {
+            (Some(sev), _) => Some((sev, self.expiry_text(now))),
+            (None, Some(e)) if self.not_after.is_none() => Some((Severity::Warning, format!("could not be checked: {e}"))),
+            _ => None,
+        }
+    }
+
+    /// "expires in 1d04h00m (2026-10-16 07:04:33)"
+    pub fn expiry_text(&self, now: Micros) -> String {
+        let t = self.not_after.unwrap_or(0);
+        if t <= now {
+            format!("expired {} ago ({})", fmt_duration(now - t), fmt_ts(t))
+        } else {
+            format!("expires in {} ({})", fmt_duration(t - now), fmt_ts(t))
+        }
+    }
+}
+
+/// Parses `DNS:a.example, DNS:b.example` lines from `openssl x509 -ext subjectAltName`.
+pub fn parse_san(text: &str) -> Vec<String> {
+    text.split([',', '\n']).filter_map(|p| p.trim().strip_prefix("DNS:")).map(|n| n.trim().to_ascii_lowercase()).collect()
+}
+
+/// Why a certificate with these subjectAltName `names` is wrong for `host`, if it is (an
+/// IP address as host isn't checked).
+pub fn name_problem(names: &[String], host: &str) -> Option<String> {
+    if host.trim_matches(['[', ']']).parse::<std::net::IpAddr>().is_ok() || names.iter().any(|n| name_covers(n, host)) {
+        return None;
+    }
+    Some(if names.is_empty() {
+        format!("names no host (no subjectAltName), not {host}")
+    } else {
+        let shown: Vec<&str> = names.iter().take(5).map(String::as_str).collect();
+        format!("is for {}, not {host}", shown.join(", "))
+    })
+}
+
+fn name_covers(pattern: &str, host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    match pattern.strip_prefix("*.") {
+        Some(base) => host.split_once('.').is_some_and(|(_, rest)| rest == base),
+        None => pattern == host,
+    }
+}
+
+pub fn wildcard_match(pattern: &str, name: &str) -> bool {
+    match pattern.split_once('*') {
+        None => pattern == name,
+        Some((pre, rest)) => {
+            name.starts_with(pre)
+                && (0..=name.len() - pre.len())
+                    .any(|i| name.is_char_boundary(pre.len() + i) && wildcard_match(rest, &name[pre.len() + i..]))
+        }
+    }
+}
+
+/// Expands `*` in the last path component.
+pub fn expand_files(pattern: &str) -> Vec<PathBuf> {
+    let path = PathBuf::from(pattern);
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str())) else { return vec![] };
+    if !name.contains('*') {
+        return if path.is_file() { vec![path] } else { vec![] };
+    }
+    let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten()
+                .filter(|e| e.path().is_file() && e.file_name().to_str().is_some_and(|n| wildcard_match(name, n)))
+                .map(|e| e.path())
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
+/// Endpoints serving a certificate that expires earlier than a newer one on disk for the
+/// same host - i.e. a renewed certificate that the server hasn't been pointed at / reloaded.
+pub fn stale_served(certs: &[CertStatus]) -> Vec<String> {
+    let mut out = Vec::new();
+    for ep in certs.iter().filter(|c| !c.file) {
+        let (Some(served), Some(host)) = (ep.not_after, ep.target.split('/').next().and_then(|hp| hp.rsplit_once(':')).map(|(h, _)| h))
+        else {
+            continue;
+        };
+        let newest = certs
+            .iter()
+            .filter(|f| f.file && f.names.iter().any(|n| name_covers(n, host)))
+            .filter_map(|f| f.not_after.map(|t| (t, &f.target)))
+            .max();
+        if let Some((t, path)) = newest {
+            if t > served + 86_400 * SEC {
+                out.push(format!(
+                    "{} serves a certificate expiring {}, but {path} (expires {}) is newer: point the server at it and reload",
+                    ep.target,
+                    &fmt_ts(served)[..10],
+                    &fmt_ts(t)[..10]
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// Parses openssl's `notAfter=Jan  9 12:00:00 2027 GMT`.
+pub fn parse_not_after(text: &str) -> Option<Micros> {
+    parse_openssl_date(text, "notAfter=")
+}
+
+fn parse_openssl_date(text: &str, key: &str) -> Option<Micros> {
+    let v = text.lines().find_map(|l| l.trim().strip_prefix(key))?;
+    let f: Vec<&str> = v.split_whitespace().collect();
+    if f.len() < 4 {
+        return None;
+    }
+    time::parse_syslog(f[0], f[1], f[2], f[3].parse().ok()?)
+}
+
+fn run_with_timeout(cmd: Command, input: Option<&[u8]>, limit: Duration) -> Result<Vec<u8>, String> {
+    // stdout whatever the exit status: s_client exits non-zero after printing the chain
+    crate::proc::run(cmd, input, limit).map(|o| o.stdout)
+}
+
+/// Fetches the certificate served at `target` and reads its expiry.
+pub fn check_cert(openssl: &PathBuf, target: &str) -> CertStatus {
+    let mut st = CertStatus { target: target.into(), checked: time::now(), ..Default::default() };
+    let (hostport, starttls) = target.split_once('/').map_or((target, None), |(h, p)| (h, Some(p)));
+    let host = hostport.rsplit_once(':').map_or(hostport, |(h, _)| h);
+    let mut cmd = Command::new(openssl);
+    cmd.args(["s_client", "-connect", hostport, "-servername", host]);
+    if let Some(proto) = starttls {
+        cmd.args(["-starttls", proto]);
+        if proto == "xmpp" {
+            cmd.args(["-xmpphost", host]);
+        }
+    }
+    let pem = match run_with_timeout(cmd, None, Duration::from_secs(20)) {
+        Ok(out) if String::from_utf8_lossy(&out).contains("BEGIN CERTIFICATE") => out,
+        Ok(_) => {
+            st.error = Some("no certificate received".into());
+            return st;
+        }
+        Err(e) => {
+            st.error = Some(e);
+            return st;
+        }
+    };
+    read_x509(openssl, None, Some(&pem), &mut st);
+    // With -starttls xmpp, `host` is the XMPP domain the certificate must cover.
+    if st.error.is_none() {
+        st.wrong_name = name_problem(&st.names, host);
+        st.tlsa = tlsa_311_pem(openssl, &pem);
+    }
+    st
+}
+
+/// DANE: the TLSA records published for the endpoint, compared with the certificate served
+/// (`check_cert` first). Nothing without `dig`, or without `3 1 1` records.
+pub fn check_dane(dig: &PathBuf, st: &mut CertStatus) {
+    let Some(served) = st.tlsa.clone() else { return };
+    let hostport = st.target.split('/').next().unwrap_or(&st.target);
+    let Some((host, port)) = hostport.rsplit_once(':') else { return };
+    let name = format!("_{port}._tcp.{host}");
+    let mut cmd = Command::new(dig);
+    cmd.args(["+short", "+time=5", "+tries=1", "TLSA", &name]);
+    let Ok(out) = run_with_timeout(cmd, None, Duration::from_secs(15)) else { return };
+    st.tlsa_published = parse_dig_tlsa(&String::from_utf8_lossy(&out));
+    st.dane = dane_matches(&st.tlsa_published, &served);
+}
+
+/// `dig +short TLSA` lines: `3 1 1 ABCD...` (dig may split the hex into blanks).
+pub fn parse_dig_tlsa(out: &str) -> Vec<String> {
+    out.lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            let (u, s, m) = (f.next()?, f.next()?, f.next()?);
+            if !(u.len() == 1 && s.len() == 1 && m.len() == 1 && [u, s, m].iter().all(|x| x.bytes().all(|b| b.is_ascii_digit()))) {
+                return None;
+            }
+            let hex: String = f.collect::<String>().to_ascii_lowercase();
+            (!hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit())).then(|| format!("{u} {s} {m} {hex}"))
+        })
+        .take(16)
+        .collect()
+}
+
+/// Whether one of the published `3 1 1` records is the served certificate's; None when
+/// no `3 1 1` record is published (other usages aren't checked here).
+pub fn dane_matches(published: &[String], served: &str) -> Option<bool> {
+    let records: Vec<&str> = published.iter().filter_map(|r| r.strip_prefix("3 1 1 ")).collect();
+    (!records.is_empty()).then(|| records.contains(&served))
+}
+
+/// The DANE TLSA `3 1 1` value of a certificate given as PEM (see [`tlsa_311`]).
+pub fn tlsa_311_pem(openssl: &PathBuf, pem: &[u8]) -> Option<String> {
+    let mut x509 = Command::new(openssl);
+    x509.args(["x509", "-pubkey", "-noout"]);
+    let pubkey = run_with_timeout(x509, Some(pem), Duration::from_secs(10)).ok().filter(|o| !o.is_empty())?;
+    spki_sha256(openssl, &pubkey)
+}
+
+fn spki_sha256(openssl: &PathBuf, pubkey_pem: &[u8]) -> Option<String> {
+    let mut pkey = Command::new(openssl);
+    pkey.args(["pkey", "-pubin", "-outform", "der"]);
+    let der = run_with_timeout(pkey, Some(pubkey_pem), Duration::from_secs(10)).ok().filter(|o| !o.is_empty())?;
+    use sha2::Digest;
+    Some(sha2::Sha256::digest(&der).iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Waits before endpoints that gave no certificate are checked again: a service still
+/// starting after a reboot (or being restarted) is no certificate problem.
+pub const CERT_RETRY_WAITS: [Duration; 3] = [Duration::from_secs(60), Duration::from_secs(120), Duration::from_secs(240)];
+
+/// Checks the live endpoints that gave no certificate again after each of `waits`, until
+/// they give one or the waits run out. `wait` returns false to give up (shutdown).
+pub fn recheck_failed(
+    certs: &mut [CertStatus],
+    waits: &[Duration],
+    mut wait: impl FnMut(Duration) -> bool,
+    mut check: impl FnMut(&str) -> CertStatus,
+) {
+    let failed = |c: &CertStatus| !c.file && c.not_after.is_none() && c.error.is_some();
+    for w in waits {
+        if !certs.iter().any(failed) || !wait(*w) {
+            return;
+        }
+        for c in certs.iter_mut().filter(|c| failed(c)) {
+            *c = check(&c.target);
+        }
+    }
+}
+
+fn read_x509(openssl: &PathBuf, file: Option<&std::path::Path>, pem: Option<&[u8]>, st: &mut CertStatus) {
+    let mut x509 = Command::new(openssl);
+    x509.args(["x509", "-noout", "-startdate", "-enddate", "-text"]);
+    if let Some(f) = file {
+        x509.arg("-in").arg(f);
+    }
+    match run_with_timeout(x509, pem, Duration::from_secs(10)) {
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out);
+            st.names = parse_san(&text);
+            st.not_before = parse_openssl_date(&text, "notBefore=");
+            match parse_not_after(&text) {
+                Some(t) => st.not_after = Some(t),
+                None => st.error = Some("could not read expiry".into()),
+            }
+        }
+        Err(e) => st.error = Some(e),
+    }
+}
+
+/// DANE TLSA `3 1 1` value (SHA-256 of the SubjectPublicKeyInfo) of the first certificate
+/// in `path`, as `openssl x509 -pubkey | openssl pkey -pubin -outform der | sha256` would give.
+pub fn tlsa_311(openssl: &PathBuf, path: &str) -> Option<String> {
+    let mut x509 = Command::new(openssl);
+    x509.args(["x509", "-pubkey", "-noout", "-in", path]);
+    let pubkey = run_with_timeout(x509, None, Duration::from_secs(10)).ok().filter(|o| !o.is_empty())?;
+    let mut pkey = Command::new(openssl);
+    pkey.args(["pkey", "-pubin", "-outform", "der"]);
+    let der = run_with_timeout(pkey, Some(&pubkey), Duration::from_secs(10)).ok().filter(|o| !o.is_empty())?;
+    let mut dgst = Command::new(openssl);
+    dgst.args(["dgst", "-sha256", "-r"]);
+    let out = run_with_timeout(dgst, Some(&der), Duration::from_secs(10)).ok()?;
+    let hex = String::from_utf8_lossy(&out).split_whitespace().next()?.to_ascii_lowercase();
+    (hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hex)
+}
+
+/// Reads a certificate file's expiry and names.
+pub fn check_cert_file(openssl: &PathBuf, path: &std::path::Path) -> CertStatus {
+    let mut st = CertStatus { target: path.display().to_string(), checked: time::now(), file: true, ..Default::default() };
+    read_x509(openssl, Some(path), None, &mut st);
+    st
+}
+
+/// Renders the digest as (subject, plain-text body). The notifier names the server in
+/// the subject (`[xmpp] vpsfort daily digest`), and a relaying peer adds its own name.
+pub fn render(d: &DigestData, s: &Snapshot, warn_days: i64) -> (String, String) {
+    let (subject, body) = render_raw(d, s, warn_days);
+    (crate::event::plain_text(&subject), crate::event::plain_text(&body))
+}
+
+fn render_raw(d: &DigestData, s: &Snapshot, warn_days: i64) -> (String, String) {
+    let now = d.until;
+    let mut b = String::new();
+    let mut attention: Vec<String> = Vec::new();
+
+    // certificates first: they're the thing most likely to need action
+    attention.extend(stale_served(&s.certs));
+    for c in s.certs.iter().filter(|c| !c.file) {
+        if let Some((_, what)) = c.concern(now, warn_days) {
+            attention.push(format!("certificate {} {what}", c.target));
+        }
+    }
+    if let Some(c) = &s.cluster {
+        for p in c.peers.iter().filter(|p| p.last_error.is_some()) {
+            attention.push(format!("cluster peer {} failing: {}", p.addr, p.last_error.clone().unwrap_or_default()));
+        }
+    }
+    if let Some(f) = &s.feeds {
+        for src in f.sources.iter().filter(|x| x.error.is_some()) {
+            attention.push(format!(
+                "feed {} failed{}: {}",
+                src.url,
+                if src.from_cache { " (using cached copy)" } else { "" },
+                src.error.clone().unwrap_or_default()
+            ));
+        }
+    }
+    if let Some(w) = &s.waf {
+        attention.extend(w.problems().into_iter().map(|p| format!("waf {p}")));
+    }
+    for c in s.certs.iter().filter(|c| c.dane == Some(false)) {
+        attention.push(format!(
+            "DANE: the TLSA record for {} doesn't match the certificate served (publish 3 1 1 {})",
+            c.target,
+            c.tlsa.as_deref().unwrap_or("?")
+        ));
+    }
+    for d in &s.dns {
+        if let Some((_, _, _, msg)) = d.concern(&[]) {
+            if !d.ours {
+                attention.push(msg.split(" - ").next().unwrap_or(&msg).to_string());
+            }
+        }
+    }
+    if let Some(h) = s.heartbeat.as_ref().filter(|h| h.failures >= 3) {
+        attention.push(format!("heartbeat {} failing ({} pings in a row)", h.url, h.failures));
+    }
+    if s.resources.as_ref().is_some_and(|r| r.clock_synced == Some(false)) {
+        attention.push("the clock is not synchronised with NTP (timedatectl timesync-status)".into());
+    }
+    if s.unapplied > 0 {
+        attention.push(format!(
+            "{} firewall change(s) could not be applied (the firewall program fails): bans are decided but not in the kernel",
+            s.unapplied
+        ));
+    }
+    if let Some(r) = &s.exposure {
+        if r.firewall() == crate::exposure::Firewall::Absent && r.firewall_checked() && r.listeners.iter().any(|l| l.exposure.is_exposed())
+        {
+            attention.push("no firewall filters incoming traffic: every listener on a public address is reachable".into());
+        }
+        for dead in &r.dead_rules {
+            attention.push(format!("dead {} rule {dead} (nothing listens)", r.firewall().name()));
+        }
+    }
+    if let Some(p) = &s.patches {
+        attention.extend(p.concerns());
+    }
+    if let Some(a) = &s.ssh_audit {
+        let c = a.concerns();
+        let more = c.len().saturating_sub(6);
+        attention.extend(c.into_iter().take(6));
+        if more > 0 {
+            attention.push(format!("ssh: {more} more problems (vpsfort ssh-audit)"));
+        }
+    }
+    if let Some(a) = &s.sysctl_audit {
+        let c = a.concerns();
+        let more = c.len().saturating_sub(4);
+        attention.extend(c.into_iter().take(4));
+        if more > 0 {
+            attention.push(format!("sysctl: {more} more problems (vpsfort sysctl-audit)"));
+        }
+    }
+    attention.extend(d.attention.iter().rev().take(15).cloned());
+
+    let total_bans: u32 = d.bans_by_category.values().sum();
+    b += &format!("Period {} → {} UTC ({})\n", &fmt_ts(d.since)[..16], &fmt_ts(now)[..16], fmt_duration(now - d.since));
+    let cover = crate::engine::subnet_coverage(&s.bans);
+    let subnets = match cover.widest_v4 {
+        _ if cover.subnets == 0 => String::new(),
+        Some(w) => format!(" ({} subnets: {} IPv4 addresses, widest /{w})", cover.subnets, cover.v4_addresses),
+        None => format!(" ({} subnets)", cover.subnets),
+    };
+    b += &format!("Mode: {:?}. Active bans now: {}{subnets}.\n", s.mode, s.bans.len());
+
+    b += "\n⚠ Needs attention:\n";
+    if attention.is_empty() {
+        b += "  nothing\n";
+    }
+    for a in &attention {
+        b += &format!("  • {a}\n");
+    }
+
+    b += &format!("\nBans ({total_bans}):\n");
+    let mut cats: Vec<(&String, &u32)> = d.bans_by_category.iter().collect();
+    cats.sort_by_key(|c| std::cmp::Reverse(*c.1));
+    for (cat, n) in cats {
+        b += &format!("  {n:>5}  {cat}\n");
+    }
+
+    if !d.top.is_empty() {
+        b += "\nTop offenders:\n";
+        for (ip, pts, ban, place) in d.top.iter().take(10) {
+            let state = ban.map_or(String::new(), |n| format!("  banned ({n})"));
+            let place = place.as_ref().map_or(String::new(), |p| format!("  {p}"));
+            b += &format!("  {:<22} {:>6.0} pts{state}{place}\n", ip.to_string(), pts);
+        }
+    }
+
+    let alerts: Vec<String> = d.alerts_by_topic.iter().map(|(t, n)| format!("{t} {n}")).collect();
+    if !alerts.is_empty() {
+        b += &format!("\nAlerts: {}\n", alerts.join(", "));
+    }
+    let ev: u64 = d.events.values().sum();
+    let mut top_ev: Vec<(&crate::event::Signal, &u64)> = d.events.iter().collect();
+    top_ev.sort_by_key(|e| std::cmp::Reverse(*e.1));
+    let top: Vec<String> = top_ev.iter().take(5).map(|(s, n)| format!("{} {n}", s.name())).collect();
+    b += &if top.is_empty() { format!("Events: {ev}\n") } else { format!("Events: {ev} ({})\n", top.join(", ")) };
+
+    if let Some(r) = &s.exposure {
+        // "443 docker-proxy" once, whatever sockets (IPv4, IPv6, TCP, UDP) serve it
+        let mut exposed: Vec<String> = r
+            .listeners
+            .iter()
+            .filter(|l| l.exposure.is_exposed() && !l.dynamic && !l.honeypot)
+            .map(|l| format!("{} {}", l.key.port, l.process))
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        exposed.retain(|e| seen.insert(e.clone()));
+        b += &format!("\nExposed: {}\n", if exposed.is_empty() { "nothing".into() } else { exposed.join(", ") });
+        let mut traps: Vec<u16> = r.listeners.iter().filter(|l| l.honeypot).map(|l| l.key.port).collect();
+        traps.sort_unstable();
+        traps.dedup();
+        if !traps.is_empty() {
+            b += &format!("Honeypots: {}\n", traps.iter().map(u16::to_string).collect::<Vec<_>>().join(", "));
+        }
+    }
+    if s.certs.iter().any(|c| !c.file) {
+        let certs: Vec<String> = s
+            .certs
+            .iter()
+            .filter(|c| !c.file)
+            .map(|c| match c.days_left(now) {
+                Some(d) => format!("{} {d}d", c.target),
+                None => format!("{} ?", c.target),
+            })
+            .collect();
+        b += &format!("Certificates: {}\n", certs.join(", "));
+    }
+    if let Some(c) = &s.cluster {
+        let ok = c.peers.iter().filter(|p| p.last_error.is_none() && p.last_ok.is_some()).count();
+        b += &format!("Cluster: {ok}/{} peers ok, {} facts received\n", c.peers.len(), c.facts_received);
+    }
+    if let Some(f) = &s.feeds {
+        b += &format!("Blocklists: {} networks{}\n", f.v4 + f.v6, if f.applied { "" } else { " (not applied)" });
+    }
+    if let Some(w) = &s.waf {
+        let bans: usize = w.sources.iter().map(|x| x.banned).sum();
+        let list = w.list_v4 + w.list_v6;
+        b += &format!("WAF decisions: {bans} bans, {list} listed networks{}\n", if w.applied || list == 0 { "" } else { " (not applied)" });
+    }
+    if !s.allowed.is_empty() {
+        b += &format!("Operator allowlist: {} entries\n", s.allowed.len());
+    }
+    if let Some(p) = &s.patches {
+        b += &format!("Patches: {}\n", p.summary());
+    }
+    if let Some(a) = &s.ssh_audit {
+        b += &format!("SSH: {}\n", a.summary());
+    }
+    if let Some(a) = &s.sysctl_audit {
+        b += &format!("Kernel: {}\n", a.summary());
+    }
+    if let Some(p) = &s.probe {
+        b += &format!("From outside (node {}): {} ports reachable, {} not\n", p.by, p.reachable.len(), p.unreachable.len());
+    }
+    if let Some(v) = &s.verify {
+        b += &format!(
+            "Packages: checked {} ({} files, {} differ from their packages), {} set-uid/set-gid programs\n",
+            &fmt_ts(v.last_run)[..10],
+            v.checked,
+            v.mismatched,
+            v.suid
+        );
+    }
+
+    let flag = if attention.is_empty() { "" } else { "⚠ " };
+    (format!("{flag}vpsfort daily digest"), b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dane_records_are_parsed_and_compared() {
+        let out = "3 1 1 2B4E 9F7A C0DE\n2 0 1 ABCD\n;; junk\n3 1 1 ff\n";
+        let got = parse_dig_tlsa(out);
+        assert_eq!(got, ["3 1 1 2b4e9f7ac0de", "2 0 1 abcd", "3 1 1 ff"]);
+        assert_eq!(dane_matches(&got, "ff"), Some(true));
+        assert_eq!(dane_matches(&got, "00"), Some(false));
+        assert_eq!(dane_matches(&["2 0 1 abcd".to_string()], "ff"), None, "no 3 1 1 record: nothing to compare");
+        assert!(parse_dig_tlsa("").is_empty());
+    }
+
+    #[test]
+    fn endpoints_without_a_certificate_are_checked_again() {
+        let ok = |t: &str| CertStatus { target: t.into(), not_after: Some(1), ..Default::default() };
+        let down = |t: &str| CertStatus { target: t.into(), error: Some("no certificate received".into()), ..Default::default() };
+        let mut certs = vec![ok("a:443"), down("b:5222/xmpp"), CertStatus { file: true, ..down("/etc/c.pem") }];
+        let (mut waited, mut checked) = (0, vec![]);
+        recheck_failed(
+            &mut certs,
+            &CERT_RETRY_WAITS,
+            |_| {
+                waited += 1;
+                true
+            },
+            |t| {
+                checked.push(t.to_string());
+                if checked.len() < 2 {
+                    down(t)
+                } else {
+                    ok(t)
+                }
+            },
+        );
+        assert_eq!(checked, ["b:5222/xmpp", "b:5222/xmpp"], "only the failed live endpoint, until it answers");
+        assert_eq!(waited, 2);
+        assert!(certs[1].not_after.is_some() && certs[2].error.is_some());
+        // shutting down: no more checks
+        let mut certs = vec![down("b:443")];
+        recheck_failed(&mut certs, &CERT_RETRY_WAITS, |_| false, |_| unreachable!());
+        assert!(certs[0].error.is_some());
+    }
+
+    #[test]
+    fn openssl_date_and_schedule() {
+        let t = parse_not_after("notAfter=Jan  9 12:00:00 2027 GMT\n").unwrap();
+        assert_eq!(fmt_ts(t), "2027-01-09 12:00:00");
+        let cfg = DigestCfg { enabled: true, at: "07:30".into(), ..Default::default() };
+        cfg.validate().unwrap();
+        let day = 86_400 * SEC;
+        let now = 100 * day + 8 * 3600 * SEC;
+        assert_eq!(cfg.last_due(now), Some(100 * day + 7 * 3600 * SEC + 30 * 60 * SEC));
+        let early = 100 * day + 6 * 3600 * SEC;
+        assert_eq!(cfg.last_due(early), Some(99 * day + 7 * 3600 * SEC + 30 * 60 * SEC));
+        assert!(DigestCfg { at: "25:00".into(), ..cfg.clone() }.validate().is_err());
+        assert!(DigestCfg { certs: vec!["nohost".into()], ..cfg }.validate().is_err());
+    }
+
+    #[test]
+    fn renewed_but_not_served() {
+        let day = 86_400 * SEC;
+        let ep = |target: &str, t: i64| CertStatus { target: target.into(), not_after: Some(t * day), ..Default::default() };
+        let file = |path: &str, t: i64, names: &[&str]| CertStatus {
+            target: path.into(),
+            not_after: Some(t * day),
+            names: names.iter().map(|n| n.to_string()).collect(),
+            file: true,
+            ..Default::default()
+        };
+        let certs = vec![
+            ep("example.org:5223", 100),
+            ep("upload.example.org:443", 100),
+            file("/acme/live/old", 100, &["example.org", "conference.example.org"]),
+            file("/acme/live/new", 190, &["example.org", "conference.example.org"]),
+        ];
+        let stale = stale_served(&certs);
+        assert_eq!(stale.len(), 1, "{stale:?}");
+        assert!(stale[0].starts_with("example.org:5223 serves") && stale[0].contains("/acme/live/new"));
+        assert!(name_covers("*.example.org", "upload.example.org") && !name_covers("*.example.org", "example.org"));
+        let names = vec!["example.org".to_string(), "*.example.org".to_string()];
+        assert_eq!(name_problem(&names, "example.org"), None);
+        assert_eq!(name_problem(&names, "Upload.example.org"), None);
+        assert_eq!(name_problem(&names, "nextcloud.example.net").unwrap(), "is for example.org, *.example.org, not nextcloud.example.net");
+        assert!(name_problem(&[], "example.org").unwrap().contains("no subjectAltName"));
+        assert_eq!(name_problem(&[], "203.0.113.5"), None, "addresses aren't names");
+        let mut c = CertStatus { target: "x:443".into(), not_after: Some(100 * 86_400 * SEC), ..Default::default() };
+        assert_eq!(c.concern(0, 21), None);
+        c.wrong_name = Some("is for a.example, not x".into());
+        assert_eq!(c.concern(0, 21).unwrap().0, crate::engine::Severity::High);
+        assert_eq!(
+            parse_san("X509v3 Subject Alternative Name: \n    DNS:example.org, DNS:Conference.example.org\n"),
+            vec!["example.org", "conference.example.org"]
+        );
+        assert!(wildcard_match("*", "879798abc") && wildcard_match("*.pem", "a.pem") && !wildcard_match("*.pem", "a.key"));
+    }
+
+    #[test]
+    fn short_lived_certificates_are_judged_by_their_lifetime() {
+        use crate::engine::Severity;
+        let t = |m: &str, d: &str, c: &str| time::parse_syslog(m, d, c, 2026).unwrap();
+        // Let's Encrypt 6-day profile, as served by Nextcloud AIO's Caddy (issuer YE1)
+        let c = CertStatus {
+            target: "nextcloud.example.org:443".into(),
+            not_before: Some(t("Oct", "9", "15:04:34")),
+            not_after: Some(t("Oct", "16", "07:04:33")),
+            ..Default::default()
+        };
+        assert_eq!(c.expiry_concern(t("Oct", "12", "12:30:00"), 21), None, "3.8 days of 6.7 left: just renewed");
+        assert_eq!(c.expiry_concern(t("Oct", "14", "06:00:00"), 21), Some(Severity::Warning), "~49 h left: renewal is late");
+        assert_eq!(c.expiry_concern(t("Oct", "15", "08:00:00"), 21), Some(Severity::High), "~23 h left");
+        assert!(c.expiry_text(t("Oct", "15", "08:00:00")).starts_with("expires in 23h04m"));
+        // 90-day certificates: as before (21 days, high under 7)
+        let long =
+            CertStatus { not_before: Some(t("Sep", "1", "00:00:00")), not_after: Some(t("Nov", "30", "00:00:00")), ..Default::default() };
+        assert_eq!(long.expiry_concern(t("Nov", "1", "00:00:00"), 21), None);
+        assert_eq!(long.expiry_concern(t("Nov", "10", "00:00:00"), 21), Some(Severity::Warning));
+        assert_eq!(long.expiry_concern(t("Nov", "25", "00:00:00"), 21), Some(Severity::High));
+        assert_eq!(parse_openssl_date("notBefore=Oct  9 15:04:34 2026 GMT\nnotAfter=Oct 16 07:04:33 2026 GMT", "notBefore="), c.not_before);
+    }
+
+    #[test]
+    fn patches_need_attention() {
+        let mut s = crate::engine::Engine::new(std::sync::Arc::new(crate::config::Config::default()), 0).snapshot(0, 10);
+        s.patches = Some(crate::patches::PatchReport {
+            upgradable: Some(4),
+            security_count: 1,
+            security: vec!["openssl".into()],
+            ..Default::default()
+        });
+        let (subject, body) = render(&DigestData::default(), &s, 21);
+        assert!(subject.starts_with("⚠ "), "{subject}");
+        assert!(body.contains("• 1 security updates pending (openssl): apt upgrade"), "{body}");
+        assert!(body.contains("\nPatches: 1 security updates pending"), "{body}");
+    }
+
+    #[test]
+    fn events_line_lists_the_top_signals_only_when_there_are_some() {
+        let s = crate::engine::Engine::new(std::sync::Arc::new(crate::config::Config::default()), 0).snapshot(0, 10);
+        let mut d = DigestData::default();
+        let (_, body) = render(&d, &s, 21);
+        assert!(body.contains("\nEvents: 0\n"), "{body}");
+        d.events.insert(crate::event::Signal::XmppAuthFail, 3);
+        let (_, body) = render(&d, &s, 21);
+        assert!(body.contains(&format!("\nEvents: 3 ({} 3)\n", crate::event::Signal::XmppAuthFail.name())), "{body}");
+    }
+}

@@ -1,0 +1,11 @@
+#!/bin/sh
+# vpsfort-xmpp-bot's Alpine package, before its files are unpacked (apk runs this as
+# .pre-install and .pre-upgrade). The admin bot runs as the ejabberd user where ejabberd is
+# installed; elsewhere (the client bot) the bot gets a system user of its own, without a
+# home or a shell.
+if ! id ejabberd > /dev/null 2>&1 && ! id vpsfort-xmpp-bot > /dev/null 2>&1; then
+    addgroup -S vpsfort-xmpp-bot 2> /dev/null || true
+    adduser -S -D -H -s /sbin/nologin -G vpsfort-xmpp-bot -g "vpsfort-xmpp-bot" vpsfort-xmpp-bot
+    echo "vpsfort-xmpp-bot: created the system user vpsfort-xmpp-bot (no ejabberd here: the client bot)"
+fi
+exit 0

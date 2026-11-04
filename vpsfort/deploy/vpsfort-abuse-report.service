@@ -1,0 +1,53 @@
+[Unit]
+Description=vpsfort - weekly abuse report (sent by the admin bots)
+After=network-online.target vpsfort.service
+Wants=network-online.target
+Documentation=file:///etc/default/vpsfort-abuse-report
+
+[Service]
+Type=oneshot
+# work files: private, removed with the unit (the system is read-only otherwise)
+RuntimeDirectory=vpsfort-abuse-report
+RuntimeDirectoryMode=0700
+Environment=ABUSE_REPORT_WORKDIR=/run/vpsfort-abuse-report
+EnvironmentFile=-/etc/default/vpsfort-abuse-report
+ExecStart=/usr/local/sbin/vpsfort-abuse-report
+Nice=10
+IOSchedulingClass=idle
+# Reports from peers are read into memory (each capped at 64 MB unpacked); a week's merge of
+# real ones needs a few MB.
+MemoryHigh=192M
+MemoryMax=256M
+
+# Sandbox: reads vpsfort's records, writes the cluster inbox (/var/lib/vpsfort) and the
+# bots' outboxes (vpsfort-xmpp-bot's in either mode, vpsfort-tg-bot's, vpsfort-mail-bot's,
+# vpsfort-signal-bot's, vpsfort-matrix-bot's; any may be missing), talks to the peers and
+# rdap.org. An outbox elsewhere needs  ReadWritePaths=<it>  (systemctl edit vpsfort-abuse-report).
+StateDirectory=vpsfort
+ReadWritePaths=-/opt/vpsfort-xmpp-bot/outbox
+ReadWritePaths=-/opt/vpsfort-tg-bot/outbox
+ReadWritePaths=-/opt/vpsfort-mail-bot/outbox
+ReadWritePaths=-/opt/vpsfort-signal-bot/outbox
+ReadWritePaths=-/opt/vpsfort-matrix-bot/outbox
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+# install -o <bot user> needs CAP_CHOWN; nothing else beyond root's own files
+CapabilityBoundingSet=CAP_CHOWN
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM

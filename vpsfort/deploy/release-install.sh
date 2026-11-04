@@ -1,0 +1,150 @@
+#!/bin/bash
+# Installs or upgrades vpsfort from this release bundle. Unzip it on the server, then as root:
+#
+#   ./install.sh                       upgrade; or, on a new server, put the config template
+#                                      in place (/etc/vpsfort/vpsfort.toml) to edit first
+#   ./install.sh --template NAME       the template a new server starts from: one of configs/
+#                                      (vpsfort.toml: XMPP server, the default; vpsfort-standalone.toml:
+#                                      SSH and UFW only; vpsfort-tg.toml: Telegram relay node;
+#                                      vpsfort-desktop.toml: a Linux desktop or laptop;
+#                                      each with a -dnf variant for Fedora and RHEL, the default
+#                                      on a host with dnf and no apt)
+#   ./install.sh --config FILE         a new server's finished config: installs it at once
+#   ./install.sh --cluster-key FILE    the cluster key of the other nodes (their
+#                                      /etc/vpsfort/cluster.key), for a node joining them
+#   ./install.sh --check               only check the bundle's files (needs no root)
+#
+# It copies the bundle to a directory only root can write, checks every file against
+# SHA256SUMS there, and runs files/install.sh from it, as deploy/deploy.sh does over SSH: the
+# binary to /usr/local/bin (the previous one stays as vpsfort.prev), the units, timers and
+# logrotate rule, the config check (and on upgrades config-diff against the new template),
+# the cluster port in ufw for the peers, and the service restarted.
+# A config with [cluster] enabled and no key on this server yet gets a new key: copy
+# /etc/vpsfort/cluster.key to the other nodes (--cluster-key there).
+set -euo pipefail
+
+CONF=/etc/vpsfort/vpsfort.toml
+KEY=/etc/vpsfort/cluster.key
+
+usage() { sed -n '2,/^set -e/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
+die() { echo "install.sh: $*" >&2; exit 1; }
+abs() { case $1 in /*) echo "$1" ;; *) echo "$PWD/$1" ;; esac; }
+
+template="" config="" cluster_key="" check=no
+while [ $# -gt 0 ]; do
+    case $1 in
+        --template) [ $# -ge 2 ] || die "--template needs a name"; template=$2; shift 2 ;;
+        --config) [ $# -ge 2 ] || die "--config needs a file"; config=$(abs "$2"); shift 2 ;;
+        --cluster-key) [ $# -ge 2 ] || die "--cluster-key needs a file"; cluster_key=$(abs "$2"); shift 2 ;;
+        --check) check=yes; shift ;;
+        -h | --help) usage; exit 0 ;;
+        *) usage >&2; exit 2 ;;
+    esac
+done
+[ -z "$config" ] || [ -f "$config" ] || die "no file $config"
+[ -z "$cluster_key" ] || [ -f "$cluster_key" ] || die "no file $cluster_key"
+cd "$(dirname "$0")"
+
+command -v sha256sum > /dev/null || die "sha256sum is missing (coreutils)"
+if [ "$check" = yes ]; then
+    sha256sum -c --quiet --strict SHA256SUMS || die "files don't match SHA256SUMS: a damaged or altered bundle"
+    echo "Bundle OK: $(files/vpsfort --version 2> /dev/null || echo vpsfort)"
+    exit 0
+fi
+[ "$(id -u)" = 0 ] || die "run as root:  sudo ./install.sh"
+[ "$(uname -s)" = Linux ] || die "this bundle is for Linux"
+command -v systemctl > /dev/null || die "vpsfort runs as a systemd service: no systemctl here"
+
+# The unzipped files may belong to another user, who could swap them while this runs:
+# a copy only root can write, checked there, is what gets installed.
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+while read -r _ f; do
+    # SHA256SUMS comes from the same untrusted directory: plain relative names only
+    [[ $f =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)?$ ]] || die "odd name in SHA256SUMS: $f"
+    mkdir -p "$work/$(dirname "$f")"
+    cp -p -- "$f" "$work/$f"
+done < SHA256SUMS
+cp SHA256SUMS "$work/"
+cd "$work"
+sha256sum -c --quiet --strict SHA256SUMS || die "files don't match SHA256SUMS: a damaged or altered bundle"
+# One bundle per architecture (TARGET: x86_64, aarch64 or armv7 hard-float): its program must run here.
+files/vpsfort --version > /dev/null 2>&1 || die "this bundle is for $(cat TARGET); this machine is $(uname -m): use its own bundle"
+bin=$work/files/vpsfort
+
+setting() { # the value of $2 in section [$1] of config $3, as vpsfort reads it
+    "$bin" --config "$3" print-config \
+        | awk -v sec="[$1]" -v key="$2" '/^\[/ { s = ($0 == sec) } s && $1 == key { gsub(/"/, "", $3); print $3 }'
+}
+top_setting() { # the value of top-level $1 (before any section) of config $2
+    "$bin" --config "$2" print-config | awk -v key="$1" '/^\[/ { exit } $1 == key { gsub(/"/, "", $3); print $3 }'
+}
+template_named() {
+    local t
+    for t in "configs/$1" "configs/$1.toml" "configs/vpsfort-$1.toml"; do
+        [ -f "$t" ] && { echo "$t"; return; }
+    done
+    die "no template '$1' in configs/: $(cd configs && echo *)"
+}
+
+# The template: named, or the one for this server's node id and package manager (upgrades),
+# or vpsfort.toml (vpsfort-dnf.toml on a host with dnf and no apt).
+if [ -n "$template" ]; then
+    tpl=$(template_named "$template")
+else
+    tpl=configs/vpsfort.toml
+    if ! command -v apt-get > /dev/null && command -v dnf > /dev/null; then tpl=configs/vpsfort-dnf.toml; fi
+    if [ -f "$CONF" ]; then
+        node=$(setting cluster node_id "$CONF" 2> /dev/null || true)
+        pm=$(top_setting package_manager "$CONF" 2> /dev/null || true)
+        for t in configs/*.toml; do
+            if [ -n "$node" ] && [ "$(setting cluster node_id "$t")" = "$node" ] && [ "$(top_setting package_manager "$t")" = "$pm" ]; then
+                tpl=$t
+            fi
+        done
+    fi
+fi
+
+if [ -f "$CONF" ]; then
+    # files/install.sh keeps it, saves the template next to it as vpsfort.toml.new and
+    # shows what the upgrade changes (config-diff)
+    [ -z "$config" ] || echo "note: keeping the existing $CONF; $config is saved as vpsfort.toml.new"
+    staged=${config:-$tpl}
+    effective=$CONF
+elif [ -n "$config" ]; then
+    staged=$config
+    effective=$config
+else
+    install -d -m 0755 /etc/vpsfort
+    install -m 0600 "$tpl" "$CONF"
+    "$bin" --config "$CONF" print-config > /dev/null
+    echo "New server: $CONF is the template ${tpl#configs/} now; nothing else is installed yet."
+    echo "Edit it for this server: [allowlist] (your own addresses), [notify], [cluster] (node_id,"
+    echo "peers, enabled), [digest] certs, ... It starts in mode = \"shadow\" (decides and"
+    echo "logs, bans nothing). Then run this again:  sudo ./install.sh"
+    echo "(a node joining others:  sudo ./install.sh --cluster-key FILE, their /etc/vpsfort/cluster.key)"
+    exit 0
+fi
+"$bin" --config "$staged" print-config > /dev/null || die "$staged: not a valid config (above)"
+cp "$staged" files/vpsfort.toml
+
+generated=no
+if [ -f "$KEY" ]; then
+    if [ -n "$cluster_key" ] && ! cmp -s "$cluster_key" "$KEY"; then
+        echo "note: keeping the existing $KEY (not $cluster_key); to change keys on every node,"
+        echo "      see README.md, \"Rotating the key\""
+    fi
+elif [ -n "$cluster_key" ]; then
+    install -m 0600 "$cluster_key" files/cluster.key
+elif [ "$(setting cluster enabled "$effective")" = true ]; then
+    (umask 077; "$bin" cluster-keygen > files/cluster.key)
+    generated=yes
+fi
+
+bash files/install.sh
+
+if [ "$generated" = yes ]; then
+    echo
+    echo "New cluster key: $KEY. Every node needs the same one: copy it to the other nodes"
+    echo "(as root, mode 0600) and install there with  sudo ./install.sh --cluster-key FILE"
+fi

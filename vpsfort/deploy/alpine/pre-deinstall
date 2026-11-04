@@ -1,0 +1,9 @@
+#!/bin/sh
+# vpsfort's Alpine package, before its files are removed (apk runs this as .pre-deinstall;
+# an upgrade runs .pre-upgrade instead). The service stops and leaves the boot runlevel;
+# /etc/vpsfort, /var/lib/vpsfort and /var/log/vpsfort stay, the periodic links too.
+if command -v rc-service > /dev/null; then
+    rc-service vpsfort stop > /dev/null 2>&1 || true
+    rc-update del vpsfort default > /dev/null 2>&1 || true
+fi
+exit 0

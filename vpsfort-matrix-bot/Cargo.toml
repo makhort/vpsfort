@@ -1,0 +1,109 @@
+[package]
+name = "vpsfort-matrix-bot"
+version = "0.3.0"
+edition = "2021"
+description = "Matrix bot delivering vpsfort's admin alerts, digests and reports, end-to-end encrypted (Olm/Megolm), else as OpenPGP files"
+license = "MIT"
+repository = "https://github.com/makhort/vpsfort"
+# Built from this repository (vpsfort-botlib is a path dependency), never from crates.io
+publish = false
+
+[dependencies]
+# encrypted attachments (AES-256-CTR, as the Matrix spec has them)
+aes = "0.8"
+ctr = "0.9"
+anyhow = "1"
+# the outbox, pseudonyms, server names, OpenPGP files and the log, shared by the copy bots
+vpsfort-botlib = { path = "../vpsfort-botlib" }
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+clap = { version = "4", features = ["derive", "env"] }
+# the pseudonyms of SANITIZE=on (src/redact.rs, as vpsfort-tg-bot)
+hmac = "0.12"
+# geteuid: `login` refuses to run as root (the state file must stay the bot's)
+libc = "0.2"
+log = { version = "0.4", features = ["std"] }
+# OpenPGP for the fallback (seal.rs): pure Rust, MIT/Apache; it takes rand 0.8's RNG traits
+pgp = { version = "0.21", default-features = false }
+rand = "0.9"
+rand08 = { package = "rand", version = "0.8" }
+# `login` asks for the bot account's password without echoing it
+rpassword = "7"
+# rustls with ring (as the other bots): no OpenSSL, no aws-lc, so the static musl build works
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt", "macros", "time", "signal", "sync", "net", "io-util"] }
+# Olm and Megolm: matrix.org's pure-Rust implementation (Apache-2.0), audited; no libolm, no C
+vodozemac = "0.11"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# The distribution packages (scripts/package.sh builds them with cargo-deb and
+# cargo-generate-rpm; README, "Install from a package"). The deploy files come from
+# target/package/stage/, where package.sh puts deploy/'s files; the maintainer scripts are
+# deploy/pkg/. Both tables list the same files.
+[package.metadata.deb]
+maintainer = "makhort <makhort@users.noreply.github.com>"
+copyright = "2026 The vpsfort contributors"
+license-file = ["target/package/stage/LICENSE", "0"]
+section = "admin"
+priority = "optional"
+depends = "systemd, ca-certificates"
+extended-description = """\
+vpsfort-matrix-bot sends vpsfort's admin alerts, digests and abuse reports to the admin's \
+Matrix account, end-to-end encrypted (Olm/Megolm) to the devices the admin verified; else as \
+OpenPGP-encrypted files. It installs to /opt/vpsfort-matrix-bot as its own system user, with config.env from the \
+template; nothing is started until it is filled in."""
+maintainer-scripts = "deploy/pkg"
+assets = [
+    ["target/release/vpsfort-matrix-bot", "opt/vpsfort-matrix-bot/", "755"],
+    ["target/package/stage/config.env.example", "opt/vpsfort-matrix-bot/", "644"],
+    ["target/package/stage/vpsfort-matrix-bot.service", "usr/lib/systemd/system/", "644"],
+    ["target/package/stage/vpsfort-matrix-bot.logrotate", "etc/logrotate.d/vpsfort-matrix-bot", "644"],
+    ["README.md", "usr/share/doc/vpsfort-matrix-bot/", "644"],
+]
+
+[package.metadata.generate-rpm]
+summary = "Matrix bot delivering vpsfort's admin messages, end-to-end encrypted"
+url = "https://github.com/makhort/vpsfort"
+release = "1"
+auto-req = "no"
+post_install_script = "deploy/pkg/postinst"
+post_install_script_prog = ["/bin/bash"]
+pre_uninstall_script = "deploy/pkg/prerm"
+pre_uninstall_script_prog = ["/bin/bash"]
+post_uninstall_script = "deploy/pkg/postrm"
+post_uninstall_script_prog = ["/bin/bash"]
+assets = [
+    { source = "target/release/vpsfort-matrix-bot", dest = "/opt/vpsfort-matrix-bot/vpsfort-matrix-bot", mode = "755" },
+    { source = "target/package/stage/config.env.example", dest = "/opt/vpsfort-matrix-bot/config.env.example", mode = "644" },
+    { source = "target/package/stage/vpsfort-matrix-bot.service", dest = "/usr/lib/systemd/system/vpsfort-matrix-bot.service", mode = "644" },
+    { source = "target/package/stage/vpsfort-matrix-bot.logrotate", dest = "/etc/logrotate.d/vpsfort-matrix-bot", mode = "644", config = "noreplace" },
+    { source = "README.md", dest = "/usr/share/doc/vpsfort-matrix-bot/README.md", mode = "644", doc = true },
+    { source = "target/package/stage/LICENSE", dest = "/usr/share/doc/vpsfort-matrix-bot/LICENSE", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+systemd = "*"
+shadow-utils = "*"
+ca-certificates = "*"
+
+# The Alpine package (scripts/package.sh, scripts/apk.py at the repository's root): the
+# same files as the .deb, OpenRC scripts from deploy/alpine/ instead of the units.
+[package.metadata.apk]
+depends = ["ca-certificates"]
+assets = [
+    ["target/release/vpsfort-matrix-bot", "opt/vpsfort-matrix-bot/", "755"],
+    ["target/package/stage/config.env.example", "opt/vpsfort-matrix-bot/", "644"],
+    ["deploy/alpine/vpsfort-matrix-bot.initd", "etc/init.d/vpsfort-matrix-bot", "755"],
+    ["target/package/stage/vpsfort-matrix-bot.logrotate", "etc/logrotate.d/vpsfort-matrix-bot", "644"],
+    ["README.md", "usr/share/doc/vpsfort-matrix-bot/", "644"],
+    ["target/package/stage/LICENSE", "usr/share/doc/vpsfort-matrix-bot/", "644"],
+]

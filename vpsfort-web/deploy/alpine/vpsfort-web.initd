@@ -1,0 +1,35 @@
+#!/sbin/openrc-run
+# vpsfort-web on OpenRC (Alpine): what deploy/vpsfort-web.service does under systemd. The
+# settings come from /opt/vpsfort-web/config.env, which vpsfort-web reads itself as the
+# unit's EnvironmentFile= would (every value whole, blanks and all; sourced in a shell, a list
+# like `AGENT_ALLOW=192.0.2.1, 192.0.2.2` would run a command named 192.0.2.2 instead); the
+# console's own messages go to /var/log/vpsfort-web/console.log (no journal here). Its
+# state (STATE_DIR) is /var/lib/vpsfort-web, the console's own. Supervised: started again
+# 5 seconds after a crash. systemd's sandboxing has no OpenRC equivalent here.
+#   rc-update add vpsfort-web default && rc-service vpsfort-web start
+description="Read-only web console and agents for a vpsfort cluster"
+supervisor=supervise-daemon
+command=/opt/vpsfort-web/vpsfort-web
+command_user="vpsfort-web:vpsfort-web"
+directory=/opt/vpsfort-web
+respawn_delay=5
+respawn_max=0
+output_log=/var/log/vpsfort-web/console.log
+error_log=/var/log/vpsfort-web/console.log
+config=/opt/vpsfort-web/config.env
+
+depend() {
+    need net
+    use dns vpsfort
+}
+
+start_pre() {
+    if [ ! -r "$config" ]; then
+        eerror "$config is missing: copy the template next to it and fill it in"
+        return 1
+    fi
+    checkpath -d -m 0700 -o vpsfort-web:vpsfort-web /var/lib/vpsfort-web
+    checkpath -d -m 0750 -o root:vpsfort-web /var/log/vpsfort-web
+    # the file is read by vpsfort-web itself (STATE_DIR defaults to /var/lib/vpsfort-web)
+    export VPSFORT_WEB_CONFIG="$config"
+}

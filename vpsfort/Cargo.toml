@@ -1,0 +1,133 @@
+[package]
+name = "vpsfort"
+version = "0.6.0"
+edition = "2021"
+description = "Near-realtime behaviour-based protection for SSH, ejabberd and UFW logs"
+license = "MIT"
+repository = "https://github.com/makhort/vpsfort"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+chacha20poly1305 = { version = "0.10", features = ["std", "getrandom"] }
+clap = { version = "4", features = ["derive", "env"] }
+crossterm = "0.29"
+# [cluster] identity_file: each node signs its own facts (pure Rust; keys come from OsRng above)
+ed25519-dalek = { version = "2", default-features = false, features = ["fast", "zeroize"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# the cluster link's forward secrecy: a fresh X25519 exchange per connection, the message
+# key derived with HKDF (both pure Rust, as in vpsfort-web's agent protocol)
+hkdf = "0.12"
+# inotify for the cron watch (src/inotify.rs): the watched files' directories
+libc = "0.2"
+md-5 = { version = "0.10", default-features = false }
+# line_count: the exact height of wrapped text, for the details pane and popups
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
+# [[patterns]]: linear-time matching, whatever a log line holds; the lazy DFA keeps it fast
+# without the size of the other engines (about 1 MB less)
+regex = { version = "1", default-features = false, features = ["std", "perf-dfa", "unicode-perl", "unicode-case"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = { version = "0.10", default-features = false }
+signal-hook = "0.3"
+toml = "0.8"
+x25519-dalek = "2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# The sample replays in tests/ scan a month of logs; keep them fast.
+[profile.test]
+opt-level = 2
+
+# The distribution packages (scripts/package.sh builds them with cargo-deb and
+# cargo-generate-rpm; README, "Install from a package"). The deploy files come from
+# target/package/stage/, where package.sh puts deploy/'s files with the package's paths; the
+# maintainer scripts are deploy/pkg/. Both tables list the same files.
+[package.metadata.deb]
+maintainer = "makhort <makhort@users.noreply.github.com>"
+copyright = "2026 The vpsfort contributors"
+license-file = ["target/package/stage/LICENSE", "0"]
+section = "admin"
+priority = "optional"
+depends = "systemd"
+recommends = "logrotate, curl"
+extended-description = """vpsfort follows the systemd journal (sshd, ejabberd, the kernel's firewall log, Nextcloud, common services), scores every remote address by what it does, and bans attackers in nftables, firewalld, ufw, iptables or ipset within seconds. Nodes share bans over an encrypted cluster link; optional bots and a web console carry its alerts, digests and abuse reports. The config template goes to /etc/vpsfort/vpsfort.toml on a new host; nothing is started until it is edited."""
+maintainer-scripts = "deploy/pkg"
+assets = [
+    ["target/release/vpsfort", "usr/bin/", "755"],
+    ["target/package/stage/vpsfort-avscan.sh", "usr/bin/vpsfort-avscan", "755"],
+    ["target/package/stage/vpsfort-abuse-report.sh", "usr/bin/vpsfort-abuse-report", "755"],
+    ["target/package/stage/vpsfort.service", "usr/lib/systemd/system/", "644"],
+    ["target/package/stage/vpsfort-avscan.service", "usr/lib/systemd/system/", "644"],
+    ["target/package/stage/vpsfort-avscan.timer", "usr/lib/systemd/system/", "644"],
+    ["target/package/stage/vpsfort-abuse-report.service", "usr/lib/systemd/system/", "644"],
+    ["target/package/stage/vpsfort-abuse-report.timer", "usr/lib/systemd/system/", "644"],
+    ["target/package/stage/vpsfort.logrotate", "etc/logrotate.d/vpsfort", "644"],
+    ["target/package/stage/vpsfort-avscan.default", "etc/default/vpsfort-avscan", "644"],
+    ["target/package/stage/vpsfort-abuse-report.default", "etc/default/vpsfort-abuse-report", "644"],
+    ["target/package/stage/*.toml", "usr/share/vpsfort/templates/", "644"],
+    ["README.md", "usr/share/doc/vpsfort/", "644"],
+    ["TESTING-fedora.md", "usr/share/doc/vpsfort/", "644"],
+]
+
+[package.metadata.generate-rpm]
+summary = "Behaviour-based protection for SSH, XMPP, firewall and application logs"
+url = "https://github.com/makhort/vpsfort"
+release = "1"
+auto-req = "no"
+pre_install_script = "deploy/pkg/preinst"
+pre_install_script_prog = ["/bin/bash"]
+post_install_script = "deploy/pkg/postinst"
+post_install_script_prog = ["/bin/bash"]
+pre_uninstall_script = "deploy/pkg/prerm"
+pre_uninstall_script_prog = ["/bin/bash"]
+post_uninstall_script = "deploy/pkg/postrm"
+post_uninstall_script_prog = ["/bin/bash"]
+assets = [
+    { source = "target/release/vpsfort", dest = "/usr/bin/vpsfort", mode = "755" },
+    { source = "target/package/stage/vpsfort-avscan.sh", dest = "/usr/bin/vpsfort-avscan", mode = "755" },
+    { source = "target/package/stage/vpsfort-abuse-report.sh", dest = "/usr/bin/vpsfort-abuse-report", mode = "755" },
+    { source = "target/package/stage/vpsfort.service", dest = "/usr/lib/systemd/system/vpsfort.service", mode = "644" },
+    { source = "target/package/stage/vpsfort-avscan.service", dest = "/usr/lib/systemd/system/vpsfort-avscan.service", mode = "644" },
+    { source = "target/package/stage/vpsfort-avscan.timer", dest = "/usr/lib/systemd/system/vpsfort-avscan.timer", mode = "644" },
+    { source = "target/package/stage/vpsfort-abuse-report.service", dest = "/usr/lib/systemd/system/vpsfort-abuse-report.service", mode = "644" },
+    { source = "target/package/stage/vpsfort-abuse-report.timer", dest = "/usr/lib/systemd/system/vpsfort-abuse-report.timer", mode = "644" },
+    { source = "target/package/stage/vpsfort.logrotate", dest = "/etc/logrotate.d/vpsfort", mode = "644", config = "noreplace" },
+    { source = "target/package/stage/vpsfort-avscan.default", dest = "/etc/default/vpsfort-avscan", mode = "644", config = "noreplace" },
+    { source = "target/package/stage/vpsfort-abuse-report.default", dest = "/etc/default/vpsfort-abuse-report", mode = "644", config = "noreplace" },
+    { source = "target/package/stage/*.toml", dest = "/usr/share/vpsfort/templates/", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/vpsfort/README.md", mode = "644", doc = true },
+    { source = "TESTING-fedora.md", dest = "/usr/share/doc/vpsfort/TESTING-fedora.md", mode = "644", doc = true },
+    { source = "target/package/stage/LICENSE", dest = "/usr/share/doc/vpsfort/LICENSE", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+systemd = "*"
+
+[package.metadata.generate-rpm.recommends]
+logrotate = "*"
+curl = "*"
+
+# The Alpine package (scripts/package.sh, scripts/apk.py at the repository's root): the
+# same files as the .deb, OpenRC scripts from deploy/alpine/ instead of the units.
+[package.metadata.apk]
+depends = ["bash"]
+assets = [
+    ["target/release/vpsfort", "usr/bin/", "755"],
+    ["target/package/stage/vpsfort-avscan.sh", "usr/bin/vpsfort-avscan", "755"],
+    ["target/package/stage/vpsfort-abuse-report.sh", "usr/bin/vpsfort-abuse-report", "755"],
+    ["deploy/alpine/vpsfort.initd", "etc/init.d/vpsfort", "755"],
+    ["deploy/alpine/vpsfort-abuse-report.periodic", "usr/share/vpsfort/periodic/vpsfort-abuse-report", "755"],
+    ["deploy/alpine/vpsfort-avscan.periodic", "usr/share/vpsfort/periodic/vpsfort-avscan", "755"],
+    ["target/package/stage/vpsfort.logrotate", "etc/logrotate.d/vpsfort", "644"],
+    ["target/package/stage/vpsfort-avscan.default", "etc/default/vpsfort-avscan", "644"],
+    ["target/package/stage/vpsfort-abuse-report.default", "etc/default/vpsfort-abuse-report", "644"],
+    ["target/package/stage/*.toml", "usr/share/vpsfort/templates/", "644"],
+    ["README.md", "usr/share/doc/vpsfort/", "644"],
+    ["TESTING-fedora.md", "usr/share/doc/vpsfort/", "644"],
+    ["target/package/stage/LICENSE", "usr/share/doc/vpsfort/", "644"],
+]

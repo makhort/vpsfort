@@ -1,0 +1,25 @@
+[package]
+name = "vpsfort-sim"
+version = "0.2.0"
+edition = "2021"
+description = "A simulated vpsfort cluster and its web console, from decision logs or a console export"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1"
+# rotated .gz copies of a decision log
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+vpsfort = { path = "../vpsfort" }
+vpsfort-web = { path = "../vpsfort-web" }
+# the plain-HTTP door to the console (`plain_http`): a TLS client that trusts the simulator's own certificate
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pki-types = { version = "1", features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

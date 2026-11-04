@@ -1,0 +1,55 @@
+[Unit]
+Description=Telegram bot for vpsfort's admin messages
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Its own user: no ejabberd group, no access to ejabberd's files. install.sh creates it
+# and sets the owners and modes of /opt/vpsfort-tg-bot.
+User=vpsfort-tg-bot
+Group=vpsfort-tg-bot
+WorkingDirectory=/opt/vpsfort-tg-bot
+EnvironmentFile=/opt/vpsfort-tg-bot/config.env
+ExecStart=/opt/vpsfort-tg-bot/vpsfort-tg-bot
+
+Restart=always
+RestartSec=5
+# 78: Telegram refused the token, or a bad setting. Restarting would not help.
+RestartPreventExitStatus=78
+
+# Hardening: the bot reads its outbox and talks HTTPS to Telegram, nothing else.
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+UMask=0077
+ProtectSystem=strict
+ReadWritePaths=/opt/vpsfort-tg-bot /var/log/vpsfort-tg-bot
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# At most this much memory (a small Rust program: alerts, a weekly report and the keys): the kernel
+# reclaims above MemoryHigh and ends the service above MemoryMax, so a leak or a flood of
+# messages can't take the host's memory from the services it protects.
+MemoryHigh=96M
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

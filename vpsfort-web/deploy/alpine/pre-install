@@ -1,0 +1,10 @@
+#!/bin/sh
+# vpsfort-web's Alpine package, before its files are unpacked: the system user of its own,
+# without a home or a shell (apk runs this as .pre-install and .pre-upgrade). vpsfort's
+# [console] socket is given to its group.
+if ! id vpsfort-web > /dev/null 2>&1; then
+    addgroup -S vpsfort-web 2> /dev/null || true
+    adduser -S -D -H -s /sbin/nologin -G vpsfort-web -g "vpsfort-web" vpsfort-web
+    echo "vpsfort-web: created the system user vpsfort-web"
+fi
+exit 0

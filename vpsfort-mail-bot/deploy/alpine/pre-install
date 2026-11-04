@@ -1,0 +1,9 @@
+#!/bin/sh
+# vpsfort-mail-bot's Alpine package, before its files are unpacked: the system user of its own,
+# without a home or a shell (apk runs this as .pre-install and .pre-upgrade).
+if ! id vpsfort-mail-bot > /dev/null 2>&1; then
+    addgroup -S vpsfort-mail-bot 2> /dev/null || true
+    adduser -S -D -H -s /sbin/nologin -G vpsfort-mail-bot -g "vpsfort-mail-bot" vpsfort-mail-bot
+    echo "vpsfort-mail-bot: created the system user vpsfort-mail-bot"
+fi
+exit 0

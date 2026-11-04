@@ -1,0 +1,44 @@
+# macOS
+.DS_Store
+
+# Rust build output
+vpsfort/target/
+vpsfort-xmpp-bot/target/
+vpsfort-tg-bot/target/
+vpsfort-sim/target/
+vpsfort-botlib/target/
+vpsfort-push-bot/target/
+
+# Secrets: never commit the cluster key
+vpsfort/deploy/cluster.key
+vpsfort/deploy/cluster.key.*
+*.key
+*.key.next
+*.key.prev
+
+# vpsfort-tg-bot's real settings hold the bot token; only config.env.example belongs here
+vpsfort-tg-bot/deploy/config.env
+vpsfort-mail-bot/target/
+
+# vpsfort-mail-bot's real settings hold the SMTP password; only config.env.example belongs here
+vpsfort-mail-bot/deploy/config.env
+vpsfort-signal-bot/target/
+vpsfort-matrix-bot/target/
+vpsfort-web/target/
+
+# the Signal and Matrix bots' real settings name the accounts; only config.env.example belongs here
+vpsfort-signal-bot/deploy/config.env
+vpsfort-matrix-bot/deploy/config.env
+
+# vpsfort-web's real settings name the nodes and consoles; only config.env.example belongs here
+vpsfort-web/deploy/config.env
+
+# cargo cyclonedx writes the SBOM next to Cargo.toml (CI moves it to target/sbom)
+*.cdx.json
+
+# the web key a rotation stages (vpsfort-web/deploy/rotate-web-key.sh)
+vpsfort-web/deploy/web.key
+vpsfort-web/deploy/web.key.*
+
+# vpsfort-push-bot's real settings hold the service's token; only config.env.example belongs here
+vpsfort-push-bot/deploy/config.env

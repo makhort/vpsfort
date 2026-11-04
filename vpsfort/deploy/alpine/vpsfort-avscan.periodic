@@ -1,0 +1,9 @@
+#!/bin/sh
+# The daily ClamAV scan on Alpine ([antivirus] in vpsfort.toml), where there are no systemd
+# timers: this file linked into /etc/periodic/daily/ is what  systemctl enable
+# vpsfort-avscan.timer  is elsewhere. Settings in /etc/default/vpsfort-avscan.
+#   ln -s /usr/share/vpsfort/periodic/vpsfort-avscan /etc/periodic/daily/
+set -a
+[ -r /etc/default/vpsfort-avscan ] && . /etc/default/vpsfort-avscan
+set +a
+exec /usr/bin/vpsfort-avscan

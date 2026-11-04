@@ -1,0 +1,68 @@
+# Settings for vpsfort-abuse-report (run weekly by
+# vpsfort-abuse-report.timer). Change the time with:  systemctl edit vpsfort-abuse-report.timer
+# (keep it the same on every server).
+
+# auto: relay on a node with [notify] xmpp = false and cluster peers (a relay node for Telegram,
+# mail, Signal, Matrix or the XMPP client bot), else merge where a bot's outbox exists (any
+# server with vpsfort-xmpp-bot or a copy bot; one without cluster peers merges at once), else
+# send to the cluster peers if there are any (the VPN server), else off. Or send, merge, relay, off.
+#ABUSE_REPORT_ROLE=auto
+
+# The window of each report.
+#ABUSE_REPORT_SINCE=7d
+
+# merge: the peers' node ids to wait for (up to ABUSE_REPORT_WAIT_MIN minutes). Empty:
+# merge as soon as the first peer report arrives (enough with one peer).
+#ABUSE_REPORT_PEERS="vpn"
+#ABUSE_REPORT_WAIT_MIN=15
+
+# merge: look up each network's abuse mailbox (RDAP via rdap.org); no leaves them out.
+#ABUSE_REPORT_CONTACTS=yes
+
+# merge: the XMPP bot's outbox and the user it runs as (it must be able to delete the file).
+# Default: vpsfort's [notify] bot_outbox (else /opt/vpsfort-xmpp-bot/outbox) and bot_user.
+#ABUSE_REPORT_OUTBOX=/opt/vpsfort-xmpp-bot/outbox
+#ABUSE_REPORT_OWNER=ejabberd
+
+# merge and relay: the Telegram bot's outbox (vpsfort-tg-bot), which sends the report encrypted to the
+# admin's OpenPGP key. Default: vpsfort's [notify] tg_outbox and tg_user; empty: no copy.
+#ABUSE_REPORT_TG_OUTBOX=/opt/vpsfort-tg-bot/outbox
+#ABUSE_REPORT_TG_OWNER=vpsfort-tg-bot
+
+# merge and relay: the mail bot's outbox (vpsfort-mail-bot), which mails the report encrypted to
+# the recipients' OpenPGP keys. Default: vpsfort's [notify] mail_outbox and mail_user; empty: no copy.
+#ABUSE_REPORT_MAIL_OUTBOX=/opt/vpsfort-mail-bot/outbox
+#ABUSE_REPORT_MAIL_OWNER=vpsfort-mail-bot
+
+# merge and relay: the Signal bot's outbox (vpsfort-signal-bot), which sends the report as a
+# Signal attachment (as an OpenPGP file while the admin's safety number isn't the pinned one).
+# Default: vpsfort's [notify] signal_outbox and signal_user; empty: no copy.
+#ABUSE_REPORT_SIGNAL_OUTBOX=/opt/vpsfort-signal-bot/outbox
+#ABUSE_REPORT_SIGNAL_OWNER=vpsfort-signal-bot
+
+# merge and relay: the Matrix bot's outbox (vpsfort-matrix-bot), which sends the report as an
+# end-to-end encrypted attachment (as an OpenPGP file when that isn't possible). Default:
+# vpsfort's [notify] matrix_outbox and matrix_user; empty: no copy.
+#ABUSE_REPORT_MATRIX_OUTBOX=/opt/vpsfort-matrix-bot/outbox
+#ABUSE_REPORT_MATRIX_OWNER=vpsfort-matrix-bot
+# The push bot's outbox and user (vpsfort-push-bot: ntfy, Gotify or a webhook; files only
+# encrypted, and not to Gotify). Default: vpsfort's [notify] push_outbox and push_user; empty: no copy.
+#ABUSE_REPORT_PUSH_OUTBOX=/opt/vpsfort-push-bot/outbox
+#ABUSE_REPORT_PUSH_OWNER=vpsfort-push-bot
+
+# merge and relay: the XMPP client bot's outbox (vpsfort-xmpp-bot with BOT_MODE=client), which
+# sends the report as OMEMO media (as an OpenPGP file when OMEMO can't reach the admin). Default:
+# vpsfort's [notify] xmpp_outbox and xmpp_user; empty: no copy. When it is set, the admin bot's
+# outbox (ABUSE_REPORT_OUTBOX, [notify] bot_outbox) has no default: the path is the same.
+#ABUSE_REPORT_XMPP_OUTBOX=/opt/vpsfort-xmpp-bot/outbox
+#ABUSE_REPORT_XMPP_OWNER=vpsfort-xmpp-bot
+
+# With a Telegram relay node (deploy/vpsfort-tg.toml; role relay there, picked by auto):
+# on the XMPP server (merge), wait for its report too and send it the merged text report:
+#ABUSE_REPORT_PEERS="vpn tg"
+#ABUSE_REPORT_FORWARD_TO="203.0.113.10:7946"
+# on the relay node, send its own report to the merging server only, and wait this long for
+# the merged one (the merging server waits for its peers first, then looks up the mailboxes;
+# if none comes, the relay node merges itself):
+#ABUSE_REPORT_SEND_TO="203.0.113.12:7946"
+#ABUSE_REPORT_RELAY_WAIT_MIN=60

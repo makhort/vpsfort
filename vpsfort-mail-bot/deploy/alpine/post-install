@@ -1,0 +1,36 @@
+#!/bin/sh
+# vpsfort-mail-bot's Alpine package, after its files are unpacked (apk runs this as .post-install
+# and .post-upgrade). What the bundle's install.sh does less the files the package puts in
+# place: /opt/vpsfort-mail-bot and config.env from the template the first time, the owners and
+# modes (everything root's, the bot's group may read, the directory is group-writable for
+# the outbox), the log directory. A running bot is restarted on an upgrade.
+NAME=vpsfort-mail-bot
+DIR=/opt/$NAME
+setting() { # the value of $1 in config.env, quotes removed
+    grep -E "^$1=" "$DIR/config.env" 2> /dev/null | tail -n 1 | cut -d= -f2- | tr -d "\"'" || true
+}
+mkdir -p "$DIR"
+first=no
+if [ ! -f "$DIR/config.env" ]; then
+    first=yes
+    install -m 0640 -o root -g vpsfort-mail-bot "$DIR/config.env.example" "$DIR/config.env"
+    echo "vpsfort-mail-bot: new $DIR/config.env from the template; nothing is started yet."
+    echo "  Fill it in (the README, \"Installation\"), then:  rc-update add vpsfort-mail-bot default && rc-service vpsfort-mail-bot start"
+fi
+chown root:vpsfort-mail-bot "$DIR"
+chmod 1770 "$DIR"
+chown root:vpsfort-mail-bot "$DIR/config.env"
+chmod 640 "$DIR/config.env"
+LOGDIR=$(setting LOG_DIR); LOGDIR=${LOGDIR:-/var/log/$NAME}
+mkdir -p "$LOGDIR"
+chown vpsfort-mail-bot:vpsfort-mail-bot "$LOGDIR"
+chmod 750 "$LOGDIR"
+if [ "$first" = no ] && command -v rc-service > /dev/null; then
+    for s in vpsfort-mail-bot; do
+        if rc-service "$s" status > /dev/null 2>&1; then
+            rc-service "$s" restart || true
+            echo "$NAME: restarted $s"
+        fi
+    done
+fi
+exit 0

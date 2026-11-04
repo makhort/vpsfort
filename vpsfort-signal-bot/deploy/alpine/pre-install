@@ -1,0 +1,9 @@
+#!/bin/sh
+# vpsfort-signal-bot's Alpine package, before its files are unpacked: the system user of its own,
+# without a home or a shell (apk runs this as .pre-install and .pre-upgrade).
+if ! id vpsfort-signal-bot > /dev/null 2>&1; then
+    addgroup -S vpsfort-signal-bot 2> /dev/null || true
+    adduser -S -D -H -s /sbin/nologin -G vpsfort-signal-bot -g "vpsfort-signal-bot" vpsfort-signal-bot
+    echo "vpsfort-signal-bot: created the system user vpsfort-signal-bot"
+fi
+exit 0

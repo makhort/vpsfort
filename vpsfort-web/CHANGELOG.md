@@ -1,0 +1,13 @@
+# Changelog
+
+Each release's section is what its GitHub Release shows; the format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## 0.5.0 - 2026-11-05
+
+First public release.
+
+- A read-only HTTPS console for the whole cluster: nodes, bans, scores, alerts, history, digests, maps at city coordinates, health, saved views.
+- Agents on the nodes read the daemon's console socket and talk to the console over a web key of their own, never the cluster key.
+- Admin sign-in with a password and an optional one-time code, or with a passkey alone; lockouts, sessions and passkeys survive a restart; share links that show what the abuse report shows, no more.
+- Exports, Prometheus metrics with alerting rules, a web key rotation script.

@@ -1,0 +1,9 @@
+#!/bin/sh
+# vpsfort-tg-bot's Alpine package, before its files are unpacked: the system user of its own,
+# without a home or a shell (apk runs this as .pre-install and .pre-upgrade).
+if ! id vpsfort-tg-bot > /dev/null 2>&1; then
+    addgroup -S vpsfort-tg-bot 2> /dev/null || true
+    adduser -S -D -H -s /sbin/nologin -G vpsfort-tg-bot -g "vpsfort-tg-bot" vpsfort-tg-bot
+    echo "vpsfort-tg-bot: created the system user vpsfort-tg-bot"
+fi
+exit 0

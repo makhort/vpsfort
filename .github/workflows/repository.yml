@@ -1,0 +1,127 @@
+name: repository
+
+# GitHub Pages for the project (Settings → Pages → Deploy from a branch: gh-pages, / (root)),
+# pushed to the `gh-pages` branch as a whole:
+#   - the documentation site (`docs/`): the READMEs and COMPARISON.md built with mdBook
+#     (scripts/docs-site.sh), after every push to the default branch that changes them;
+#   - a signed apt and dnf repository of the releases' packages: after every release is
+#     published (each crate's workflow creates one for its tag), the newest .deb and .rpm of
+#     every crate are gathered from the releases, scripts/repo.sh signs the rpms and builds and
+#     signs the repositories. This part needs two repository secrets: REPO_GPG_KEY, an armored
+#     OpenPGP private key for signing (make it once: `gpg --quick-generate-key "vpsfort
+#     packages <you@example.org>" rsa4096 sign 0`, then `gpg --armor --export-secret-keys
+#     <id>`; RSA, since rpm before 4.16 can't verify ed25519), and REPO_GPG_PASSPHRASE if it
+#     has one. Without REPO_GPG_KEY, or before the first release, only the docs are published.
+# The first run creates the gh-pages branch: choose it in Settings → Pages after that run.
+on:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths: ["README.md", "COMPARISON.md", "*/README.md", "vpsfort/TESTING-fedora.md", "scripts/docs-site.sh", "scripts/repo.sh", ".github/workflows/repository.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write           # push the gh-pages branch; read the releases' assets
+
+concurrency:
+  group: repository
+  cancel-in-progress: false
+
+env:
+  MDBOOK_VERSION: v0.4.40
+
+jobs:
+  publish:
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check for the signing key
+        id: key
+        env:
+          REPO_GPG_KEY: ${{ secrets.REPO_GPG_KEY }}
+        run: |
+          if [ -z "$REPO_GPG_KEY" ]; then
+              echo "no REPO_GPG_KEY secret: the docs only, no package repository"
+              echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+              echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Tools
+        run: |
+          sudo apt-get update -q > /dev/null && sudo apt-get install -y -q apt-utils createrepo-c rpm > /dev/null
+          curl -fsSL "https://github.com/rust-lang/mdBook/releases/download/$MDBOOK_VERSION/mdbook-$MDBOOK_VERSION-x86_64-unknown-linux-gnu.tar.gz" \
+              | tar -xz -C /usr/local/bin mdbook
+          mdbook --version
+      - name: Build the documentation site
+        run: |
+          mkdir -p site
+          ./scripts/docs-site.sh site/docs
+      - name: Import the signing key
+        if: steps.key.outputs.present == 'true'
+        env:
+          REPO_GPG_KEY: ${{ secrets.REPO_GPG_KEY }}
+          REPO_GPG_PASSPHRASE: ${{ secrets.REPO_GPG_PASSPHRASE }}
+        run: |
+          printf '%s\n' "$REPO_GPG_KEY" | gpg --batch --import
+          key_id=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "sec" { print $5; exit }')
+          echo "REPO_GPG_KEY_ID=$key_id" >> "$GITHUB_ENV"
+          if [ -n "$REPO_GPG_PASSPHRASE" ]; then
+              # the agent takes the passphrase once, for the signatures below
+              mkdir -p ~/.gnupg && echo "allow-preset-passphrase" >> ~/.gnupg/gpg-agent.conf && gpg-connect-agent reloadagent /bye > /dev/null
+              keygrip=$(gpg --batch --with-colons --with-keygrip --list-secret-keys "$key_id" | awk -F: '$1 == "grp" { print $10; exit }')
+              printf '%s' "$REPO_GPG_PASSPHRASE" | /usr/lib/gnupg/gpg-preset-passphrase --preset "$keygrip"
+          fi
+          gpg --batch --list-keys "$key_id"
+      - name: Gather the newest packages of every crate
+        id: gather
+        if: steps.key.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p packages
+          for crate in vpsfort vpsfort-web vpsfort-xmpp-bot vpsfort-tg-bot vpsfort-mail-bot vpsfort-signal-bot vpsfort-matrix-bot vpsfort-push-bot; do
+              # the crate's newest tag with a release (tags sort by version)
+              tag=$(gh release list --limit 200 --json tagName --jq ".[].tagName | select(startswith(\"$crate-v\"))" | sort -V | tail -1)
+              [ -n "$tag" ] || { echo "$crate: no release yet"; continue; }
+              gh release download "$tag" --dir "packages/$tag" --pattern '*.deb' --pattern '*.rpm' --pattern '*.sha256'
+              (cd "packages/$tag" && sha256sum -c --quiet ./*.deb.sha256 ./*.rpm.sha256)
+              echo "$crate: $tag"
+          done
+          find packages -name '*.deb' -o -name '*.rpm' | sort
+          found=$(find packages -name '*.deb' -o -name '*.rpm' | wc -l | tr -d ' ')
+          [ "$found" != 0 ] || echo "no release with packages yet: the docs only, no package repository"
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+      - name: Build the repositories
+        if: steps.key.outputs.present == 'true' && steps.gather.outputs.found != '0'
+        run: |
+          owner=${GITHUB_REPOSITORY%%/*}
+          name=${GITHUB_REPOSITORY#*/}
+          url="https://${owner,,}.github.io/${name}"
+          ./scripts/repo.sh --packages packages --out repo --url "$url"
+          # the repository's files next to the docs (repo.sh empties its output directory first)
+          cp -R repo/. site/
+      - name: Publish to the gh-pages branch
+        run: |
+          owner=${GITHUB_REPOSITORY%%/*}
+          name=${GITHUB_REPOSITORY#*/}
+          url="https://${owner,,}.github.io/${name}"
+          cd site
+          # without the package repository, the site's root points at the docs
+          if [ ! -f index.html ]; then
+              printf '<!doctype html>\n<meta charset="utf-8">\n<meta http-equiv="refresh" content="0; url=docs/">\n<title>vpsfort</title>\n<a href="docs/">vpsfort documentation</a>\n' > index.html
+          else
+              # the package index links to the docs
+              sed -i 's#<h1>vpsfort packages</h1>#<h1>vpsfort packages</h1>\n<p><a href="docs/">The documentation</a>: the READMEs and the comparison with other tools, as a site.</p>#' index.html
+          fi
+          touch .nojekyll
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "docs and packages as of $(date -u +%Y-%m-%d) ($GITHUB_SHA)"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
+          echo "published: $url (Pages must serve the gh-pages branch)"

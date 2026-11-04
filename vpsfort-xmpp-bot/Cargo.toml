@@ -1,0 +1,122 @@
+[package]
+name = "vpsfort-xmpp-bot"
+version = "0.6.0"
+edition = "2021"
+description = "XMPP bot for vpsfort: an admin bot exposing curated ejabberdctl commands, or a client bot sending vpsfort's admin messages OMEMO-encrypted, else as OpenPGP files"
+license = "MIT"
+repository = "https://github.com/makhort/vpsfort"
+
+[dependencies]
+aes = { version = "0.8", features = ["zeroize"] }
+aes-gcm = "0.10"
+anyhow = "1"
+base64 = "0.22"
+cbc = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+chrono-tz = { version = "0.10", default-features = false }
+clap = { version = "4", features = ["derive", "env"] }
+curve25519-dalek = "4"
+ed25519-dalek = "2"
+futures = "0.3"
+hkdf = "0.12"
+hmac = "0.12"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
+indexmap = { version = "2", features = ["serde"] }
+libc = "0.2"
+log = { version = "0.4", features = ["std"] }
+# OpenPGP for client mode's fallback (seal.rs, as the Signal and Matrix bots): pure Rust,
+# MIT/Apache; it takes rand 0.8's RNG traits
+pgp = { version = "0.21", default-features = false }
+prost = "0.14"
+rand = "0.9"
+rand08 = { package = "rand", version = "0.8" }
+rustls-native-certs = "0.8"
+sasl = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.10"
+sha2 = "0.10"
+shlex = "1"
+tokio = { version = "1", features = ["rt", "macros", "process", "time", "signal", "sync"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tokio-xmpp = { version = "6", default-features = false, features = ["starttls", "direct-tls", "ring", "rustls-native-certs"] }
+url = "2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# The distribution packages (scripts/package.sh builds them with cargo-deb and
+# cargo-generate-rpm; README, "Install from a package"). The deploy files come from
+# target/package/stage/, where package.sh puts deploy/'s files; the maintainer scripts are
+# deploy/pkg/. Both tables list the same files.
+[package.metadata.deb]
+maintainer = "makhort <makhort@users.noreply.github.com>"
+copyright = "2026 The vpsfort contributors"
+license-file = ["target/package/stage/LICENSE", "0"]
+section = "admin"
+priority = "optional"
+depends = "systemd, ca-certificates"
+extended-description = """\
+vpsfort-xmpp-bot carries vpsfort's admin alerts, digests and abuse reports over XMPP, \
+OMEMO-encrypted. On the XMPP server (admin mode, as the user ejabberd) it also answers curated \
+ejabberdctl commands in chat; anywhere else (BOT_MODE=client, its own user) it only sends, with \
+OpenPGP-encrypted files as the fallback. It installs to /opt/vpsfort-xmpp-bot with config.env \
+from the template of the mode for this host; nothing is started until it is filled in."""
+maintainer-scripts = "deploy/pkg"
+assets = [
+    ["target/release/vpsfort-xmpp-bot", "opt/vpsfort-xmpp-bot/", "755"],
+    ["target/package/stage/config.env.example", "opt/vpsfort-xmpp-bot/", "644"],
+    ["target/package/stage/config-client.env.example", "opt/vpsfort-xmpp-bot/", "644"],
+    ["target/package/stage/vpsfort-xmpp-bot.service", "usr/lib/systemd/system/", "644"],
+    ["target/package/stage/vpsfort-xmpp-bot-client.service", "usr/lib/systemd/system/", "644"],
+    ["target/package/stage/vpsfort-xmpp-bot.logrotate", "usr/share/vpsfort-xmpp-bot/", "644"],
+    ["target/package/stage/ejabberd-logs.logrotate", "usr/share/vpsfort-xmpp-bot/", "644"],
+    ["README.md", "usr/share/doc/vpsfort-xmpp-bot/", "644"],
+]
+
+[package.metadata.generate-rpm]
+summary = "XMPP bot for vpsfort: ejabberd admin commands and OMEMO-encrypted admin messages"
+url = "https://github.com/makhort/vpsfort"
+release = "1"
+auto-req = "no"
+post_install_script = "deploy/pkg/postinst"
+post_install_script_prog = ["/bin/bash"]
+pre_uninstall_script = "deploy/pkg/prerm"
+pre_uninstall_script_prog = ["/bin/bash"]
+post_uninstall_script = "deploy/pkg/postrm"
+post_uninstall_script_prog = ["/bin/bash"]
+assets = [
+    { source = "target/release/vpsfort-xmpp-bot", dest = "/opt/vpsfort-xmpp-bot/vpsfort-xmpp-bot", mode = "755" },
+    { source = "target/package/stage/config.env.example", dest = "/opt/vpsfort-xmpp-bot/config.env.example", mode = "644" },
+    { source = "target/package/stage/config-client.env.example", dest = "/opt/vpsfort-xmpp-bot/config-client.env.example", mode = "644" },
+    { source = "target/package/stage/vpsfort-xmpp-bot.service", dest = "/usr/lib/systemd/system/vpsfort-xmpp-bot.service", mode = "644" },
+    { source = "target/package/stage/vpsfort-xmpp-bot-client.service", dest = "/usr/lib/systemd/system/vpsfort-xmpp-bot-client.service", mode = "644" },
+    { source = "target/package/stage/vpsfort-xmpp-bot.logrotate", dest = "/usr/share/vpsfort-xmpp-bot/vpsfort-xmpp-bot.logrotate", mode = "644" },
+    { source = "target/package/stage/ejabberd-logs.logrotate", dest = "/usr/share/vpsfort-xmpp-bot/ejabberd-logs.logrotate", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/vpsfort-xmpp-bot/README.md", mode = "644", doc = true },
+    { source = "target/package/stage/LICENSE", dest = "/usr/share/doc/vpsfort-xmpp-bot/LICENSE", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+systemd = "*"
+shadow-utils = "*"
+ca-certificates = "*"
+
+# The Alpine package (scripts/package.sh, scripts/apk.py at the repository's root): the
+# same files as the .deb, OpenRC scripts from deploy/alpine/ instead of the units.
+[package.metadata.apk]
+depends = ["ca-certificates"]
+assets = [
+    ["target/release/vpsfort-xmpp-bot", "opt/vpsfort-xmpp-bot/", "755"],
+    ["target/package/stage/config.env.example", "opt/vpsfort-xmpp-bot/", "644"],
+    ["target/package/stage/config-client.env.example", "opt/vpsfort-xmpp-bot/", "644"],
+    ["deploy/alpine/vpsfort-xmpp-bot.initd", "etc/init.d/vpsfort-xmpp-bot", "755"],
+    ["deploy/alpine/vpsfort-xmpp-bot-client.initd", "etc/init.d/vpsfort-xmpp-bot-client", "755"],
+    ["target/package/stage/vpsfort-xmpp-bot.logrotate", "usr/share/vpsfort-xmpp-bot/", "644"],
+    ["target/package/stage/ejabberd-logs.logrotate", "usr/share/vpsfort-xmpp-bot/", "644"],
+    ["README.md", "usr/share/doc/vpsfort-xmpp-bot/", "644"],
+    ["target/package/stage/LICENSE", "usr/share/doc/vpsfort-xmpp-bot/", "644"],
+]

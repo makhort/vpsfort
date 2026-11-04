@@ -1,0 +1,31 @@
+#!/sbin/openrc-run
+# vpsfort-xmpp-bot-client on OpenRC (Alpine): what deploy/vpsfort-xmpp-bot-client.service does under systemd.
+# The settings come from /opt/vpsfort-xmpp-bot/config.env (exported to the bot, as EnvironmentFile=
+# does); the bot writes its own log (LOG_DIR). Supervised: started again 5 seconds after a
+# crash. systemd's sandboxing (ProtectSystem, MemoryMax, ...) has no OpenRC equivalent here.
+#   rc-update add vpsfort-xmpp-bot-client default && rc-service vpsfort-xmpp-bot-client start
+# The client bot (BOT_MODE=client in config.env), on a node without ejabberd.
+description="vpsfort-xmpp-bot in client mode: vpsfort's admin messages OMEMO-encrypted, else as OpenPGP files"
+supervisor=supervise-daemon
+command=/opt/vpsfort-xmpp-bot/vpsfort-xmpp-bot
+command_user="vpsfort-xmpp-bot:vpsfort-xmpp-bot"
+directory=/opt/vpsfort-xmpp-bot
+respawn_delay=5
+respawn_max=0
+config=/opt/vpsfort-xmpp-bot/config.env
+
+depend() {
+    need net
+    use dns vpsfort
+}
+
+start_pre() {
+    if [ ! -r "$config" ]; then
+        eerror "$config is missing: copy the template next to it and fill it in"
+        return 1
+    fi
+    # the settings, for the bot only (supervise-daemon passes its environment on)
+    set -a
+    . "$config"
+    set +a
+}

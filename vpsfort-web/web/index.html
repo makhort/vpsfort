@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="vpsfort's web console: every node of the cluster on one read-only page. Bans, alerts, offenders, places, abuse reports, health; for its admins.">
+<meta name="keywords" content="vpsfort, console, intrusion detection, bans, cluster, abuse report, server security">
+<meta name="author" content="vpsfort">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>vpsfort console</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<div id="app"></div>
+<!-- shown when JavaScript is off or blocked (NoScript, uBlock's rules, a locked-down browser):
+     the page is built by app.js, and the login needs it for the proof of work -->
+<noscript>
+<div class="login-wrap">
+  <div class="card login nojs" role="alert">
+    <div class="brand"><img src="/icon.svg" alt="">vpsfort console</div>
+    <p>This console needs JavaScript, and it is off or blocked for this site.</p>
+    <p class="why">The page is built in the browser and the login does a proof of work (a hash search) before it sends the password. Nothing is loaded from any other site; the only scripts are the console's own (<code>/app.js</code>, <code>/work.js</code>).</p>
+    <p class="how">Allow JavaScript for this site in the browser, or in NoScript, uBlock Origin or the extension that blocks it, then reload.</p>
+  </div>
+</div>
+</noscript>
+</body>
+</html>

@@ -1,0 +1,10 @@
+#!/bin/sh
+# The weekly abuse report on Alpine, where there are no systemd timers: this file linked
+# into /etc/periodic/weekly/ is what  systemctl enable vpsfort-abuse-report.timer  is
+# elsewhere (busybox crond runs the directory's scripts). Settings in
+# /etc/default/vpsfort-abuse-report, as the timer's unit reads them.
+#   ln -s /usr/share/vpsfort/periodic/vpsfort-abuse-report /etc/periodic/weekly/
+set -a
+[ -r /etc/default/vpsfort-abuse-report ] && . /etc/default/vpsfort-abuse-report
+set +a
+exec /usr/bin/vpsfort-abuse-report

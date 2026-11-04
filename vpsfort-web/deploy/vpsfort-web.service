@@ -1,0 +1,64 @@
+[Unit]
+Description=vpsfort-web - read-only web console and agent for a vpsfort cluster
+After=network-online.target vpsfort.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Its own user: it reads vpsfort's console socket (group vpsfort-web), never the control
+# socket, the cluster key or vpsfort's state. install.sh creates it and sets the owners and
+# modes of /opt/vpsfort-web.
+User=vpsfort-web
+Group=vpsfort-web
+WorkingDirectory=/opt/vpsfort-web
+EnvironmentFile=/opt/vpsfort-web/config.env
+ExecStart=/opt/vpsfort-web/vpsfort-web
+
+Restart=always
+RestartSec=5
+# 78: a setting or file is missing or wrong (no certificate, no password, no web key):
+# restarting would not help.
+RestartPreventExitStatus=78
+
+# Its own state (the attention history, the nodes' digests, the admins' marks) lives in
+# /var/lib/vpsfort-web (STATE_DIR), which systemd makes and keeps writable.
+StateDirectory=vpsfort-web
+StateDirectoryMode=0700
+
+# Hardening: it reads its files and one socket, listens, and asks the other nodes' agents.
+# It writes nothing else. For a port below 1024 (443), add in an override (systemctl edit):
+#   AmbientCapabilities=CAP_NET_BIND_SERVICE
+#   CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProcSubset=pid
+# vpsfort's console socket (Unix); the console and the agents (IP)
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# A node's snapshot is capped (3000 bans, 500 actions...): a few MB each, parsed. A login
+# check (Argon2) takes ~19 MB, one at a time. Threads: one per connection, bounded.
+MemoryHigh=96M
+MemoryMax=128M
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target

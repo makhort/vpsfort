@@ -1,0 +1,22 @@
+# Settings for vpsfort-avscan (run daily by vpsfort-avscan.timer).
+# Change the time with:  systemctl edit vpsfort-avscan.timer
+
+# What to scan (space-separated; shell wildcards like /home/*/www work). Keep it to places where software and uploads live:
+# a full-disk scan of Docker volumes or Nextcloud data takes hours.
+#AVSCAN_PATHS="/etc /opt /root /home /srv /usr/local /var/www /var/spool/cron /tmp /var/tmp /dev/shm"
+
+# Directory regexes to skip (clamscan only), e.g. "^/etc/vpsfort/yara ^/home/[^/]+/backups ^/opt/big-cache".
+# The default skips /etc/vpsfort/yara: YARA rule files are malware fragments by design, which ClamAV
+# flags. Keep it in a list of your own (clamdscan: ExcludePath in clamd.conf instead).
+#AVSCAN_EXCLUDE="^/etc/vpsfort/yara"
+
+# auto (clamdscan if clamd runs: clamav-daemon, or Fedora's clamd@scan; else clamscan), clamscan or clamdscan.
+# clamscan loads all signatures (~1-1.5 GB RAM) for each run; clamd keeps them loaded.
+#AVSCAN_SCANNER=auto
+
+# clamd's configuration for clamdscan, when not clamdscan's own default (Fedora's /etc/clamd.d/scan.conf
+# is found by itself when /etc/clamd.conf is absent).
+#AVSCAN_CLAMD_CONFIG=
+
+# Must match [antivirus] log in /etc/vpsfort/vpsfort.toml.
+#AVSCAN_LOG=/var/log/vpsfort/avscan.log

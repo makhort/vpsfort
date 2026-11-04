@@ -1,0 +1,11 @@
+#!/bin/sh
+# vpsfort-push-bot's Alpine package, before its files are removed (apk runs this as .pre-deinstall;
+# an upgrade runs .pre-upgrade instead). The service stops and leaves the boot runlevel;
+# /opt/vpsfort-push-bot (config.env, keys, the outbox) and the log stay.
+if command -v rc-service > /dev/null; then
+    for s in vpsfort-push-bot; do
+        rc-service "$s" stop > /dev/null 2>&1 || true
+        rc-update del "$s" default > /dev/null 2>&1 || true
+    done
+fi
+exit 0

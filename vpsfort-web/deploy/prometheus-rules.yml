@@ -1,0 +1,131 @@
+# Alerting rules for the vpsfort console's /metrics (see "Prometheus and Grafana" in the
+# README). Every series carries the node's name in `node`. Copy this file next to your
+# prometheus.yml and list it under `rule_files:`; adjust the thresholds and `for:` to your
+# cluster (a node that answers slowly, a disk that is always nearly full).
+groups:
+  - name: vpsfort
+    rules:
+      - alert: VpsfortNodeDown
+        expr: vpsfort_up == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.node }}: the console can't read vpsfort"
+          description: "No data from {{ $labels.node }} for 5 minutes (vpsfort-web agent, vpsfort, or the network between)."
+
+      - alert: VpsfortDataStale
+        expr: vpsfort_data_age_seconds > 300
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.node }}: data older than 5 minutes"
+
+      - alert: VpsfortNotEnforcing
+        expr: vpsfort_enforcing == 0
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.node }} runs in shadow mode: bans are not applied"
+
+      - alert: VpsfortCriticalAttention
+        expr: vpsfort_attention{level="critical"} > 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.node }}: {{ $value }} critical problem(s) on the console's Overview"
+
+      - alert: VpsfortHighAttention
+        expr: vpsfort_attention{level="high"} > 0
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.node }}: {{ $value }} high problem(s) on the console's Overview"
+
+      - alert: VpsfortBanSpike
+        # four times the hourly rate of the last day, and at least 50
+        expr: vpsfort_bans_last_hour > 50 and vpsfort_bans_last_hour > 4 * avg_over_time(vpsfort_bans_last_hour[1d])
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.node }}: {{ $value }} bans in the last hour, far above the day's rate"
+
+      - alert: VpsfortInfectedFiles
+        expr: vpsfort_av_infected_files > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.node }}: the antivirus scan found {{ $value }} infected file(s)"
+
+      - alert: VpsfortAntivirusSignaturesOutdated
+        expr: vpsfort_av_signatures_outdated == 1
+        for: 1d
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.node }}: antivirus signatures outdated for a day"
+
+      - alert: VpsfortPackageFilesChanged
+        expr: vpsfort_verify_mismatched_files > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.node }}: {{ $value }} package file(s) differ from their checksums"
+
+      - alert: VpsfortDiskLow
+        expr: vpsfort_disk_free_ratio < 0.10
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.node }}: {{ $labels.mount }} has {{ $value | humanizePercentage }} free"
+
+      - alert: VpsfortMemoryLow
+        expr: vpsfort_memory_available_ratio < 0.10
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.node }}: {{ $value | humanizePercentage }} of the memory available"
+
+      - alert: VpsfortCertificateExpiring
+        expr: (vpsfort_cert_expiry_timestamp_seconds - time()) < 7 * 86400
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.node }}: a watched certificate expires in {{ $value | humanizeDuration }}"
+
+      - alert: VpsfortCertificateProblem
+        expr: vpsfort_cert_error == 1 or vpsfort_cert_wrong_name == 1
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.node }}: a watched certificate can't be checked or has the wrong name"
+
+      - alert: VpsfortClusterPeerDown
+        expr: vpsfort_cluster_peer_up == 0
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.node }} can't deliver to a cluster peer for 15 minutes"
+
+      - alert: VpsfortSecurityUpdates
+        expr: vpsfort_security_updates > 0
+        for: 3d
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.node }}: {{ $value }} security update(s) pending for 3 days"
+
+      - alert: VpsfortRebootRequired
+        expr: vpsfort_reboot_required == 1
+        for: 7d
+        labels: { severity: info }
+        annotations:
+          summary: "{{ $labels.node }} has needed a reboot for a week"
+
+      - alert: VpsfortGeoblockNotLoaded
+        expr: vpsfort_geoblock_error == 1
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.node }}: [geoblock] not loaded"
+
+      - alert: VpsfortConsoleLoginsBurst
+        # logins at the console itself (the agents export none)
+        expr: increase(vpsfort_web_logins_total[1h]) > 20
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} console logins in an hour"

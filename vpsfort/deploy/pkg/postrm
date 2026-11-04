@@ -1,0 +1,19 @@
+#!/bin/bash
+# vpsfort's package, after its files are removed. dpkg runs it as  postrm remove|purge|
+# upgrade..., rpm as %postun with 0 (removal) or 1 (upgrade): the same script for both. The
+# config, the cluster key, the state (bans, baselines) and the logs stay on removal; dpkg's
+# purge takes them too (rpm has no purge: remove them by hand).
+set -eu
+case ${1:-} in
+    remove | 0)
+        if [ -d /run/systemd/system ] && command -v systemctl > /dev/null; then
+            systemctl daemon-reload 2> /dev/null || true
+        fi
+        echo "vpsfort: /etc/vpsfort, /var/lib/vpsfort and /var/log/vpsfort stay (dpkg: apt purge vpsfort removes them)"
+        ;;
+    purge)
+        rm -rf /etc/vpsfort /var/lib/vpsfort /var/log/vpsfort /run/vpsfort /run/vpsfort-console /run/vpsfort-package
+        rm -f /etc/default/vpsfort-avscan /etc/default/vpsfort-abuse-report /etc/logrotate.d/vpsfort
+        ;;
+esac
+exit 0

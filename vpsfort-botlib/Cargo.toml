@@ -1,0 +1,18 @@
+[package]
+name = "vpsfort-botlib"
+version = "0.2.0"
+edition = "2021"
+description = "What vpsfort's copy bots share: the outbox format, pseudonyms and server names, OpenPGP files, the log"
+license = "MIT"
+repository = "https://github.com/makhort/vpsfort"
+publish = false
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+hmac = "0.12"
+log = { version = "0.4", features = ["std"] }
+# OpenPGP for the files (seal.rs): pure Rust, MIT/Apache; it takes rand 0.8's RNG traits
+pgp = { version = "0.21", default-features = false }
+rand = "0.9"
+rand08 = { package = "rand", version = "0.8" }
+sha2 = "0.10"

@@ -1,0 +1,205 @@
+#!/bin/bash
+# vpsfort's package, after its files are unpacked. dpkg runs it as  postinst configure
+# [old-version]  (also for dpkg-reconfigure), rpm as %post with 1 (first install) or 2
+# (upgrade): the same script for both.
+#
+# A new host gets the config template as /etc/vpsfort/vpsfort.toml and nothing is started:
+# the template has example names and addresses to replace. A host with a config keeps it:
+# what the bundle's install.sh does on an upgrade (the new template next to it as
+# vpsfort.toml.new, config-diff), and the package also takes over a bundle's or deploy.sh's
+# install (the binary and units under /usr/local and /etc/systemd/system go; the config, the
+# cluster key, the state and the timers' settings stay). The running service is restarted
+# when its config is valid for this version; nothing is started that wasn't running.
+#
+# Asked, when a terminal is there: whether to replace the config with this version's template
+# (the old one kept as vpsfort.toml.old). Enter, a timeout, no terminal, or
+# DEBIAN_FRONTEND=noninteractive keep it. VPSFORT_PACKAGE_CONFIG=keep|replace answers without
+# asking (sudo VPSFORT_PACKAGE_CONFIG=replace apt install ./vpsfort_*.deb).
+set -eu
+
+CONF=/etc/vpsfort/vpsfort.toml
+KEY=/etc/vpsfort/cluster.key
+BIN=/usr/bin/vpsfort
+TEMPLATES=/usr/share/vpsfort/templates
+SYSD=/etc/systemd/system
+OLD_DEFAULTS=/run/vpsfort-package/old-defaults
+UNITS="vpsfort.service vpsfort-avscan.service vpsfort-avscan.timer vpsfort-abuse-report.service vpsfort-abuse-report.timer"
+
+case ${1:-} in
+    configure | 1 | 2 | [3-9]*) ;;
+    *) exit 0 ;;   # abort-upgrade and the like: nothing to do
+esac
+systemd() { [ -d /run/systemd/system ] && command -v systemctl > /dev/null; }
+sc() { systemctl "$@" 2> /dev/null || true; }
+note() { echo "vpsfort: $*"; }
+
+setting() { # the value of $2 in section [$1] of config $3, as vpsfort reads it
+    "$BIN" --config "$3" print-config 2> /dev/null \
+        | awk -v sec="[$1]" -v key="$2" '/^\[/ { s = ($0 == sec) } s && $1 == key { gsub(/"/, "", $3); print $3 }'
+}
+top_setting() { # the value of top-level $1 (before any section) of config $2
+    "$BIN" --config "$2" print-config 2> /dev/null | awk -v key="$1" '/^\[/ { exit } $1 == key { gsub(/"/, "", $3); print $3 }'
+}
+# The template for this host: vpsfort.toml (vpsfort-dnf.toml with dnf and no apt), or on a
+# host with a config the one for its node id and package manager, as the bundle's install.sh.
+template() {
+    local tpl=$TEMPLATES/vpsfort.toml node pm t
+    if ! command -v apt-get > /dev/null && command -v dnf > /dev/null; then tpl=$TEMPLATES/vpsfort-dnf.toml; fi
+    if [ -f "$CONF" ]; then
+        node=$(setting cluster node_id "$CONF" || true)
+        pm=$(top_setting package_manager "$CONF" || true)
+        for t in "$TEMPLATES"/*.toml; do
+            case $t in *-alpine.toml) continue ;; esac   # the .apk's (no journal)
+            if [ -n "$node" ] && [ "$(setting cluster node_id "$t")" = "$node" ] && [ "$(top_setting package_manager "$t")" = "$pm" ]; then
+                tpl=$t
+            fi
+        done
+    fi
+    echo "$tpl"
+}
+# The integrity watch covers the files below: announce their new content first, so the
+# running daemon logs the changes instead of raising "may be compromised" alerts.
+announce() { [ -f "$CONF" ] && "$BIN" --config "$CONF" expect-change "$@" 2> /dev/null || true; }
+
+systemd && sc daemon-reload
+
+if [ ! -f "$CONF" ]; then
+    tpl=$(template)
+    install -d -m 0755 /etc/vpsfort
+    install -m 0600 "$tpl" "$CONF"
+    note "new host: $CONF is the template ${tpl##*/} now; nothing is started yet."
+    echo "  Edit it for this host: [allowlist] (your own addresses), [notify], [cluster] (node_id,"
+    echo "  peers, enabled), [digest] certs, ... It starts in mode = \"shadow\" (decides and"
+    echo "  logs, bans nothing). The other templates are in $TEMPLATES (-vpn: SSH and UFW only,"
+    echo "  -tg: a Telegram relay node, -desktop: a desktop or laptop; -dnf: Fedora, RHEL)."
+    echo "  Then:  vpsfort -c $CONF print-config > /dev/null && systemctl enable --now vpsfort vpsfort-abuse-report.timer"
+    echo "  A node joining a cluster takes the other nodes' $KEY (root, mode 0600) first; the first"
+    echo "  node with [cluster] enabled makes one:  (umask 077; vpsfort cluster-keygen > $KEY)"
+    exit 0
+fi
+
+# An install from a bundle or deploy.sh: its units in /etc/systemd/system would shadow the
+# package's, and its binaries in /usr/local would stay first in PATH. They go; what was
+# enabled is enabled again on the package's units. (The watch reports each removed file as a
+# warning once: /usr/local/bin and /etc/systemd/system are watched by content.)
+was_active=no
+if systemd && systemctl is-active -q vpsfort.service; then was_active=yes; fi
+enabled=""
+if [ -f "$SYSD/vpsfort.service" ] && [ ! -L "$SYSD/vpsfort.service" ] \
+    && grep -q '^ExecStart=/usr/local/bin/vpsfort' "$SYSD/vpsfort.service"; then
+    note "taking over the install from the bundle (or deploy.sh): its units and binaries go, the config stays"
+    for u in $UNITS; do
+        [ -f "$SYSD/$u" ] && [ ! -L "$SYSD/$u" ] || continue
+        if systemd && systemctl is-enabled -q "$u" 2> /dev/null; then enabled="$enabled $u"; fi
+        rm -f "${SYSD:?}/${u:?}"
+        echo "  removed $SYSD/$u"
+    done
+    rm -f "${SYSD:?}"/multi-user.target.wants/vpsfort.service "${SYSD:?}"/timers.target.wants/vpsfort-avscan.timer \
+        "${SYSD:?}"/timers.target.wants/vpsfort-abuse-report.timer
+    for f in /usr/local/bin/vpsfort /usr/local/bin/vpsfort.prev /usr/local/sbin/vpsfort-avscan /usr/local/sbin/vpsfort-abuse-report; do
+        [ -e "$f" ] || continue
+        rm -f "${f:?}"
+        echo "  removed $f"
+    done
+    systemd && sc daemon-reload
+fi
+
+# The config stays (the default), or this version's template replaces it.
+tpl=$(template)
+replace=${VPSFORT_PACKAGE_CONFIG:-}
+if [ -z "$replace" ] && [ "${DEBIAN_FRONTEND:-}" != noninteractive ] && [ -c /dev/tty ] && { : < /dev/tty; } 2> /dev/null; then
+    echo
+    echo "vpsfort: $CONF exists. Keep it (the new template is saved next to it as vpsfort.toml.new,"
+    echo "and config-diff below shows what this version changes), or replace it with the template"
+    echo "${tpl##*/} (the old file kept as vpsfort.toml.old)?"
+    ans=""
+    read -r -t 60 -p "vpsfort: replace the config? [y/N] " ans < /dev/tty > /dev/tty || ans=""
+    case $ans in y | Y | yes | YES) replace=replace ;; *) replace=keep ;; esac
+fi
+if [ "$replace" = replace ]; then
+    cp -p "$CONF" "$CONF.old"
+    install -m 0600 "$tpl" "$CONF"
+    rm -f "$CONF.new"
+    note "replaced $CONF with the template ${tpl##*/}; the old file is $CONF.old (compare: diff $CONF.old $CONF)."
+    echo "  Edit it for this host, then:  vpsfort -c $CONF print-config > /dev/null && systemctl restart vpsfort"
+    if [ "$was_active" = yes ]; then
+        echo "  vpsfort keeps running with the old config until then."
+    fi
+    rm -rf /run/vpsfort-package
+    exit 0
+fi
+install -m 0600 "$tpl" "$CONF.new"
+note "kept $CONF; this version's template ${tpl##*/} is $CONF.new"
+if [ -s "$OLD_DEFAULTS" ]; then
+    echo "=== vpsfort config-diff: what this version means for your config ==="
+    "$BIN" --config "$CONF" config-diff --against "$OLD_DEFAULTS" || true
+    echo "======================================================================"
+fi
+rm -rf /run/vpsfort-package
+
+valid=yes
+if ! "$BIN" --config "$CONF" print-config > /dev/null; then
+    valid=no
+    note "WARNING: $CONF is not valid for this version (above): fix it, then  systemctl restart vpsfort"
+fi
+# Files written by older versions were world-readable (addresses, account names; the config
+# holds users' addresses and JIDs).
+chmod 0600 /var/lib/vpsfort/state.json "$CONF" "$CONF.new" 2> /dev/null || true
+chmod 0640 /var/log/vpsfort/actions.jsonl* 2> /dev/null || true
+
+if [ "$valid" = yes ]; then
+    # The cluster port for the peers, as the bundle's install.sh opens it (ufw: the rules are
+    # applied; firewalld: rich rules in the default zone; plain iptables: only suggested).
+    # A peer that is still a template's documentation address gets none: vpsfort says so.
+    if command -v firewall-cmd > /dev/null && firewall-cmd --state > /dev/null 2>&1; then
+        rules=$("$BIN" --config "$CONF" cluster-ufw-rules --firewalld || true)
+        if [ -n "$rules" ]; then
+            echo "$rules" | while read -r rule; do echo "  + $rule"; eval "$rule" > /dev/null || true; done
+            firewall-cmd --reload > /dev/null || true
+        fi
+    elif command -v ufw > /dev/null; then
+        "$BIN" --config "$CONF" cluster-ufw-rules | while read -r rule; do echo "  + $rule"; eval "$rule" || true; done
+    else
+        rules=$("$BIN" --config "$CONF" cluster-ufw-rules --iptables || true)
+        if [ -n "$rules" ]; then
+            note "no ufw or firewalld; open the cluster port to the peers in your iptables rules (and save them):"
+            echo "$rules" | sed 's/^/    /'
+        fi
+    fi
+fi
+
+if systemd; then
+    # The units that were enabled on the bundle's files are enabled on the package's.
+    for u in $enabled; do
+        case $u in
+            *.service) announce "$SYSD/multi-user.target.wants/$u=/usr/lib/systemd/system/$u" ;;
+            *.timer) announce "$SYSD/timers.target.wants/$u=/usr/lib/systemd/system/$u" ;;
+        esac
+        sc enable -q "$u"
+    done
+    if [ "$was_active" = yes ] && [ "$valid" = yes ]; then
+        sc restart vpsfort.service
+        sleep 2
+        if systemctl is-active -q vpsfort.service; then
+            note "restarted: $("$BIN" --version)"
+        else
+            note "WARNING: vpsfort is not running after the restart:  journalctl -u vpsfort -n 30"
+        fi
+        # An own account on the canary list bans the admin at the next login: say so now,
+        # while this SSH session is open.
+        if ! canary=$("$BIN" --config "$CONF" canary-check 2>&1); then
+            echo "################################################################################"
+            echo "# WARNING: an account of this host is on vpsfort's canary list:"
+            printf '%s\n' "$canary" | sed 's/^/#   /'
+            echo "# Its NEXT SSH LOGIN WILL BE BANNED (and a critical alert raised). Fix it NOW,"
+            echo "# while this session is open: add the account to [canary] except in $CONF"
+            echo "# and run  systemctl restart vpsfort"
+            echo "################################################################################"
+        fi
+    elif [ "$was_active" = yes ]; then
+        note "vpsfort keeps running the previous version until its config is fixed"
+    else
+        note "not started (it wasn't running):  systemctl enable --now vpsfort vpsfort-abuse-report.timer"
+    fi
+fi
+exit 0

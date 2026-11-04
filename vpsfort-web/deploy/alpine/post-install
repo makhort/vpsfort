@@ -1,0 +1,40 @@
+#!/bin/sh
+# vpsfort-web's Alpine package, after its files are unpacked (apk runs this as
+# .post-install and .post-upgrade). What the bundle's install.sh does less the files the
+# package puts in place: /opt/vpsfort-web and config.env from the template the first time,
+# the owners and modes (everything root's, the service may only read), the state directory.
+# A running console is restarted on an upgrade; a first install starts nothing.
+WEB=vpsfort-web
+DIR=/opt/$WEB
+setting() { # the value of $1 in config.env, quotes removed
+    grep -E "^$1=" "$DIR/config.env" 2> /dev/null | tail -n 1 | cut -d= -f2- | tr -d "\"'" || true
+}
+mkdir -p "$DIR"
+first=no
+if [ ! -f "$DIR/config.env" ]; then
+    first=yes
+    install -m 0640 -o root -g "$WEB" "$DIR/config.env.example" "$DIR/config.env"
+    echo "$WEB: new $DIR/config.env from the template; nothing is started yet."
+    echo "  Fill it in (the README, \"Installation\": the web key, the password, the one-time codes,"
+    echo "  the certificate), then:  rc-update add $WEB default && rc-service $WEB start"
+fi
+chown root:"$WEB" "$DIR"
+chmod 750 "$DIR"
+chown root:"$WEB" "$DIR/config.env"
+chmod 640 "$DIR/config.env"
+for f in "$(setting WEB_KEY_FILE)" "$(setting TLS_KEY)" "$(setting PASSWORD_FILE)" "$(setting TOTP_FILE)" "$(setting METRICS_TOKEN_FILE)" \
+         "$DIR/web.key" "$DIR/tls.key" "$DIR/admin.password" "$DIR/admin.totp"; do
+    # files elsewhere (a Let's Encrypt key) keep their owners
+    if [ -n "$f" ] && [ -f "$f" ] && [ "${f%/*}" = "$DIR" ]; then
+        chown root:"$WEB" "$f"
+        chmod 640 "$f"
+    fi
+done
+mkdir -p /var/lib/$WEB
+chown "$WEB:$WEB" /var/lib/$WEB
+chmod 700 /var/lib/$WEB
+if [ "$first" = no ] && command -v rc-service > /dev/null && rc-service "$WEB" status > /dev/null 2>&1; then
+    rc-service "$WEB" restart || true
+    echo "$WEB: restarted"
+fi
+exit 0

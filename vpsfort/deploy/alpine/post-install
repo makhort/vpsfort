@@ -1,0 +1,38 @@
+#!/bin/sh
+# vpsfort's Alpine package, after its files are unpacked (apk runs this as .post-install
+# and .post-upgrade). A new host gets the Alpine template as /etc/vpsfort/vpsfort.toml
+# and nothing is started: the template has example names and addresses to replace. A host
+# with a config keeps it, with this version's template next to it as vpsfort.toml.new;
+# vpsfort is restarted when it was running under OpenRC and the config is valid for this
+# version, else it keeps running the previous one and the install says what to fix. The
+# canary check runs last: a gateway user missing from [canary] except would lock you out.
+CONF=/etc/vpsfort/vpsfort.toml
+TPL=/usr/share/vpsfort/templates/vpsfort-alpine.toml
+BIN=/usr/bin/vpsfort
+mkdir -p /etc/vpsfort /var/lib/vpsfort /var/log/vpsfort
+chmod 0755 /etc/vpsfort
+chmod 0700 /var/lib/vpsfort
+if [ ! -f "$CONF" ]; then
+    install -m 0600 "$TPL" "$CONF"
+    echo "vpsfort: new host: $CONF is the template vpsfort-alpine.toml now; nothing is started yet."
+    echo "  Edit it for this host: [allowlist] (your own addresses), [notify], [cluster] (node_id,"
+    echo "  peers, enabled), [digest] certs, ... It starts in mode = \"shadow\" (decides and"
+    echo "  logs, bans nothing) and reads /var/log/messages ([journal] syslog_file). Then:"
+    echo "  vpsfort -c $CONF print-config > /dev/null && rc-update add vpsfort default && rc-service vpsfort start"
+    echo "  The weekly abuse report:  ln -s /usr/share/vpsfort/periodic/vpsfort-abuse-report /etc/periodic/weekly/"
+    echo "  A node joining a cluster takes the other nodes' /etc/vpsfort/cluster.key (root, mode 0600) first."
+    exit 0
+fi
+install -m 0600 "$TPL" "$CONF.new"
+echo "vpsfort: kept $CONF; this version's template is $CONF.new"
+if command -v rc-service > /dev/null && rc-service vpsfort status > /dev/null 2>&1; then
+    if "$BIN" --config "$CONF" print-config > /dev/null; then
+        rc-service vpsfort restart || true
+        echo "vpsfort: restarted"
+    else
+        echo "vpsfort: $CONF is not valid for this version (see above): vpsfort keeps running the previous"
+        echo "  version until you fix it and run  rc-service vpsfort restart"
+    fi
+fi
+"$BIN" --config "$CONF" canary-check || true
+exit 0
