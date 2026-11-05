@@ -103,11 +103,21 @@ gpg --batch --yes --local-user "$key_id" --digest-algo SHA256 --detach-sign --ar
 cd - > /dev/null
 
 # dnf: the packages signed (the repository's copies, not the releases' files), then one
-# repository per architecture, repomd.xml signed
+# repository per architecture, repomd.xml signed. Each signature is then verified as dnf
+# will (gpgcheck=1), against this key alone in a scratch rpm database; newer rpm signs the
+# header only (no SIGPGP tag), so the presence of a tag says less than a verification.
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+gpg --batch --armor --export "$key_id" > "$scratch/key.asc"
+mkdir -p "$scratch/rpmdb"
+rpm --dbpath "$scratch/rpmdb" --import "$scratch/key.asc"
 for f in "$out"/rpm/*/*.rpm; do
     rpmsign --addsign --define "_gpg_name $key_id" --define "_gpg_digest_algo sha256" "$f" > /dev/null
-    sig=$(rpm -qp --nosignature --qf '%{SIGPGP:pgpsig}' "$f" 2> /dev/null || true)
-    case $sig in "" | "(none)") echo "$f: not signed" >&2; exit 1 ;; esac
+    check=$(rpmkeys --dbpath "$scratch/rpmdb" --checksig "$f" || true)
+    case $check in
+        *"signatures OK"*) ;;
+        *) echo "$f: dnf would refuse it: ${check#*: }" >&2; exit 1 ;;
+    esac
 done
 for d in "$out"/rpm/*/; do
     createrepo_c --quiet "$d"

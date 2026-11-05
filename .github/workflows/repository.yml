@@ -4,8 +4,9 @@ name: repository
 # pushed to the `gh-pages` branch as a whole:
 #   - the documentation site (`docs/`): the READMEs and COMPARISON.md built with mdBook
 #     (scripts/docs-site.sh), after every push to the default branch that changes them;
-#   - a signed apt and dnf repository of the releases' packages: after every release is
-#     published (each crate's workflow creates one for its tag), the newest .deb and .rpm of
+#   - a signed apt and dnf repository of the releases' packages: after every release (each
+#     crate's workflow creates one for its tag and then starts this workflow: a release made
+#     with a workflow's token fires no `release` event), the newest .deb and .rpm of
 #     every crate are gathered from the releases, scripts/repo.sh signs the rpms and builds and
 #     signs the repositories. This part needs two repository secrets: REPO_GPG_KEY, an armored
 #     OpenPGP private key for signing (make it once: `gpg --quick-generate-key "vpsfort

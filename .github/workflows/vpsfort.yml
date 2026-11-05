@@ -289,6 +289,7 @@ jobs:
       id-token: write           # the attestation: an OIDC token for the Sigstore certificate
       attestations: write
       artifact-metadata: write
+      actions: write            # start the repository workflow (below)
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -333,7 +334,12 @@ jobs:
               done
           fi
           if gh release view "$tag" > /dev/null 2>&1; then
-              gh release upload "$tag" "${assets[@]}" --clobber    # a re-run: replace them
+              # a re-run: replace them, and drop what an earlier run left under another name (a
+              # bundle is named after its commit: a moved tag builds new ones)
+              gh release view "$tag" --json assets --jq '.assets[].name' | while read -r old; do
+                  [ -e "./$old" ] || gh release delete-asset "$tag" "$old" --yes
+              done
+              gh release upload "$tag" "${assets[@]}" --clobber
           else
               # The notes: the version's section of the crate's CHANGELOG.md (--check-tag made sure it is
               # there; the mirror's squashed commits say nothing), then how to install and verify.
@@ -355,3 +361,11 @@ jobs:
                   "and \`gh attestation verify <file> --repo $GH_REPO --source-ref refs/tags/$tag\`" >> notes.md
               gh release create "$tag" "${assets[@]}" --verify-tag --title "$tag" --notes-file notes.md
           fi
+      # A release made with a workflow's own token starts no other workflow (GitHub's rule against
+      # loops), so `on: release` in repository.yml never fires for it: started here instead.
+      - name: Rebuild the package repository
+        if: ${{ !github.event.repository.private }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run repository.yml --ref "${{ github.event.repository.default_branch }}"
