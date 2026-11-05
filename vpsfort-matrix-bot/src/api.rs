@@ -221,6 +221,9 @@ pub struct WhoAmI {
 impl Api {
     pub fn new(homeserver: &str, token: Option<String>) -> Result<Api, String> {
         let url = check_homeserver(homeserver)?;
+        // reqwest is built without a TLS provider of its own (ring, as the other crates): a client
+        // needs one installed, whoever builds it first (main, a test, the fuzz targets)
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .timeout(CALL_TIMEOUT)

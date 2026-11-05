@@ -210,6 +210,9 @@ impl Api {
             return Err("the token doesn't look like a bot token (<digits>:<35 or so letters, digits, _ and ->)".into());
         }
         let url = check_api_url(api_url)?;
+        // reqwest is built without a TLS provider of its own (ring, as the other crates): a client
+        // needs one installed, whoever builds it first (main, a test, the fuzz targets)
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .timeout(CALL_TIMEOUT)
