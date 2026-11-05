@@ -35,9 +35,9 @@ feature: [COMPARISON.md](COMPARISON.md).
 1. [Crates](#crates)
 2. [Build and test](#build-and-test)
 3. [Deployment](#deployment)
-4. [Private repository only](#private-repository-only)
-5. [License](#license)
-6. [Authorship](#authorship)
+
+4. [License](#license)
+5. [Authorship](#authorship)
 
 ## Crates
 
@@ -115,7 +115,7 @@ README has a section "Install from a package".
 runs after every release is published, gathers the newest `.deb` and `.rpm` of every crate from
 the releases, builds a signed apt repository (`deb/`, suite `stable`, component `main`) and a
 signed dnf repository per architecture (`rpm/<arch>/`) with `scripts/repo.sh`, and pushes them
-to the `gh-pages` branch, which Pages serves at `https://<owner>.github.io/<repository>/` with
+to the `gh-pages` branch, which Pages serves at `https://makhort.github.io/vpsfort/` with
 the instructions on its index page; the rpms in it are signed with the same key (dnf checks
 each package, `gpgcheck=1`), the debs are covered by the signed `InRelease`. The same workflow
 builds the **documentation site** under `docs/` there (the READMEs and COMPARISON.md with
@@ -128,12 +128,12 @@ RSA, since rpm before 4.16 (RHEL 8) can't verify ed25519 signatures; exported wi
 that); without the key, or before the first release, only the documentation is published. Then:
 
 ```bash
-sudo curl -fsSL https://<owner>.github.io/<repository>/vpsfort.asc -o /etc/apt/keyrings/vpsfort.asc
-echo "deb [signed-by=/etc/apt/keyrings/vpsfort.asc] https://<owner>.github.io/<repository>/deb stable main" | sudo tee /etc/apt/sources.list.d/vpsfort.list
+sudo curl -fsSL https://makhort.github.io/vpsfort/vpsfort.asc -o /etc/apt/keyrings/vpsfort.asc
+echo "deb [signed-by=/etc/apt/keyrings/vpsfort.asc] https://makhort.github.io/vpsfort/deb stable main" | sudo tee /etc/apt/sources.list.d/vpsfort.list
 sudo apt update && sudo apt install vpsfort
 ```
 
-and on Fedora or RHEL `sudo curl -fsSL https://<owner>.github.io/<repository>/vpsfort.repo -o /etc/yum.repos.d/vpsfort.repo && sudo dnf install vpsfort`.
+and on Fedora or RHEL `sudo curl -fsSL https://makhort.github.io/vpsfort/vpsfort.repo -o /etc/yum.repos.d/vpsfort.repo && sudo dnf install vpsfort`.
 Compare the key's fingerprint on the index page with the one you made. `apt upgrade` and `dnf
 upgrade` then bring new versions, with the same post-install steps as a single package.
 

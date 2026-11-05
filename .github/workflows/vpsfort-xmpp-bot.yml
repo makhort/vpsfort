@@ -285,7 +285,9 @@ jobs:
               # The notes: the version's section of the crate's CHANGELOG.md (--check-tag made sure it is
               # there; the mirror's squashed commits say nothing), then how to install and verify.
               version=${tag#*-v}
-              awk -v h="## $version" 'p && /^## / { exit } p { print } index($0, h) == 1 { p = 1 }' ../CHANGELOG.md > notes.md
+              # (this job has no checkout: the file as it is at the tag)
+              gh api -H "Accept: application/vnd.github.raw+json" "repos/$GH_REPO/contents/vpsfort-xmpp-bot/CHANGELOG.md?ref=$tag" > "$RUNNER_TEMP/CHANGELOG.md"
+              awk -v h="## $version" 'p && /^## / { exit } p { print } index($0, h) == 1 { p = 1 }' "$RUNNER_TEMP/CHANGELOG.md" > notes.md
               [ -s notes.md ] || { echo "CHANGELOG.md has no '## $version' section"; exit 1; }
               printf '\n---\n\n' >> notes.md
               printf '%s\n' \
