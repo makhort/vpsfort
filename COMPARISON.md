@@ -3,9 +3,9 @@
 **How vpsfort compares with the open-source and commercial tools you might use instead:
 a briefing for teams thinking about adopting it.**
 
-The state is as of 2026-11-03: vpsfort 0.6.0, its web console vpsfort-web 0.5.0, the bots
-(vpsfort-xmpp-bot 0.6.0, vpsfort-tg-bot and vpsfort-mail-bot 0.5.0, vpsfort-signal-bot and
-vpsfort-matrix-bot 0.3.0, vpsfort-push-bot 0.2.0) and vpsfort-sim 0.2.0 (the commit named under [Method and
+The state is as of 2026-11-06: vpsfort 0.6.1, its web console vpsfort-web 0.5.1, the bots
+(vpsfort-xmpp-bot 0.6.1, vpsfort-tg-bot and vpsfort-mail-bot 0.5.1, vpsfort-signal-bot and
+vpsfort-matrix-bot 0.3.1, vpsfort-push-bot 0.2.1) and vpsfort-sim 0.2.0 (the commit named under [Method and
 sources](#20-method-and-sources)), compared with the releases
 and documentation of the other tools as of 2026-10-25. Feature claims about vpsfort come from its
 [README](vpsfort/README.md) and code. Claims about the other tools come from their documentation,
@@ -497,8 +497,8 @@ Know these before you adopt it:
   a week; they don't see which process did what. There is no tamper protection against root.
 - **No CVE matching, hardening benchmark or compliance reports** (the hardening audit covers sshd and the kernel's sysctls only).
 - **Six alert channels:** XMPP, Telegram, e-mail, Signal, Matrix, and ntfy, Gotify or a webhook.
-- **A young package repository:** the signed apt and dnf repository on GitHub Pages is built by CI after each release (it needs a signing key in the repository's secrets); until then, `.deb` and `.rpm` files from the releases, installed one by one, or a release zip with `install.sh`.
-- **Young:** version 0.6.0, running on the authors' own servers only, written by one maintainer
+- **A young package repository:** the signed apt and dnf repository on GitHub Pages is built by CI after each release (it needs a signing key in the repository's secrets); apt and dnf have installed from it, on one server each. Without it: `.deb` and `.rpm` files from the releases, installed one by one, or a release zip with `install.sh`.
+- **Young:** version 0.6.1, running on the authors' own servers only, written by one maintainer
   in collaboration with an AI model (see the [README](README.md#authorship)). It has had internal
   security reviews, but no independent audit.
 - **Covered by tests, not yet run on a host:** the plain iptables backend, `sudo` and
@@ -527,8 +527,9 @@ server below, which stayed on). Seen there, with the details in the README's
   bans growing from a /24 to a /22; the table rebuilt within 30 s after it was deleted; kernel
   rate limits; SSH canary bans; blocklist feeds and the geo database; operator controls.
 - **Cluster:** facts in both directions, with repeat offences escalating across nodes; node
-  identities (every node signs its facts and pins the others' keys); a node reported when it
-  stopped answering during a reinstall.
+  identities (every node signs its facts and pins the others' keys); forward secrecy between
+  the real nodes (every peer answers the key exchange); a node reported when it stopped
+  answering during a reinstall.
 - **Host watches:** the exposure watch (Docker ports recognised; a new listener and an allow
   rule with nothing behind it reported); the process watch (a new outbound connection);
   certificate checks; the cron watch and antivirus results; OOM alerts; changed files scanned
@@ -544,13 +545,22 @@ server below, which stayed on). Seen there, with the details in the README's
   report (as an encrypted attachment) end-to-end encrypted through matrix.org to Element X; the
   mail bot delivering alerts and the weekly report PGP-encrypted, read in Proton Mail on
   Android.
+- **Packages:** vpsfort installed from the signed apt and dnf repositories on GitHub Pages, on
+  the XMPP server and the Fedora server, each taking over a running bundle install: config,
+  bans, scores and alerts kept across the restart, and vpsfort's self-audit of its own files
+  clean afterwards.
 - **The web console** showing every node, all but one through their agents.
 
-These runs found eight problems, all fixed the same day: two misleading SSH audit messages, an
+These runs found thirteen problems, all fixed the same day: two misleading SSH audit messages, an
 installer's new user raising high alerts, the web console's `check` misreading lists with
 blanks, an empty console socket setting refused, no way to correct a country the geo
 database gets wrong (now `[geo] places`), the XMPP bot never coming back after an ejabberd
-restart (a session it could not resume), and the console's filters drawn below their tables.
+restart (a session it could not resume), the console's filters drawn below their tables, a
+package upgrade's new config template raising a high integrity alert, the repository's
+signing key saved unreadable for apt under a strict umask, the TUI's count of the running
+process's decisions labelled as if it counted everything, the packages' config question
+hidden by dnf until it timed out, and the sysctl audit's advice putting the `sysctl -w`
+command in a sysctl.d file, which ignores it at boot.
 
 **On the Fedora 44 server's first evening** (2026-10-25, x86_64, firewalld 2.4.4, rpm 6 and
 dnf5, real scanners and a VPN as the test client), following
@@ -574,9 +584,9 @@ all fixed the same day.
 
 **Not yet seen on a server** (covered by tests; the README's
 [Not yet verified](vpsfort/README.md#not-yet-verified) has the full list): the plain iptables
-backend, a change the firewall program refused being tried again, the cluster's key
-exchange between real nodes, the self-audit of vpsfort's own files finding a problem, the
-clock warning, and the kernel module, container and WireGuard peer baselines; `sudo` and new-SSH-key alerts, PAM failures and audit alerts, an infected file's alert;
+backend, a change the firewall program refused being tried again, the self-audit of vpsfort's
+own files finding a problem, the clock warning, and the kernel module,
+container and WireGuard peer baselines; `sudo` and new-SSH-key alerts, PAM failures and audit alerts, an infected file's alert;
 the built-in sources for common services on a host that runs one; patterns of your own on a
 live journal; a kernel tripwire hit, and country blocking under the nftables and firewalld
 backends; `[waf]` against a real CrowdSec; users' own warnings reaching a user; the Telegram

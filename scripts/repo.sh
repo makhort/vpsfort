@@ -141,9 +141,10 @@ cat > "$out/index.html" <<EOF
 <title>vpsfort packages</title>
 <style>body{font:15px/1.5 system-ui,sans-serif;max-width:46em;margin:3em auto;padding:0 1em}pre{background:#f4f4f4;padding:.7em 1em;overflow:auto}</style>
 <h1>vpsfort packages</h1>
-<p>Signed apt and dnf repositories for <a href="https://github.com/makhort/vpsfort">vpsfort</a>, its bots and the web console: the newest release of each, as static binaries for amd64, arm64 and armhf. The signing key's fingerprint: <code>$fingerprint</code> (compare it with the one in the repository's README).</p>
+<p>Signed apt and dnf repositories for <a href="https://github.com/makhort/vpsfort">vpsfort</a>, its bots and the web console: the newest release of each, as static binaries for amd64, arm64 and armhf. The signing key's fingerprint: <code>$fingerprint</code> (compare it with the one in the repository's README, and with the downloaded key's: <code>gpg --show-keys /etc/apt/keyrings/vpsfort.asc</code>).</p>
 <h2>Debian, Ubuntu</h2>
-<pre>sudo curl -fsSL $url/vpsfort.asc -o /etc/apt/keyrings/vpsfort.asc
+<pre>sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL $url/vpsfort.asc | sudo install -m 0644 /dev/stdin /etc/apt/keyrings/vpsfort.asc
 echo "deb [signed-by=/etc/apt/keyrings/vpsfort.asc] $url/deb stable main" | sudo tee /etc/apt/sources.list.d/vpsfort.list
 sudo apt update &amp;&amp; sudo apt install vpsfort      # or vpsfort-web, vpsfort-xmpp-bot, ...</pre>
 <h2>Fedora, RHEL</h2>

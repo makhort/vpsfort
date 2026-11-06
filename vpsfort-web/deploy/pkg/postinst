@@ -65,13 +65,18 @@ if [ ! -f "$DIR/config.env" ]; then
 else
     # The config stays (the default), or this version's template replaces it.
     replace=${VPSFORT_PACKAGE_CONFIG:-}
-    if [ -z "$replace" ] && [ "${DEBIAN_FRONTEND:-}" != noninteractive ] && [ -c /dev/tty ] && { : < /dev/tty; } 2> /dev/null; then
-        echo
-        echo "$WEB: $DIR/config.env exists. Keep it (compare it with this version's template:"
-        echo "diff $DIR/config.env.example $DIR/config.env), or replace it with the template"
-        echo "(the old file kept as config.env.old)?"
+    if [ -z "$replace" ] && [ "${DEBIAN_FRONTEND:-}" != noninteractive ] && [ -c /dev/tty ] && { : < /dev/tty > /dev/tty; } 2> /dev/null; then
+        # Asked on the terminal itself: dnf holds a scriptlet's output back until it ends, so a
+        # question on stdout would wait there unseen for its whole minute.
+        {
+            echo
+            echo "$WEB: $DIR/config.env exists. Keep it (compare it with this version's template:"
+            echo "diff $DIR/config.env.example $DIR/config.env), or replace it with the template"
+            echo "(the old file kept as config.env.old)?"
+            printf '%s' "$WEB: replace the config? [y/N] "
+        } > /dev/tty
         ans=""
-        read -r -t 60 -p "$WEB: replace the config? [y/N] " ans < /dev/tty > /dev/tty || ans=""
+        read -r -t 60 ans < /dev/tty || { ans=""; echo > /dev/tty; }
         case $ans in y | Y | yes | YES) replace=replace ;; *) replace=keep ;; esac
     fi
     if [ "$replace" = replace ]; then

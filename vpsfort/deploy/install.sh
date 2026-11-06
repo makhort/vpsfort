@@ -36,6 +36,7 @@ if [ -f /etc/vpsfort/vpsfort.toml ] && [ -x /usr/local/bin/vpsfort ]; then
         $sysd/vpsfort-abuse-report.timer=vpsfort-abuse-report.timer \
         $sysd/timers.target.wants/vpsfort-abuse-report.timer=vpsfort-abuse-report.timer \
         /etc/logrotate.d/vpsfort=vpsfort.logrotate \
+        /etc/vpsfort/vpsfort.toml.new=vpsfort.toml \
         || echo "WARNING: could not announce the new files: expect integrity alerts for them"
 fi
 

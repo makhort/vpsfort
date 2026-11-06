@@ -1427,7 +1427,9 @@ fn status_lines(s: &Snapshot) -> Vec<Line<'static>> {
             Span::styled(grouped(s.bans.len() as u64), Style::new().fg(Color::Red).bold()),
             format!(" active{subnets}").into(),
         ]),
-        Line::from(vec![label("In all"), format!("{}, {}", count(st.bans, "ban", "bans"), count(st.alerts, "alert", "alerts")).into()]),
+        // decisions of this process only: bans and alerts from before a restart are in the state
+        // (Bans above, tab 9), not counted here
+        Line::from(vec![label("This run"), format!("{}, {}", count(st.bans, "ban", "bans"), count(st.alerts, "alert", "alerts")).into()]),
         match serious_alerts(s) {
             0 => Line::from(vec![label("Alerts"), Span::styled("none high or critical in 24 h", dim())]),
             n => Line::from(vec![

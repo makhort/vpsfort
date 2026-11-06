@@ -366,7 +366,12 @@ pub fn audit(values: &BTreeMap<String, String>, router: bool, errors: Vec<String
             fix: if matches!(c.want, Want::ZeroUnlessRouter) && router {
                 String::new()
             } else {
-                format!("sysctl -w {}={want}, and the same line in /etc/sysctl.d/90-hardening.conf", c.key)
+                // the file takes `key = value`, not the command: a pasted `sysctl -w` line there is
+                // ignored at boot, and the setting is lost with the next reboot
+                format!(
+                    "sysctl -w {key}={want}; to keep it after a reboot, add `{key} = {want}` to /etc/sysctl.d/90-hardening.conf",
+                    key = c.key
+                )
             },
         });
     }
@@ -557,6 +562,8 @@ mod tests {
         assert_eq!(r.worst(), Some(Severity::High));
         assert!(r.issues[0].message.contains("forwards IPv4"), "{}", r.issues[0].message);
         assert!(r.issues[0].fix.contains("sysctl -w net.ipv4.ip_forward=0"));
+        // the line for the file is the key and the value, not the command
+        assert!(r.issues[0].fix.contains("add `net.ipv4.ip_forward = 0` to /etc/sysctl.d/"), "{}", r.issues[0].fix);
         assert_eq!(r.concerns().len(), 3, "notes are left out of the digest");
         // the same on a router: forwarding is a note without a fix
         let r = audit(&stock, true, vec![], &cfg, T);

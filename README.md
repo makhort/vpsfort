@@ -35,7 +35,6 @@ feature: [COMPARISON.md](COMPARISON.md).
 1. [Crates](#crates)
 2. [Build and test](#build-and-test)
 3. [Deployment](#deployment)
-
 4. [License](#license)
 5. [Authorship](#authorship)
 
@@ -128,7 +127,8 @@ RSA, since rpm before 4.16 (RHEL 8) can't verify ed25519 signatures; exported wi
 that); without the key, or before the first release, only the documentation is published. Then:
 
 ```bash
-sudo curl -fsSL https://makhort.github.io/vpsfort/vpsfort.asc -o /etc/apt/keyrings/vpsfort.asc
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://makhort.github.io/vpsfort/vpsfort.asc | sudo install -m 0644 /dev/stdin /etc/apt/keyrings/vpsfort.asc
 echo "deb [signed-by=/etc/apt/keyrings/vpsfort.asc] https://makhort.github.io/vpsfort/deb stable main" | sudo tee /etc/apt/sources.list.d/vpsfort.list
 sudo apt update && sudo apt install vpsfort
 ```
@@ -137,10 +137,11 @@ and on Fedora or RHEL `sudo curl -fsSL https://makhort.github.io/vpsfort/vpsfort
 Compare the key's fingerprint on the index page with the one you made. `apt upgrade` and `dnf
 upgrade` then bring new versions, with the same post-install steps as a single package.
 
-**The signing key's fingerprint is** `12A75B42C4ADD340896F5E7A2F64B712E37F3CEC`
+**The signing key's fingerprint is** `12A75B42C4ADD340896F5E7A2F64B712E37F3CEC`; compare it with
+the downloaded key's before the first `apt update`: `gpg --show-keys /etc/apt/keyrings/vpsfort.asc`.
 
-**Releases:** a version is a tag `<crate>-v<version>` (`vpsfort-v0.6.0`,
-`vpsfort-xmpp-bot-v0.4.0`, ...), with the version in that crate's `Cargo.toml`
+**Releases:** a version is a tag `<crate>-v<version>` (`vpsfort-v0.6.1`,
+`vpsfort-xmpp-bot-v0.6.1`, ...), with the version in that crate's `Cargo.toml`
 and the release notes as that version's `## <version>` section in the crate's `CHANGELOG.md`
 (`./scripts/bundle.sh --check-tag TAG` checks both). Pushing the tag runs that crate's workflow,
 which refuses a tag that doesn't match or has no notes, tests, builds and installs the bundles and packages as

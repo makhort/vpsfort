@@ -107,16 +107,24 @@ fi
 # The config stays (the default), or this version's template replaces it.
 tpl=$(template)
 replace=${VPSFORT_PACKAGE_CONFIG:-}
-if [ -z "$replace" ] && [ "${DEBIAN_FRONTEND:-}" != noninteractive ] && [ -c /dev/tty ] && { : < /dev/tty; } 2> /dev/null; then
-    echo
-    echo "vpsfort: $CONF exists. Keep it (the new template is saved next to it as vpsfort.toml.new,"
-    echo "and config-diff below shows what this version changes), or replace it with the template"
-    echo "${tpl##*/} (the old file kept as vpsfort.toml.old)?"
+if [ -z "$replace" ] && [ "${DEBIAN_FRONTEND:-}" != noninteractive ] && [ -c /dev/tty ] && { : < /dev/tty > /dev/tty; } 2> /dev/null; then
+    # Asked on the terminal itself: dnf holds a scriptlet's output back until it ends, so a
+    # question on stdout would wait there unseen for its whole minute.
+    {
+        echo
+        echo "vpsfort: $CONF exists. Keep it (the new template is saved next to it as vpsfort.toml.new,"
+        echo "and config-diff below shows what this version changes), or replace it with the template"
+        echo "${tpl##*/} (the old file kept as vpsfort.toml.old)?"
+        printf '%s' "vpsfort: replace the config? [y/N] "
+    } > /dev/tty
     ans=""
-    read -r -t 60 -p "vpsfort: replace the config? [y/N] " ans < /dev/tty > /dev/tty || ans=""
+    read -r -t 60 ans < /dev/tty || { ans=""; echo > /dev/tty; }
     case $ans in y | Y | yes | YES) replace=replace ;; *) replace=keep ;; esac
 fi
+# /etc/vpsfort is in the integrity watch: each file written below is announced first, so the
+# running daemon logs it instead of raising a "may be compromised" alert.
 if [ "$replace" = replace ]; then
+    announce "$CONF.old=$CONF" "$CONF=$tpl"
     cp -p "$CONF" "$CONF.old"
     install -m 0600 "$tpl" "$CONF"
     rm -f "$CONF.new"
@@ -128,6 +136,7 @@ if [ "$replace" = replace ]; then
     rm -rf /run/vpsfort-package
     exit 0
 fi
+announce "$CONF.new=$tpl"
 install -m 0600 "$tpl" "$CONF.new"
 note "kept $CONF; this version's template ${tpl##*/} is $CONF.new"
 if [ -s "$OLD_DEFAULTS" ]; then

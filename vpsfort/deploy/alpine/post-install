@@ -23,6 +23,9 @@ if [ ! -f "$CONF" ]; then
     echo "  A node joining a cluster takes the other nodes' /etc/vpsfort/cluster.key (root, mode 0600) first."
     exit 0
 fi
+# /etc/vpsfort is in the integrity watch: the new file is announced first, so the running
+# daemon logs it instead of raising a "may be compromised" alert
+"$BIN" --config "$CONF" expect-change "$CONF.new=$TPL" 2> /dev/null || true
 install -m 0600 "$TPL" "$CONF.new"
 echo "vpsfort: kept $CONF; this version's template is $CONF.new"
 if command -v rc-service > /dev/null && rc-service vpsfort status > /dev/null 2>&1; then

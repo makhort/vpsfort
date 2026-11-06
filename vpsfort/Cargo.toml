@@ -1,6 +1,6 @@
 [package]
 name = "vpsfort"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 description = "Near-realtime behaviour-based protection for SSH, ejabberd and UFW logs"
 license = "MIT"
