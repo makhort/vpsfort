@@ -1,0 +1,902 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Compared with the alternatives - vpsfort</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="Behaviour-based intrusion prevention for a small self-hosted server family">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('light')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item "><a href="index.html">vpsfort</a></li><li class="chapter-item expanded "><a href="comparison.html" class="active">Compared with the alternatives</a></li><li class="chapter-item "><a href="vpsfort.html">vpsfort: the daemon</a></li><li class="chapter-item "><a href="vpsfort-web.html">vpsfort-web: the console</a></li><li class="chapter-item "><a href="vpsfort-sim.html">vpsfort-sim: the simulator</a></li><li class="chapter-item "><div>The bots</div><a class="toggle"><div>❱</div></a></li><li><ol class="section"><li class="chapter-item "><a href="vpsfort-xmpp-bot.html">XMPP (vpsfort-xmpp-bot)</a></li><li class="chapter-item "><a href="vpsfort-tg-bot.html">Telegram (vpsfort-tg-bot)</a></li><li class="chapter-item "><a href="vpsfort-mail-bot.html">Mail (vpsfort-mail-bot)</a></li><li class="chapter-item "><a href="vpsfort-signal-bot.html">Signal (vpsfort-signal-bot)</a></li><li class="chapter-item "><a href="vpsfort-matrix-bot.html">Matrix (vpsfort-matrix-bot)</a></li><li class="chapter-item "><a href="vpsfort-push-bot.html">ntfy, Gotify, a webhook (vpsfort-push-bot)</a></li></ol></li><li class="chapter-item "><a href="testing-fedora.html">Tried on Fedora</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">vpsfort</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/makhort/vpsfort" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="vpsfort-compared"><a class="header" href="#vpsfort-compared">vpsfort compared</a></h1>
+<p><strong>How vpsfort compares with the open-source and commercial tools you might use instead:
+a briefing for teams thinking about adopting it.</strong></p>
+<p>The state is as of 2026-11-06: vpsfort 0.6.1, its web console vpsfort-web 0.5.1, the bots
+(vpsfort-xmpp-bot 0.6.1, vpsfort-tg-bot and vpsfort-mail-bot 0.5.1, vpsfort-signal-bot and
+vpsfort-matrix-bot 0.3.1, vpsfort-push-bot 0.2.1) and vpsfort-sim 0.2.0 (the commit named under <a href="#20-method-and-sources">Method and
+sources</a>), compared with the releases
+and documentation of the other tools as of 2026-10-25. Feature claims about vpsfort come from its
+<a href="vpsfort.html">README</a> and code. Claims about the other tools come from their documentation,
+release pages and advisories (see <a href="#20-method-and-sources">Sources</a>). Products change, so check a
+tool's current documentation before you decide on one detail.</p>
+<p>Legend for the tables: <strong>✓</strong> built in · <strong>◐</strong> partly, or by your own configuration or script ·
+<strong>–</strong> not available.</p>
+<h2 id="contents"><a class="header" href="#contents">Contents</a></h2>
+<ol>
+<li><a href="#1-vpsfort-in-one-minute">vpsfort in one minute</a></li>
+<li><a href="#2-who-it-is-for-and-who-it-is-not-for">Who it is for, and who it is not for</a></li>
+<li><a href="#3-the-field">The field</a></li>
+<li><a href="#4-attack-detection-and-banning">Attack detection and banning</a></li>
+<li><a href="#5-firewall-enforcement">Firewall enforcement</a></li>
+<li><a href="#6-sharing-and-threat-intelligence">Sharing and threat intelligence</a></li>
+<li><a href="#7-host-integrity-and-intrusion-detection">Host integrity and intrusion detection</a></li>
+<li><a href="#8-exposure-patches-and-certificates">Exposure, patches and certificates</a></li>
+<li><a href="#9-operations-health">Operations health</a></li>
+<li><a href="#10-alerts-and-the-people-who-get-them">Alerts and the people who get them</a></li>
+<li><a href="#11-day-to-day-operation">Day-to-day operation</a></li>
+<li><a href="#12-footprint-platforms-and-supply-chain">Footprint, platforms and supply chain</a></li>
+<li><a href="#13-commercial-offerings-what-money-buys">Commercial offerings: what money buys</a></li>
+<li><a href="#14-scorecard">Scorecard</a></li>
+<li><a href="#15-what-vpsfort-does-not-do-yet">What vpsfort does not do (yet)</a></li>
+<li><a href="#16-evidence-so-far">Evidence so far</a></li>
+<li><a href="#17-which-tool-for-which-situation">Which tool for which situation</a></li>
+<li><a href="#18-good-companions">Good companions</a></li>
+<li><a href="#19-trying-it">Trying it</a></li>
+<li><a href="#20-method-and-sources">Method and sources</a></li>
+</ol>
+<hr />
+<h2 id="1-vpsfort-in-one-minute"><a class="header" href="#1-vpsfort-in-one-minute">1. vpsfort in one minute</a></h2>
+<p>vpsfort is one static Rust binary for a self-hosted Linux server. It does what usually takes
+four or five separate tools:</p>
+<ul>
+<li>It <strong>bans attackers</strong> in the kernel firewall seconds after they show themselves.</li>
+<li>It <strong>watches the host</strong> for the ways intruders stay in.</li>
+<li>It <strong>notices when its own view goes dark</strong>: a log source that stops, a firewall that was
+flushed, a scan that was killed.</li>
+<li>It <strong>tells the admins</strong> over end-to-end-encrypted channels (or sanitized, to a push
+service), and warns the users whose accounts are under attack.</li>
+<li>It <strong>shows the whole cluster</strong> on one read-only HTTPS page, and to Prometheus (vpsfort-web,
+optional).</li>
+</ul>
+<p>Several servers share what they see over an encrypted peer-to-peer link. There is no central
+server and no vendor in between: the web console only asks the nodes, with a key of its own
+that can't make a ban.</p>
+<pre><code>journal ─► vpsfort ─► nftables / firewalld / ufw / iptables / ipset  ◄── encrypted cluster link ──►  vpsfort on other nodes
+             │
+             ├─► vpsfort-xmpp-bot ─► XMPP, OMEMO-encrypted
+             ├─► vpsfort-tg-bot     ─► Telegram, pseudonymized, files OpenPGP-encrypted
+             ├─► vpsfort-mail-bot   ─► e-mail, PGP/MIME-encrypted
+             ├─► vpsfort-signal-bot ─► Signal (signal-cli), else OpenPGP files
+             ├─► vpsfort-matrix-bot ─► Matrix, Olm/Megolm-encrypted, else OpenPGP files
+             ├─► vpsfort-push-bot   ─► ntfy, Gotify or a webhook, sanitized, files OpenPGP-encrypted
+             └─► vpsfort-web (read-only socket) ─► the cluster on one HTTPS page, /metrics for Prometheus
+</code></pre>
+<p><strong>What one install covers, and what you would otherwise run:</strong></p>
+<div class="table-wrapper"><table><thead><tr><th>vpsfort part</th><th>usually done with</th></tr></thead><tbody>
+<tr><td>scoring and banning, subnet bans, tripwires, honeypots, canary accounts; built-in sources for common web, database and mail servers</td><td>fail2ban, sshguard, CrowdSec</td></tr>
+<tr><td>country and network (ASN) blocking</td><td>CSF <code>CC_DENY</code>, ipset scripts with a GeoIP list</td></tr>
+<tr><td>ban sharing between your servers, blocklist feeds</td><td>CrowdSec, CSF cluster, ipset scripts</td></tr>
+<tr><td>a WAF's decisions (CrowdSec, or any app with a list) enforced at the firewall</td><td>CrowdSec's firewall bouncer</td></tr>
+<tr><td>cron and persistence watch, package and set-uid check (dpkg or rpm), process watch</td><td>AIDE, debsums, <code>rpm -Va</code>, rkhunter, Wazuh FIM</td></tr>
+<tr><td>listeners compared with firewall rules, dead rules, Docker bypass</td><td>Lynis, external port scans, by hand</td></tr>
+<tr><td>patch status (apt or dnf), certificate checks</td><td>apticron, dnf-automatic, needrestart, an uptime or certificate monitor</td></tr>
+<tr><td>SSH hardening audit (sshd's effective settings, key file permissions, a su/sftp gateway's layout)</td><td>Lynis, ssh-audit, Wazuh SCA</td></tr>
+<tr><td>quiet log sources, OOM kills, disk, memory, failed units</td><td>Monit, Netdata, Prometheus</td></tr>
+<tr><td>daily digest, weekly abuse report; live abuse reports per network owner with the e-mail ready; an attacker's evidence as a link for its hosting provider</td><td>Logwatch, AbuseIPDB scripts, by hand</td></tr>
+<tr><td>a read-only web console for the cluster, a REST API, Prometheus metrics</td><td>Grafana with exporters, the CrowdSec Console, Wazuh's dashboard</td></tr>
+</tbody></table>
+</div>
+<p><strong>Key numbers</strong> (measured, from the README):</p>
+<ul>
+<li><strong>~10 MB</strong> static binary with no runtime dependencies (the optional web console is another ~4 MB).</li>
+<li><strong>~10 MB RAM</strong> for a real month of traffic (~50 MB with the offline geo database). The hard
+limit is 128 MB, and it held in a synthetic flood of 450,000 sources.</li>
+<li>A real month of logs (~210,000 records) replays through the full engine in <strong>about one
+second</strong>: 185 bans of 93 targets. No address that ever logged in was banned.</li>
+<li>Tripwire ports banned <strong>about 7,500 scanners on first contact</strong> in that month.</li>
+</ul>
+<hr />
+<h2 id="2-who-it-is-for-and-who-it-is-not-for"><a class="header" href="#2-who-it-is-for-and-who-it-is-not-for">2. Who it is for, and who it is not for</a></h2>
+<p><strong>A good fit:</strong></p>
+<ul>
+<li>One to about ten Linux servers you run yourself: Debian or Ubuntu, or Fedora and RHEL with
+dnf and firewalld; x86_64 (the ARM builds are untried on servers, see below); systemd.</li>
+<li>SSH, XMPP (ejabberd), Nextcloud and WireGuard hosts, and the common web, database and mail
+servers through built-in patterns (Apache, nginx, HAProxy, Prosody, MySQL/MariaDB, PostgreSQL,
+MongoDB, Redis/Valkey, Postfix, Dovecot, ownCloud). Other services count through regex
+patterns of your own.</li>
+<li>Admins who want alerts on their phone, encrypted, with nothing about their users or attackers
+sent to a vendor.</li>
+<li>Small machines: it is built to stay within a 128 MB memory limit next to the services it
+protects.</li>
+<li>Linux desktops and laptops, with a profile of their own (not yet run on one).</li>
+</ul>
+<p><strong>Not a good fit today:</strong></p>
+<ul>
+<li><strong>Fleets</strong> of dozens of hosts or more that need fleet management, roles, several users and
+compliance reports. vpsfort's web console shows dozens of nodes to a few equal admins, read only by design,
+without fleet management or roles.
+Look at Wazuh, the CrowdSec Console or a commercial EDR.</li>
+<li><strong>Web-application-heavy hosts</strong> that need a WAF, captchas or CDN integration. vpsfort can
+enforce a WAF's decisions at the firewall (<code>[waf]</code>, with CrowdSec's formats built in), but it
+inspects no HTTP request itself and answers none: run CrowdSec AppSec, ModSecurity or Coraza
+for the detection, and a CDN or an HTTP bouncer for captchas.</li>
+<li><strong>Other platforms:</strong> Windows, macOS, BSD, Linux without systemd. ARM bundles (arm64 and
+32-bit ARMv7) are built and tested in CI but haven't run on an ARM server yet. Fedora has been
+tried on one test server; RHEL and its rebuilds not yet.</li>
+<li><strong>Organisations that need a vendor:</strong> a support SLA, certified compliance evidence, or a
+24/7 security operations team.</li>
+</ul>
+<hr />
+<h2 id="3-the-field"><a class="header" href="#3-the-field">3. The field</a></h2>
+<p><strong>Ban managers and intrusion-prevention tools</strong>, compared in sections 4 to 12:</p>
+<div class="table-wrapper"><table><thead><tr><th>tool</th><th>kind</th><th>license</th><th>language</th><th>model</th><th>state in Oct 2026</th></tr></thead><tbody>
+<tr><td><strong>vpsfort</strong></td><td>ban manager and host watch</td><td>MIT</td><td>Rust</td><td>decaying scores per address across all services, own nftables table (or firewalld, ipset, ufw, iptables), peer-to-peer cluster</td><td>0.6.0, new in Oct 2026</td></tr>
+<tr><td><strong>fail2ban</strong></td><td>ban manager</td><td>GPL-2.0</td><td>Python</td><td>"jails": a regex filter and a firewall action per service</td><td>1.1.0 is what distributions ship</td></tr>
+<tr><td><strong>sshguard</strong></td><td>ban manager</td><td>BSD-style</td><td>C</td><td>built-in attack parser, a score per address</td><td>2.5.1 (2025)</td></tr>
+<tr><td><strong>reaction</strong></td><td>ban manager</td><td>AGPL-3.0</td><td>–</td><td>streams, regex and actions; a smaller, newer fail2ban alternative</td><td>2.x</td></tr>
+<tr><td><strong>CrowdSec</strong></td><td>collaborative IPS</td><td>MIT (engine); console is SaaS</td><td>Go</td><td>parsers and scenarios, a local API, separate "bouncers", a crowd-sourced blocklist</td><td>1.7 released; docs on the 1.8 line</td></tr>
+<tr><td><strong>CSF / LFD</strong></td><td>firewall front end and login-failure daemon</td><td>GPL-3.0 since v15</td><td>Perl</td><td>iptables rules, bans, port-scan, process and file checks; hosting-panel UIs</td><td>ConfigServer closed in Aug 2025; community forks (and, reportedly, cPanel's)</td></tr>
+<tr><td><strong>Wazuh</strong></td><td>XDR / SIEM platform, a fork of OSSEC</td><td>GPL-2.0</td><td>C, Python; OpenSearch-based indexer</td><td>agents, a manager, an indexer and a dashboard; FIM, SCA, CVE detection, active response</td><td>4.14.x; 5.0 in beta</td></tr>
+<tr><td><strong>OSSEC</strong></td><td>host intrusion detection</td><td>GPL-2.0</td><td>C</td><td>agent and manager, log rules, FIM, rootcheck, active response</td><td>4.x, maintained by Atomicorp</td></tr>
+</tbody></table>
+</div>
+<p><strong>Host, posture and monitoring tools</strong>, compared in sections 7 to 9:</p>
+<ul>
+<li>File integrity: AIDE, Samhain, debsums.</li>
+<li>Rootkit scanners: rkhunter, chkrootkit.</li>
+<li>Kernel-event monitoring: auditd, Falco, Tetragon.</li>
+<li>Host state as SQL: osquery.</li>
+<li>Hardening audit: Lynis.</li>
+<li>Patching: unattended-upgrades, needrestart.</li>
+<li>Health and uptime: Monit, Netdata, Prometheus with Alertmanager, Uptime Kuma, blackbox_exporter.</li>
+<li>Log digests: Logwatch, logcheck.</li>
+</ul>
+<p><strong>Commercial offerings</strong> are compared in <a href="#13-commercial-offerings-what-money-buys">section 13</a>.</p>
+<hr />
+<h2 id="4-attack-detection-and-banning"><a class="header" href="#4-attack-detection-and-banning">4. Attack detection and banning</a></h2>
+<blockquote>
+<p><strong>Bottom line:</strong> for the services it knows, vpsfort detects more, and is more careful about
+false positives, than the generic tools. For any other service, the others ship far larger
+rule libraries.</p>
+</blockquote>
+<div class="table-wrapper"><table><thead><tr><th>feature</th><th>vpsfort</th><th>fail2ban</th><th>sshguard</th><th>CrowdSec</th><th>Wazuh</th><th>CSF/LFD</th></tr></thead><tbody>
+<tr><td>built-in parsers</td><td>◐ sshd, ejabberd, kernel log (UFW, firewalld, iptables), Nextcloud, su/sudo, PAM, audit log, and 24 common services (web servers and proxies, databases, mail, a code forge, a password manager, identity providers, Matrix, OpenVPN, FTP, a media server)</td><td>✓ dozens of filters</td><td>◐ SSH and common mail/FTP daemons</td><td>✓ hub of parsers and scenarios</td><td>✓ thousands of rules</td><td>✓ hosting stack</td></tr>
+<tr><td>patterns of your own</td><td>✓</td><td>✓</td><td>– compiled in</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>one score per address across all services</td><td>✓</td><td>◐ per jail, plus <code>recidive</code></td><td>✓</td><td>◐ per scenario</td><td>◐ correlation rules</td><td>◐ per trigger</td></tr>
+<tr><td>low-and-slow probing over hours</td><td>✓ 12 h score</td><td>◐ long <code>findtime</code></td><td>◐</td><td>◐</td><td>◐</td><td>◐</td></tr>
+<tr><td>escalating ban times</td><td>✓ 1 h to 30 d</td><td>✓ <code>bantime.increment</code></td><td>✓</td><td>◐ profile expressions</td><td>✓ <code>repeated_offenders</code></td><td>✓ <code>LF_PERMBLOCK</code></td></tr>
+<tr><td>subnet bans</td><td>✓ grow from /24 towards /16</td><td>–</td><td>◐ fixed prefix</td><td>◐ range-scoped scenarios</td><td>–</td><td>◐ <code>LF_NETBLOCK</code>, fixed</td></tr>
+<tr><td>port scans and tripwire ports</td><td>✓</td><td>◐ own filter</td><td>–</td><td>✓</td><td>◐</td><td>✓</td></tr>
+<tr><td>honeypot listeners (handshake proves the source; what the scanner sent is evidence)</td><td>✓</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>canary account names</td><td>✓</td><td>◐ own filter</td><td>–</td><td>◐ own scenario</td><td>◐ own rule</td><td>–</td></tr>
+<tr><td>per-account alerts (distributed guessing, login after failures, new network, new SSH key)</td><td>✓</td><td>–</td><td>–</td><td>◐</td><td>◐ success after failures</td><td>◐ <code>LF_DISTATTACK</code></td></tr>
+<tr><td>a recent login protects an address</td><td>✓ per service</td><td>◐ <code>ignorecommand</code> script</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>dry-run mode</td><td>✓ shadow mode</td><td>◐ dummy action</td><td>–</td><td>✓ simulation</td><td>✓ alert-only by default</td><td>✓ <code>TESTING</code></td></tr>
+<tr><td>replay old logs through the same engine</td><td>✓</td><td>◐ <code>fail2ban-regex</code> tests filters</td><td>–</td><td>✓ replay mode</td><td>◐ <code>wazuh-logtest</code></td><td>–</td></tr>
+<tr><td>XMPP server attacks</td><td>✓ deep</td><td>◐ own filter</td><td>–</td><td>◐ own parser</td><td>◐ own decoder</td><td>–</td></tr>
+</tbody></table>
+</div><div class="table-wrapper"><table><thead><tr><th>feature</th><th>pros (vpsfort)</th><th>cons (vpsfort), and who does better</th></tr></thead><tbody>
+<tr><td><strong>Parsers</strong></td><td>Deep parsers for what it knows. An ejabberd TLS failure is tied to its address through the Erlang PID. OpenSSH 10's <code>sshd-session</code> lines are handled. A line counts only from its real sender, by journald's own fields, so a local user can't log a fake sshd line to get someone banned. <code>[sources] apps</code> adds built-in patterns for Apache, nginx, HAProxy, Prosody, MySQL/MariaDB, PostgreSQL, MongoDB, Redis/Valkey, Nextcloud, ownCloud, Postfix, Dovecot and its own web console, each taking the address only from where the service writes it, so a client can't get another address banned through a user name or path.</td><td>The built-in services are tested against documented and forged log lines, and Apache's against two honeypots' logs, but not yet run on a host with them. FTP and everything else need <code>[[patterns]]</code>. fail2ban, CrowdSec and Wazuh ship ready filters for hundreds of services.</td></tr>
+<tr><td><strong>Own patterns</strong></td><td>Linear-time regex, so no catastrophic backtracking on hostile lines. The sender is pinned by unit, or by identifier and uid. <code>test-pattern</code> and a TUI tab show the lines read, matched, and matched without an address.</td><td>A pattern is a regex, a kind and a weight. There are no multi-line or stateful scenarios like CrowdSec's leaky buckets or Wazuh's composite rules.</td></tr>
+<tr><td><strong>Scoring</strong></td><td>Two decaying scores (10 min and 12 h half-life) add up every signal from every service. A scanner that touches SSH, XMPP and closed ports a little each still reaches a ban. Weights are calibrated on a real month of logs.</td><td>One model for everything: tuning means weights and thresholds, not per-service rules. At first it is less obvious than fail2ban's "N failures in T minutes".</td></tr>
+<tr><td><strong>Escalation</strong></td><td>1 h → 6 h → 1 d → 7 d → 30 d per repeat offence. Offences are shared, so a repeat attacker escalates on every node of the cluster.</td><td>fail2ban, sshguard and CSF escalate too, and CSF offers permanent bans. Only the cluster-wide counter is new here.</td></tr>
+<tr><td><strong>Subnet bans</strong></td><td>Starts at /24 (IPv6 /64) and grows towards /16 (/48) only as nearby bans appear, at most 2 bits a step. It never covers a protected address. With the geo database, it never grows into another provider's network.</td><td>The provider boundary needs the <code>[geo]</code> ASN database. A stricter policy, such as blocking a whole network or country now, needs feeds. CSF blocks countries out of the box.</td></tr>
+<tr><td><strong>Tripwires and honeypots</strong></td><td>One SYN to an unused telnet, RDP or database port bans. Kernel tripwires log these hits from vpsfort's own nftables rules, so UFW's log limit (about 3 lines a minute) doesn't hide scans. Honeypot ports complete the TCP handshake, so their evidence can't be forged, and keep the scanner's first bytes (a Telnet login, an HTTP request) for the abuse report.</td><td>A blocked SYN can carry a forged source address. vpsfort limits the damage: such evidence never bans an address that logged in recently, replies always pass, and with honeypots set it is worth half a ban. A spoofer can still get outsiders banned for an hour.</td></tr>
+<tr><td><strong>Canary accounts</strong></td><td>No accounts to create. On a key-only host, <code>ssh = ["*"]</code> makes every unknown user name a ban. A successful login to a canary is a critical alert.</td><td>fail2ban, CrowdSec and Wazuh can do this with a filter of your own. vpsfort just has it built in.</td></tr>
+<tr><td><strong>Account protection</strong></td><td>Distributed guessing against one account from several addresses; a login right after failures (possible compromise); a login from a new network or provider for that account; a login with a never-seen SSH key.</td><td>Covers XMPP, SSH, Nextcloud, the built-in services and your patterns only. Wazuh covers far more authentication sources (PAM, Windows, cloud services).</td></tr>
+<tr><td><strong>False positives</strong></td><td>Shadow mode lifts its own "bans" when the address later logs in, and says so. An address that logged in recently isn't banned for that service's typos and reconnects. Private, CGNAT, loopback and link-local addresses are never banned.</td><td>Login trust is a heuristic. An attacker behind the same carrier NAT as a user gets the same excuse for that service's noise; real failures still raise an alert.</td></tr>
+<tr><td><strong>Testing</strong></td><td><code>replay</code> runs journal exports through the whole pipeline without touching the firewall, and opens the result in the TUI.</td><td>CrowdSec's replay mode and <code>cscli explain</code> are as capable, and better documented for writing new scenarios.</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="5-firewall-enforcement"><a class="header" href="#5-firewall-enforcement">5. Firewall enforcement</a></h2>
+<blockquote>
+<p><strong>Bottom line:</strong> vpsfort's enforcement takes the most care not to break the server itself
+(Docker, flushed rulesets, replies, oversized feeds). It covers the Linux firewalls (nftables,
+firewalld, ipset, ufw, iptables) but no BSD or Windows ones, and CrowdSec reaches the HTTP
+layer and CDNs.</p>
+</blockquote>
+<div class="table-wrapper"><table><thead><tr><th>feature</th><th>vpsfort</th><th>fail2ban</th><th>sshguard</th><th>CrowdSec bouncer</th><th>Wazuh</th><th>CSF/LFD</th></tr></thead><tbody>
+<tr><td>firewall backends</td><td>◐ nftables, firewalld, ipset, ufw, iptables (Linux only)</td><td>✓ iptables, nftables, firewalld, ufw, pf, ipfw, …</td><td>✓ iptables, ipset, nftables, firewalld, pf, ipfw</td><td>✓ nftables, iptables/ipset, pf, Windows</td><td>◐ iptables, firewalld, pf, Windows</td><td>◐ iptables</td></tr>
+<tr><td>bans expire in the kernel, even while the daemon is down</td><td>✓ nft and ipset timeouts</td><td>◐ some ipset actions</td><td>–</td><td>✓</td><td>–</td><td>–</td></tr>
+<tr><td>Docker-published ports covered without extra setup</td><td>✓</td><td>◐ <code>DOCKER-USER</code> chain by config</td><td>◐</td><td>◐ <code>DOCKER-USER</code> or forward hook by config</td><td>◐</td><td>◐ <code>DOCKER</code> option</td></tr>
+<tr><td>per-source connection rate limits in the kernel</td><td>✓</td><td>–</td><td>–</td><td>–</td><td>–</td><td>✓ <code>CONNLIMIT</code>, <code>PORTFLOOD</code></td></tr>
+<tr><td>public blocklists loaded into the firewall</td><td>✓ with sanity limits</td><td>–</td><td>–</td><td>✓ console blocklists</td><td>–</td><td>✓ <code>csf.blocklists</code></td></tr>
+<tr><td>country blocking</td><td>✓ offline, from DB-IP Lite or a commercial database read as it is, plus networks by ASN</td><td>–</td><td>–</td><td>◐ paid lists or own profiles</td><td>–</td><td>✓ <code>CC_DENY</code></td></tr>
+<tr><td>HTTP-level responses (403, captcha, CDN)</td><td>–</td><td>◐ Cloudflare action</td><td>–</td><td>✓ nginx, Traefik, HAProxy, Cloudflare, …</td><td>–</td><td>–</td></tr>
+<tr><td>a WAF's or IPS's decisions blocked at the firewall</td><td>✓ <code>[waf]</code>: CrowdSec built in; JSON, CSV, regex, plain lists for others</td><td>◐ an action script of your own</td><td>–</td><td>✓ what a bouncer does</td><td>◐ active response scripts</td><td>–</td></tr>
+</tbody></table>
+</div><div class="table-wrapper"><table><thead><tr><th>feature</th><th>pros (vpsfort)</th><th>cons (vpsfort), and who does better</th></tr></thead><tbody>
+<tr><td><strong>Where bans sit</strong></td><td>Its own nftables table at prerouting, right after connection tracking. It runs before ufw's chains and before Docker's DNAT, so your own ALLOW rules can't shadow a ban, and Docker ports are covered without touching <code>DOCKER-USER</code>. It never edits your rules. On Fedora and RHEL it can keep everything in firewalld instead: its own ipsets, a drop zone and a forwarding policy, visible with <code>firewall-cmd</code>. The ipset backend is iptables with one set lookup however many bans.</td><td>Linux only: no pf, ipfw or Windows. The ufw fallback loses Docker coverage, rate limits and feeds; the firewalld backend has no rate limits or feeds, and its entries end only while vpsfort runs. The firewalld, ipset and nftables backends ran on a Fedora 44 test server; the plain iptables backend has not yet run on a real host.</td></tr>
+<tr><td><strong>Expiry</strong></td><td>Ban timeouts live in the kernel: if vpsfort stops, bans still end on time. After a reboot it re-applies what is still active.</td><td>CrowdSec's firewall bouncer works the same way.</td></tr>
+<tr><td><strong>Self-healing</strong></td><td>Debian's and Ubuntu's <code>nftables.conf</code> starts with <code>flush ruleset</code>, so a restart of nftables deletes every ban. vpsfort notices within 30 s, rebuilds every set and chain, re-adds the bans with their remaining time, and raises a high alert. The same after <code>firewall-cmd --reload</code> or a firewalld restart, and after its iptables chains are flushed (both seen on the Fedora server). A single change the firewall program refuses is kept and tried again every 30 s, with a high alert while it keeps failing.</td><td>fail2ban restores its chains too, but only at its next ban action.</td></tr>
+<tr><td><strong>Replies to the server's own connections</strong></td><td>Bans drop after connection tracking, so replies always pass: DNS, mail relay, update mirrors, federated XMPP servers. A forged packet that gets such an address banned can't cut the server off.</td><td>The chains dropped a test client on the Fedora server, and on a production server both pings and a TCP connection to addresses banned there got their replies.</td></tr>
+<tr><td><strong>Rate limits</strong></td><td>Per-source <code>[[ratelimit]]</code> entries in the kernel, from the first packet, Docker ports included. <code>status</code> shows their drop counters.</td><td>nftables backend only (<code>status</code> says so under the others). CSF has richer flood controls (SYN floods, per-port and per-connection limits).</td></tr>
+<tr><td><strong>Feeds</strong></td><td>Downloads with <code>curl</code> (the binary has no TLS library) and keeps the last good copy. It drops bogons, prefixes wider than /12, and anything overlapping your allowlist or peers. A refresh that suddenly covers far more address space is refused.</td><td>A few public lists (Spamhaus DROP and ASN-DROP, FireHOL); no curated commercial lists. nftables, ipset and firewalld backends (firewalld: 50,000 networks per list). CrowdSec's blocklists are larger and updated more often.</td></tr>
+<tr><td><strong>Countries and networks</strong></td><td><code>[geoblock]</code> drops whole countries (or all but some) and networks by AS number, from the DB-IP Lite databases it already holds for labels: no download, no second database, about 1 MB while the list is computed. Protected addresses are cut out exactly. China is about 15,000 networks, everything but one country about 28,000. On the Fedora server two blocked countries timed out and a third connected.</td><td>The free DB-IP Lite data misplaces some addresses and is refreshed monthly: coarse, not a curated list; a commercial database (DB-IP's IP to Country as it is) can replace it. ufw and plain iptables can't hold it; firewalld takes at most 50,000 networks. CSF's <code>CC_DENY</code> and <code>CC_ALLOW</code> have been doing this for years; vpsfort's <code>[geoblock] ports</code> limits a country block to some ports (SSH and XMPP closed, the web site open) the same way.</td></tr>
+<tr><td><strong>HTTP layer</strong></td><td><code>[waf]</code> blocks what a WAF decides at the firewall, for every port and, as bans, on every cluster node: CrowdSec's local API, <code>cscli</code> output and blocklist mirror are read as they are, any other app through JSON, CSV, regex or plain-list formats. Its decisions get the protections of an operator ban (allowlists, peers, recent logins), are lifted when the WAF drops them, and large blocklists go into sets of their own.</td><td>No WAF of its own, and no HTTP-level response: a banned visitor just times out. No captcha, no ban at the CDN or edge. CrowdSec's remediation components and WAF cover that layer. <code>[waf]</code> is tested against CrowdSec's documented formats, not yet run against a real CrowdSec.</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="6-sharing-and-threat-intelligence"><a class="header" href="#6-sharing-and-threat-intelligence">6. Sharing and threat intelligence</a></h2>
+<blockquote>
+<p><strong>Bottom line:</strong> vpsfort shares well among your own servers and keeps every observation
+private. Like every tool here but CrowdSec, it has no crowd-sourced intelligence; that is
+CrowdSec's main strength.</p>
+</blockquote>
+<div class="table-wrapper"><table><thead><tr><th>feature</th><th>vpsfort</th><th>fail2ban</th><th>sshguard</th><th>CrowdSec</th><th>Wazuh</th><th>CSF/LFD</th></tr></thead><tbody>
+<tr><td>bans shared between your own servers</td><td>✓ peer to peer, encrypted</td><td>– scripts</td><td>–</td><td>✓ through one central local API</td><td>✓ through the manager</td><td>✓ <code>LF_CLUSTER</code></td></tr>
+<tr><td>suspicion below the ban threshold adds up across servers</td><td>✓</td><td>–</td><td>–</td><td>–</td><td>✓ the manager sees all events</td><td>–</td></tr>
+<tr><td>works without a central server</td><td>✓ mesh, chain or star</td><td>–</td><td>–</td><td>–</td><td>–</td><td>✓</td></tr>
+<tr><td>crowd-sourced global blocklist</td><td>–</td><td>◐ AbuseIPDB actions</td><td>–</td><td>✓</td><td>–</td><td>◐ third-party lists</td></tr>
+<tr><td>nothing about attackers leaves your servers by default</td><td>✓</td><td>✓</td><td>✓</td><td>– signals go to CrowdSec unless turned off</td><td>✓ self-hosted</td><td>✓</td></tr>
+<tr><td>reports to the attackers' abuse desks</td><td>✓ weekly, with evidence and contacts</td><td>◐ <code>complain</code> and AbuseIPDB actions</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>offline country and network labels</td><td>✓</td><td>–</td><td>–</td><td>✓</td><td>✓</td><td>✓</td></tr>
+</tbody></table>
+</div><div class="table-wrapper"><table><thead><tr><th>feature</th><th>pros (vpsfort)</th><th>cons (vpsfort), and who does better</th></tr></thead><tbody>
+<tr><td><strong>Cluster</strong></td><td>XChaCha20-Poly1305 under a key derived from a fresh X25519 exchange per connection (the shared key authenticates the exchange; a recording stays unreadable if the key leaks later), and only peers may connect. Facts are de-duplicated and forwarded up to 3 hops. Suspicion is shared too, so an address that probes every server a little still adds up to a ban. A shared ban carries up to three of its evidence lines, worded as the abuse reports word them, so a peer's log and the console say what the source did, not only its score. A limited peer (<code>peer_accept</code>) can send messages but never ban anything. Optional node identities: each node signs its own facts and files with an Ed25519 key of its own, pinned on the others, so a broken-into node (or a stolen cluster key) speaks only for itself, and a node is dropped by deleting its key, without a new cluster key. Key rotation is staged in three rounds, without a gap.</td><td>Without node identities, every unlimited key holder is fully trusted: a broken-into node can ban on the others under any name, for at most <code>max_remote_ban</code>. With them, it can still ban for itself, and still read what the others share until the cluster key is rotated. Keys are pinned by hand in each node's config, with no PKI or enrollment. Node identities run on the authors' five servers, each pinning the other four's keys and requiring signatures; a fact refused for its signature has not been seen yet. It is sized for a handful of nodes, with no fleet management.</td></tr>
+<tr><td><strong>Threat intelligence</strong></td><td>Your data stays yours: no vendor sees your attackers or your users. The static feeds (Spamhaus, FireHOL) need no account.</td><td>No network effect, as with every tool here but CrowdSec, which blocks addresses that attacked thousands of other servers before they reach yours; vpsfort knows what your own nodes saw, its feeds, and through <code>[waf]</code> what a CrowdSec next to it decides.</td></tr>
+<tr><td><strong>Abuse reports</strong></td><td>A weekly report grouped by abuse mailbox (looked up with RDAP), each attacker with UTC log lines and account names withheld. Reports from several nodes are merged, and the result reaches the admin encrypted. The web console shows the last day's or week's at any time, merged across the nodes, one entry per network owner, each copied or saved as the e-mail to its abuse desk, or opened in your mail program with the mailbox looked up (RDAP); a network is marked as mailed, and one banned again after that shows "seen again". An address's page can be handed to its hosting provider as a link that needs no login, cut to what the abuse report would show (account names withheld, nodes numbered), good for a day to a week.</td><td>You send the mails yourself: vpsfort never mails third parties, by design. There is no AbuseIPDB integration.</td></tr>
+<tr><td><strong>Geo</strong></td><td>DB-IP Lite by default, or a commercial database read as it is (DB-IP's CSVs; any CSV with a header row; a city-level one adds cities and coordinates): about 1.2 million ranges in ~40 MB, looked up in memory, with no request per lookup. Used in alerts, to limit subnet growth, to learn each account's providers, and to block countries and networks.</td><td>Cities, and map markers at the addresses' coordinates, only with a city-level database (DB-IP's city lite needs the unit's memory raised); the free data's accuracy: on the authors' servers, a VPN exit in Vienna (M247) shows as Czechia.</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="7-host-integrity-and-intrusion-detection"><a class="header" href="#7-host-integrity-and-intrusion-detection">7. Host integrity and intrusion detection</a></h2>
+<blockquote>
+<p><strong>Bottom line:</strong> vpsfort covers the practical "how would someone stay in?" checklist on
+Debian and Ubuntu with no extra tools. It is not a kernel-level runtime sensor and not a
+compliance-grade FIM.</p>
+</blockquote>
+<div class="table-wrapper"><table><thead><tr><th>feature</th><th>vpsfort</th><th>Wazuh</th><th>AIDE</th><th>rkhunter, debsums</th><th>Falco, Tetragon</th><th>osquery</th></tr></thead><tbody>
+<tr><td>persistence points watched out of the box (cron, at, timers, system and user units, SSH keys and host keys, PAM, sudoers, <code>ld.so.preload</code>, apt and dnf hooks and sources, network hooks, shell start-up files, ...)</td><td>✓ every minute</td><td>◐ default directories, 12 h scans; real time by config</td><td>◐ distribution config, typically daily</td><td>◐ some startup files</td><td>✓ rules, real time</td><td>◐ tables, scheduled queries</td></tr>
+<tr><td>changed lines shown in the alert</td><td>✓</td><td>✓ <code>report_changes</code></td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>package files told apart from foreign ones (dpkg or rpm origin)</td><td>✓</td><td>–</td><td>–</td><td>✓ debsums</td><td>–</td><td>◐ <code>deb_packages</code>, <code>rpm_packages</code></td></tr>
+<tr><td>package files checked against dpkg's or rpm's hashes</td><td>✓ weekly</td><td>–</td><td>◐ own baseline</td><td>✓ debsums</td><td>–</td><td>–</td></tr>
+<tr><td>set-uid program inventory</td><td>✓</td><td>◐ rootcheck</td><td>◐ baseline</td><td>◐</td><td>◐ rules</td><td>✓ <code>suid_bin</code></td></tr>
+<tr><td>outbound connections and reverse shells</td><td>◐ checked every 60 s, containers' too</td><td>◐ command monitoring</td><td>–</td><td>–</td><td>✓ syscall events</td><td>◐ snapshots</td></tr>
+<tr><td>new kernel modules, containers (privileged, host network, risky mounts), WireGuard peers</td><td>✓ every 60 s, after a learning period</td><td>◐ rootcheck, rules</td><td>–</td><td>◐ rkhunter: modules</td><td>✓ rules</td><td>◐ <code>kernel_modules</code>, <code>docker_containers</code> tables</td></tr>
+<tr><td>programs running from <code>/tmp</code>, from memory or from deleted files</td><td>✓ checked every 60 s</td><td>◐ rootcheck</td><td>–</td><td>◐</td><td>✓</td><td>◐ by query</td></tr>
+<tr><td>failed su and sudo</td><td>✓</td><td>✓</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>PAM failures (console, polkit, Cockpit), account changes, auditd stopped</td><td>✓</td><td>✓</td><td>–</td><td>–</td><td>◐ rules</td><td>◐ by query</td></tr>
+<tr><td>a login with a never-seen SSH key</td><td>✓</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>malware signatures</td><td>◐ ClamAV results; changed files scanned with ClamAV or YARA</td><td>◐ ClamAV, YARA, VirusTotal integrations</td><td>–</td><td>◐ rootkit signatures</td><td>–</td><td>–</td></tr>
+<tr><td>real-time kernel events</td><td>–</td><td>◐ who-data through auditd</td><td>–</td><td>–</td><td>✓ eBPF</td><td>◐ evented tables</td></tr>
+<tr><td>events copied off the host as they happen</td><td>◐ alerts through bots and peers; the decision log mirrored to a peer at every sync, and a daily hash of it kept by the peers</td><td>✓</td><td>◐ Samhain's server</td><td>–</td><td>◐ falcosidekick</td><td>◐ fleet server</td></tr>
+<tr><td>signs of journal tampering (lost position, sealed-journal check)</td><td>✓</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+</tbody></table>
+</div><div class="table-wrapper"><table><thead><tr><th>feature</th><th>pros (vpsfort)</th><th>cons (vpsfort), and who does better</th></tr></thead><tbody>
+<tr><td><strong>Persistence watch</strong></td><td>It knows where intruders hide, including the scripts crontab lines run (also behind <code>sudo -u</code>, <code>flock</code>, <code>timeout</code>), at-jobs, user-level units, every user's shell start-up, the network stack's hooks, the resolver and the host keys, the package sources and the CA store. It keeps fingerprints only, never contents, so no password hashes in alerts or state. Alert severity knows whether dpkg or rpm installed the file unchanged. A file reached under two names (Fedora's merged <code>/usr/local/sbin</code>) is watched once. Installers announce their changes (<code>expect-change</code>) so upgrades don't alert. One local account can raise at most 5 alerts an hour, so it can't flood the channel. The kernel wakes it (inotify on the watched directories), so a change is scanned within seconds and one undone within the minute is still seen.</td><td>It doesn't see which process made the write: Falco and Tetragon do. The list of places is fixed, plus your own <code>[cron] files</code>; AIDE and Wazuh FIM cover any directory tree.</td></tr>
+<tr><td><strong>Package and set-uid check</strong></td><td>A debsums-like check (or <code>rpm -Va</code>-like, with each package's own digest algorithm) plus a set-uid inventory. It reads at most 20 MB/s and drops what it read from the page cache, so it stays within the 128 MB unit. Diverted files, rpm's <code>%config</code> files and upgrades in progress are handled. On the Fedora server it matched 7,472 files and caught a tampered binary; with dpkg on a production server no file differed, with 17 set-uid programs listed.</td><td>Once a week. A root attacker who also rewrites the package database defeats it, as with debsums.</td></tr>
+<tr><td><strong>Process watch</strong></td><td>A baseline of outbound connections per program and port, containers' network namespaces included (a connection out of a container is named with its id). A shell or network tool talking out, or a miner or reverse-shell port, is always high. Programs from <code>/tmp</code>, from memory (<code>memfd</code>) or from deleted files are reported. Baselines of the kernel modules loaded, the containers running (from Docker's own files: a privileged one, or one on the host's network or mounting the Docker socket, is high) and WireGuard's peers: a new one after the learning period is reported.</td><td>A snapshot every 60 s misses short-lived connections. eBPF tools are much stronger here.</td></tr>
+<tr><td><strong>Privilege and keys</strong></td><td>Failed su and sudo, each with the account's last SSH login and its place (su seen on the XMPP server; neither server has sudo). New-SSH-key alerts start after a learning period. PAM failures of the programs no other parser reads (the console, desktops, polkit, Cockpit, FTP), account changes (<code>useradd</code>, <code>usermod</code>, <code>passwd</code>, groups), auditd stopping, and authentication failures in the audit log.</td><td>Wazuh's ruleset covers far more event types, and Windows and cloud logins. Account changes (a new account and group) have been reported on hosts; PAM failures and auditd alerts not yet.</td></tr>
+<tr><td><strong>Malware</strong></td><td>Turns ClamAV's runs into alerts: infected files, scans killed for memory, stale signatures, missing runs. It ships a scan timer that runs at low priority and dies first when memory runs out. Files its watches see change can be scanned at once with ClamAV, YARA or both, outside vpsfort's memory limit, and are checked again just before the scanner reads them.</td><td>No scanning engine of its own: ClamAV or YARA must be installed. The changed-file scans have run on hosts with ClamAV (a changed <code>sshd_config</code>, clean) and with ClamAV and YARA together (Debian's <code>yara</code> 4.5 with YARA Forge's core set compiled by <code>yarac</code>, a new file in <code>/usr/local/bin</code>: clean). An infected file's alert has not yet been seen on a host.</td></tr>
+<tr><td><strong>Tamper resistance</strong></td><td>Alerts leave the host at once (encrypted bots, peers). The decision log can be mirrored to a peer at every sync (<code>[cluster] mirror_to</code>), and the peers hold each day's hash of it, so an edit shows and the lines survive a wiped node. A lost journal position and failed <code>journalctl --verify</code> checks are reported. Peers report a node that stops answering for 5 minutes, and a fact that fails its signature check is an alert (a node broken into, or a stolen key). vpsfort checks its own files daily: a key, config or state another user can read, a directory another user can write to, a binary that isn't root's. The daemon runs under a capability bound of nine.</td><td>The raw journal stays on the host. A root attacker can stop vpsfort: the systemd watchdog restarts a hung daemon, not a deliberately stopped one. EDRs add tamper protection, and Wazuh ships every event off the host.</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="8-exposure-patches-and-certificates"><a class="header" href="#8-exposure-patches-and-certificates">8. Exposure, patches and certificates</a></h2>
+<blockquote>
+<p><strong>Bottom line:</strong> vpsfort explains, port by port, what the internet can reach and why, and
+catches certificate mistakes other monitors miss. It audits sshd, and alerts when its settings
+weaken. Use Wazuh or Lynis for CVE matching and whole-host hardening benchmarks, and
+unattended-upgrades to apply updates.</p>
+</blockquote>
+<div class="table-wrapper"><table><thead><tr><th>feature</th><th>vpsfort</th><th>Wazuh</th><th>Lynis</th><th>unattended-upgrades, needrestart</th><th>Uptime Kuma, blackbox_exporter</th><th>external scan (nmap, Shodan)</th></tr></thead><tbody>
+<tr><td>each listener compared with the firewall rule that lets it in</td><td>✓ ufw, firewalld zones, iptables, nftables rulesets, docker-proxy</td><td>◐ port inventory</td><td>◐ once per run</td><td>–</td><td>–</td><td>◐ outside view</td></tr>
+<tr><td>Docker ports that bypass ufw</td><td>✓</td><td>–</td><td>–</td><td>–</td><td>–</td><td>◐ seen as open</td></tr>
+<tr><td>alerts: new public listener, listener gone, dead allow rule, no firewall</td><td>✓</td><td>◐ listening-port change rule</td><td>–</td><td>–</td><td>◐ port down</td><td>–</td></tr>
+<tr><td>pending security updates, reboot needed, processes on replaced libraries</td><td>✓ in the digest</td><td>✓</td><td>◐</td><td>✓ installs and restarts</td><td>–</td><td>–</td></tr>
+<tr><td>CVE matching</td><td>–</td><td>✓</td><td>◐</td><td>–</td><td>–</td><td>◐ service versions</td></tr>
+<tr><td>SSH hardening audit, with alerts when settings weaken</td><td>✓ sshd only</td><td>✓ SCA</td><td>◐ once per run</td><td>–</td><td>–</td><td>◐ algorithms only</td></tr>
+<tr><td>hardening benchmark (CIS style), sysctls</td><td>◐ the kernel's hardening sysctls, with alerts when one weakens; no benchmark</td><td>✓ SCA</td><td>✓</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>live certificate expiry, STARTTLS included</td><td>✓</td><td>–</td><td>–</td><td>–</td><td>✓</td><td>◐</td></tr>
+<tr><td>"renewed but not in use", DANE TLSA value at each renewal</td><td>✓</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+</tbody></table>
+</div><div class="table-wrapper"><table><thead><tr><th>feature</th><th>pros (vpsfort)</th><th>cons (vpsfort), and who does better</th></tr></thead><tbody>
+<tr><td><strong>Exposure</strong></td><td>Reads the listeners from <code>/proc</code> and follows the firewall's own logic: rules in order, jumps, policies, rate limits. The TUI names the rule that lets each port in. It flags Docker-published ports, which ufw doesn't filter, and allow rules for ports nothing listens on: the kind of dead rules that were found by hand on the authors' hosts before. Under firewalld it reads the zones (services, ports, rich rules, source-bound zones), and nftables rulesets of your own as <code>nft</code> prints them (base chains in priority order, verdict maps). With <code>peer_probe</code>, the cluster's peers try the host's public ports from outside hourly: a port the firewall should block that a peer reaches is a high alert, one a provider's firewall in front blocks an info.</td><td>A view from the host, plus its peers' (your own servers, not the internet at large); an external scan remains the ground truth.</td></tr>
+<tr><td><strong>Patches</strong></td><td>A simulated <code>apt-get</code>, or <code>dnf check-update</code> from the cached metadata (no lock taken either way), in a unit of its own; a newer installed kernel than the running one; programs still running replaced libraries. All of it is in the daily digest.</td><td>Reports only: it doesn't apply updates (use unattended-upgrades or dnf-automatic). No CVE database. apt and dnf only.</td></tr>
+<tr><td><strong>Certificates</strong></td><td>Live endpoints every 6 h, XMPP STARTTLS included, plus the certificates on disk. It warns when a renewed certificate isn't served yet, explains ejabberd's ACME failures, gives the new DANE <code>3 1 1</code> value at each renewal, and compares the TLSA records published for each endpoint with the certificate served (a warning when none matches). This matters more since Let's Encrypt stopped sending expiry e-mails in June 2025. The host's own names are resolved hourly: one that no longer points here (a changed record, a hijack) is a high alert.</td><td>Checked from the host itself, so routing problems elsewhere are not seen.</td></tr>
+<tr><td><strong>Hardening</strong></td><td>sshd's settings as <code>sshd -T</code> applies them (Match blocks included), checked against the host's layout: a plain VPS, a hosting panel, or a key-only gateway user forced into a su/sftp wrapper. It names the file each setting comes from (cloud-init's override) and alerts when a setting weakens. The kernel's hardening sysctls the same way (forwarding, redirects, source routing, rp_filter, SYN cookies, ASLR, kptr_restrict, ptrace_scope, unprivileged BPF, protected links, ...), with the line to set.</td><td>sshd and sysctls only: no other services, no CIS benchmark or score. Run Lynis or Wazuh SCA for the rest of the host.</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="9-operations-health"><a class="header" href="#9-operations-health">9. Operations health</a></h2>
+<blockquote>
+<p><strong>Bottom line:</strong> vpsfort covers the alerts a small server needs, and knows when its own
+view has gone dark. It is not a metrics system, but its web console hands what it sees to
+Prometheus.</p>
+</blockquote>
+<div class="table-wrapper"><table><thead><tr><th>feature</th><th>vpsfort</th><th>Monit</th><th>Netdata</th><th>Prometheus, Alertmanager</th><th>Logwatch, logcheck</th></tr></thead><tbody>
+<tr><td>a log source goes quiet, or stops naming addresses</td><td>✓</td><td>◐ file timestamps</td><td>–</td><td>◐ <code>absent()</code> on your own metrics</td><td>–</td></tr>
+<tr><td>OOM kills, with process and size</td><td>✓</td><td>–</td><td>✓</td><td>◐ a counter only</td><td>◐ in the daily mail</td></tr>
+<tr><td>disk space, memory pressure (PSI)</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>–</td></tr>
+<tr><td>failed systemd units that are not restarted</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>–</td></tr>
+<tr><td>restarts services itself</td><td>–</td><td>✓</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>daily digest</td><td>✓ security and health</td><td>–</td><td>–</td><td>–</td><td>✓</td></tr>
+<tr><td>graphs and history</td><td>◐ TUI trends; web console charts (3 hours to 7 days), what needed attention and the digests kept on disk (7 and 14 days by default, settable); Prometheus export with alerting rules shipped</td><td>◐ M/Monit</td><td>✓</td><td>✓ with Grafana</td><td>–</td></tr>
+</tbody></table>
+</div><div class="table-wrapper"><table><thead><tr><th>feature</th><th>pros (vpsfort)</th><th>cons (vpsfort), and who does better</th></tr></thead><tbody>
+<tr><td><strong>Silence</strong></td><td>Tells "no attacks" from "not seeing logs", with thresholds measured per source on a real month. It also notices lines that arrive but name no address (ejabberd's <code>hide_sensitive_log_data</code>, a changed log format). An optional heartbeat URL (healthchecks.io, Uptime Kuma) lets a service outside notice when a node, or the whole cluster, goes dark.</td><td>For its own sources only.</td></tr>
+<tr><td><strong>Resources</strong></td><td>OOM kills (they revealed weeks of a nightly ClamAV scan being killed), disk under 10 % and 5 %, memory availability and pressure stalls, failed units after a restart grace period, a clock that isn't synchronised, and its own state file and actions log when they can't be written.</td><td>Basic: no per-process graphs; the console's own history (7 days of problems, 14 days of digests) is kept, but longer history needs Prometheus (vpsfort-web's <code>/metrics</code>, with <code>deploy/prometheus-rules.yml</code> to start from). Netdata and Prometheus are far richer.</td></tr>
+<tr><td><strong>Digest</strong></td><td>One message a day per server, marked ⚠ when something needs attention: certificates, peers, feeds, dead rules, patches, top offenders.</td><td>A fixed format, with no report builder.</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="10-alerts-and-the-people-who-get-them"><a class="header" href="#10-alerts-and-the-people-who-get-them">10. Alerts and the people who get them</a></h2>
+<blockquote>
+<p><strong>Bottom line:</strong> no other tool here encrypts alerts end to end, pseudonymizes them for an
+untrusted channel, or warns the user whose account is attacked. In exchange, vpsfort offers
+six channels where the others offer dozens.</p>
+</blockquote>
+<div class="table-wrapper"><table><thead><tr><th>feature</th><th>vpsfort</th><th>fail2ban</th><th>CrowdSec</th><th>Wazuh</th><th>commercial EDR, SIEM</th></tr></thead><tbody>
+<tr><td>admin channels</td><td>◐ XMPP, Telegram, e-mail, Signal, Matrix, ntfy/Gotify/webhooks</td><td>◐ e-mail, scripts</td><td>✓ Slack, e-mail, webhooks, Splunk, Elastic, Sentinel, …</td><td>✓ e-mail, Slack, PagerDuty, custom</td><td>✓</td></tr>
+<tr><td>end-to-end encryption</td><td>✓ OMEMO, Signal, Olm/Megolm, OpenPGP</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>pseudonymized copies for an untrusted channel</td><td>✓ Telegram</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>warns the attacked user, in their language</td><td>✓ XMPP and Nextcloud accounts, 6 languages</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+<tr><td>budgets per topic, so a flood can't hide a critical alert</td><td>✓</td><td>–</td><td>◐ grouping</td><td>◐ e-mails per hour</td><td>✓</td></tr>
+</tbody></table>
+</div><div class="table-wrapper"><table><thead><tr><th>feature</th><th>pros (vpsfort)</th><th>cons (vpsfort), and who does better</th></tr></thead><tbody>
+<tr><td><strong>Channels</strong></td><td>XMPP through the admin bot, OMEMO-encrypted and kept out of the server's archive, or from any host through any XMPP server with the bot's client mode (OMEMO, else OpenPGP files). Telegram, with account names pseudonymized and servers named only by node id. E-mail, OpenPGP-encrypted as a whole, subject included. Signal (through signal-cli) while the admin's safety number is the pinned one, and Matrix, Olm/Megolm-encrypted to the devices the admin verified; both send OpenPGP files instead when they can't reach that identity. ntfy, Gotify or any webhook through the push bot, sanitized as for Telegram (files only encrypted). Any mix of the six. The XMPP bot survives sleep, Wi-Fi changes and server restarts without losing a message and without getting itself banned (back about two minutes after an ejabberd restart, seen on the XMPP server). Delivered for real: the XMPP bot (OMEMO), the Matrix bot (alerts, a digest and the weekly report as an encrypted attachment, through matrix.org to Element X) and the mail bot (alerts and the weekly report, read in Proton Mail on Android).</td><td>No Slack, Teams or PagerDuty of their own (a webhook reaches them through a relay of yours). A new channel means a new bot, though the bots now share one library. The push bot is untried against a real ntfy or Gotify. The Signal bot needs signal-cli (Java on ARM) installed beside it. The Signal bot and the XMPP bot's client mode are untried against the real services.</td></tr>
+<tr><td><strong>Privacy</strong></td><td>Built for operators who take GDPR seriously: nothing about users goes to a vendor, Telegram never sees account names, and reports travel as encrypted files.</td><td>Encryption takes setup (OMEMO device trust, OpenPGP keys). If the XMPP bot doesn't take a message within 2 minutes, it goes out over plain XMPP, saying why.</td></tr>
+<tr><td><strong>Users</strong></td><td>Account holders learn when their account is attacked: password guessing, a possible compromise, and (opt-in) a login from a new network. No other tool here does this. XMPP accounts over XMPP, Nextcloud accounts through Nextcloud's own notifications (<code>occ</code>).</td><td>SSH and the other services' users aren't messaged.</td></tr>
+<tr><td><strong>Noise control</strong></td><td>One message per incident and account every 6 h, hourly caps per topic for admins, hourly budgets per local user for host changes. Alerts relayed from peers are tagged with the node's name. A bot that stops sending is itself reported over the other channels.</td><td>Fixed policies: routing is less flexible than Alertmanager's or CrowdSec's profiles.</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="11-day-to-day-operation"><a class="header" href="#11-day-to-day-operation">11. Day-to-day operation</a></h2>
+<blockquote>
+<p><strong>Bottom line:</strong> a capable terminal UI on each node, a read-only web console for the whole
+cluster with a REST API and Prometheus metrics, and careful upgrade tooling. Nothing changes
+from the web, by design: bans and settings stay on the servers, behind SSH. A browser, with
+its extensions and the exploits written for it, is no place to hold a firewall's controls,
+whatever the login method; a console broken into shows what its page shows and nothing more.</p>
+</blockquote>
+<div class="table-wrapper"><table><thead><tr><th>feature</th><th>vpsfort</th><th>fail2ban</th><th>sshguard</th><th>CrowdSec</th><th>Wazuh</th><th>CSF/LFD</th></tr></thead><tbody>
+<tr><td>live dashboard</td><td>✓ terminal UI, web console</td><td>–</td><td>–</td><td>◐ <code>cscli</code>; web console (SaaS)</td><td>✓ web</td><td>✓ panel UI</td></tr>
+<tr><td>web UI and fleet view</td><td>✓ read only by design; dozens of nodes; a few equal admins (no roles) with a one-time code or a passkey, and proof of work, at the login</td><td>–</td><td>–</td><td>✓</td><td>✓</td><td>◐ per server</td></tr>
+<tr><td>ban, unban, temporary allow</td><td>✓ CLI and TUI, shared with peers</td><td>✓</td><td>–</td><td>✓</td><td>◐ API</td><td>✓</td></tr>
+<tr><td>pattern tester</td><td>✓ <code>test-pattern</code></td><td>✓ <code>fail2ban-regex</code></td><td>–</td><td>✓ <code>cscli explain</code></td><td>✓ <code>wazuh-logtest</code></td><td>–</td></tr>
+<tr><td>REST API</td><td>✓ read only by design</td><td>–</td><td>–</td><td>✓ local API</td><td>✓</td><td>–</td></tr>
+<tr><td>metrics for Prometheus</td><td>✓ through the web console, or a textfile for node_exporter</td><td>◐ community exporters</td><td>–</td><td>✓</td><td>◐ API</td><td>–</td></tr>
+<tr><td>community, Q&amp;A, third-party guides</td><td>◐ one detailed README</td><td>✓</td><td>◐</td><td>✓</td><td>✓</td><td>◐ forks</td></tr>
+</tbody></table>
+</div><div class="table-wrapper"><table><thead><tr><th>feature</th><th>pros (vpsfort)</th><th>cons (vpsfort), and who does better</th></tr></thead><tbody>
+<tr><td><strong>TUI</strong></td><td>Works over SSH in an 80-column terminal. Up to 10 tabs: offenders with evidence, bans, decisions, accounts, exposure, countries with port histograms, a world map, alerts and patterns. Ban, unban and allow with a confirmation. It also reads saved decision logs of several servers offline.</td><td>One node at a time (the web console shows them all); no roles, no multi-tenant view.</td></tr>
+<tr><td><strong>Tooling</strong></td><td><code>status</code> (also as JSON), <code>explain</code> for one address, <code>quiet</code> to hold the admins' messages back during an upgrade, <code>baseline export</code>/<code>import</code> so a reinstalled host skips the learning days, <code>replay</code>, <code>print-nft</code>, <code>notify-test</code> for each channel, a digest preview. <code>config-diff</code> runs after every upgrade and lists new options, changed defaults and unknown keys. The installer dry-runs the nftables ruleset against the kernel first. <code>vpsfort-sim</code> runs a simulated cluster and the real web console on a laptop from a few days of decision logs, for trying the console without servers.</td><td>No OpenTelemetry export, and no API that changes anything: the control socket is root-only, and the web console reads through a separate read-only socket.</td></tr>
+<tr><td><strong>Web console</strong></td><td>vpsfort-web shows every node's bans, alerts, decisions, offenders, countries and networks, peers, certificates, disks and updates on one HTTPS page, with what needs attention first (as a queue, with 7 days of history of what appeared and went), activity charts over 3 hours to 7 days, a world map (bans at their coordinates with a city-level database, else at capitals; countries <code>[geoblock]</code> blocks hatched), a page per address, the nodes' settings side by side with the differences marked, each node's digests of the last two weeks, saved views and keyboard navigation; every table exports as CSV or JSON, and the whole cluster as one JSON file for a ticket. It only reads, by design: it holds a web key of its own, never the cluster key, and reaches vpsfort through a read-only socket, so a break-in at the console or in an admin's browser gives a view, never a ban, an unban or a setting. TLS 1.3; a password and a one-time code or a passkey (WebAuthn) per admin (one or several, all equal); a proof of work before each login that grows with failed attempts; sessions in memory that an admin can list and end; failed logins are locked out and banned by vpsfort itself. About 110 Prometheus metric families, with alerting rules shipped. Asked only while someone looks (plus each node's digest once a day).</td><td>No roles: every admin sees everything. Its own history (a week of what needed attention, two weeks of digests, the marks) is kept on disk now; longer history needs Prometheus. A self-signed certificate unless you give it one. New, with two audits of its own so far; it runs on the authors' five servers, all but one through their agents. The CrowdSec Console and Wazuh's dashboard manage fleets and keep history on disk.</td></tr>
+<tr><td><strong>Docs</strong></td><td>One README that explains every default, often with the measurement behind it.</td><td>One long document: no website, no forum or chat. Some answers are only in the code.</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="12-footprint-platforms-and-supply-chain"><a class="header" href="#12-footprint-platforms-and-supply-chain">12. Footprint, platforms and supply chain</a></h2>
+<blockquote>
+<p><strong>Bottom line:</strong> the smallest and most self-contained option here after sshguard, written
+in a memory-safe language. It runs on fewer platforms, is packaged in fewer ways, and has
+the shortest track record.</p>
+</blockquote>
+<div class="table-wrapper"><table><thead><tr><th>feature</th><th>vpsfort</th><th>fail2ban</th><th>sshguard</th><th>CrowdSec</th><th>Wazuh</th><th>CSF/LFD</th></tr></thead><tbody>
+<tr><td>runtime</td><td>static binary, ~10 MB (web console ~4 MB more)</td><td>Python 3</td><td>C</td><td>Go: engine and bouncer</td><td>C agent; manager; OpenSearch-based indexer; dashboard</td><td>Perl</td></tr>
+<tr><td>memory</td><td>~10 MB for a real month, ~50 MB with geo; capped at 128 MB</td><td>moderate</td><td>a few MB</td><td>moderate</td><td>light agent; the indexer needs ≥ 4 GB RAM (8 GB in the 5.0 beta)</td><td>moderate</td></tr>
+<tr><td>memory-safe language</td><td>✓</td><td>✓</td><td>–</td><td>✓</td><td>– C agent</td><td>✓</td></tr>
+<tr><td>platforms</td><td>Linux with systemd: x86_64, arm64, 32-bit ARMv7</td><td>Linux, BSD</td><td>Linux, BSD, macOS</td><td>Linux, FreeBSD, Windows, containers, Kubernetes</td><td>Linux, Windows, macOS and more</td><td>Linux</td></tr>
+<tr><td>ARM builds</td><td>◐ arm64 and ARMv7 bundles, tested in CI only</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>distribution packages or apt repository</td><td>✓ <code>.deb</code>, <code>.rpm</code> and Alpine <code>.apk</code> (OpenRC) from the releases, a signed apt and dnf repository on GitHub Pages (built by CI after each release), or a zip bundle with <code>install.sh</code></td><td>✓</td><td>✓</td><td>✓ vendor repositories</td><td>✓ vendor repositories</td><td>◐ forks</td></tr>
+<tr><td>signed releases</td><td>✓ build provenance (Sigstore), <code>SHA256SUMS</code>, a CycloneDX SBOM</td><td>✓ distribution-signed</td><td>✓ distribution-signed</td><td>✓ signed repositories</td><td>✓ signed repositories</td><td>◐</td></tr>
+<tr><td>license</td><td>MIT</td><td>GPL-2.0</td><td>BSD-style</td><td>MIT (engine)</td><td>GPL-2.0</td><td>GPL-3.0</td></tr>
+<tr><td>in use since</td><td>October 2026</td><td>2004</td><td>the 2000s</td><td>2020</td><td>2015</td><td>about two decades, until 2025</td></tr>
+</tbody></table>
+</div><div class="table-wrapper"><table><thead><tr><th>feature</th><th>pros (vpsfort)</th><th>cons (vpsfort), and who does better</th></tr></thead><tbody>
+<tr><td><strong>Footprint</strong></td><td>Fits a 1 GB VPS next to the services it protects. The memory limit is backed by flood tests, per-address state is capped (<code>max_tracked_ips</code>), and the apt or dnf query runs in a unit of its own, outside the limit. Country blocking costs about 1 MB while its list is computed; the list itself sits in the kernel's sets.</td><td>–</td></tr>
+<tr><td><strong>Platforms</strong></td><td>The static musl binary needs no matching libc: the same file runs on Debian 13, Ubuntu 22.04 and Fedora 44. Package checks with dpkg or rpm, patches with apt or dnf. Bundles for arm64 and 32-bit ARMv7 (hard-float), from the same CI.</td><td>Linux with systemd only. The ARM bundles haven't run on an ARM server yet; RHEL and its rebuilds are untried.</td></tr>
+<tr><td><strong>Supply chain</strong></td><td>Few dependencies, <code>cargo audit</code> and <code>cargo deny</code> (permissive licenses, crates.io only) on every CI run, and a CycloneDX SBOM attached to every release next to the build provenance attestation. No TLS library in the binary: <code>curl</code> does the downloads. The parsers, the decision-log readers and their hourly index, the console's HTTP and agent protocols and abuse reports, and the bots' inputs are fuzzed (23 cargo-fuzz targets across the crates, each with a smoke run in every <code>cargo test</code>). Log text never reaches a shell: firewall changes are built from parsed addresses and fed to <code>nft -f -</code>. That class of bug is real elsewhere: fail2ban's CVE-2021-32749 (the <code>mail-whois</code> action), Wazuh's CVE-2026-54085 (active response scripts, fixed in 4.14.7). Nine internal security reviews in October and November 2026, the later ones covering the web console, the simulator, the bots and the packages too, each finding fixed with a test.</td><td>No independent third-party audit yet, and no distribution maintainers reviewing its packages. A project this young has no CVE history to judge it by.</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="13-commercial-offerings-what-money-buys"><a class="header" href="#13-commercial-offerings-what-money-buys">13. Commercial offerings: what money buys</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>offering</th><th>what it adds</th><th>pricing model</th><th>better than vpsfort at</th><th>worse than vpsfort at</th></tr></thead><tbody>
+<tr><td><strong>CrowdSec</strong> Console Premium, Platinum Blocklists, CTI API</td><td>curated and industry blocklists, longer alert history, fleet console, support</td><td>per enrolled engine (Premium); Platinum Blocklists from about $1,900/month; IP reputation API from $49/month; support add-ons $1,000/month (vendor page, Oct 2026)</td><td>network effect, fleet management, HTTP layer</td><td>observations shared with the vendor; cost grows with engines; no host-integrity checks</td></tr>
+<tr><td><strong>Wazuh Cloud</strong> and Wazuh support</td><td>hosted manager and indexer, retention, support</td><td>subscription by number of agents and retention</td><td>compliance dashboards (PCI DSS, GDPR, HIPAA, NIST 800-53), CVE detection, many operating systems</td><td>a heavy stack, data off-site; its active response is basic next to vpsfort's ban engine</td></tr>
+<tr><td><strong>Atomic Enterprise OSSEC</strong> (Atomicorp)</td><td>OSSEC with a management console, compliance reports, curated rules</td><td>per node, by quote</td><td>support, compliance</td><td>proprietary and heavier</td></tr>
+<tr><td><strong>Imunify360</strong> (CloudLinux), <strong>BitNinja</strong></td><td>all-in-one suites for web-hosting servers: WAF, IDS/IPS, malware scanning, reputation networks</td><td>per server per month</td><td>cPanel and Plesk web hosting, PHP malware cleanup</td><td>built for shared web hosting, not XMPP or VPN nodes; proprietary</td></tr>
+<tr><td><strong>EDR / XDR</strong>: CrowdStrike Falcon, SentinelOne, Microsoft Defender for Servers, Elastic Defend</td><td>kernel or eBPF sensors, behaviour detection, threat hunting, optional 24/7 managed response</td><td>per endpoint per year, by quote</td><td>runtime visibility, tamper protection, malware, incident response, every common OS</td><td>cost for a few servers; telemetry goes to the vendor's cloud (GDPR processor terms); a vendor-updated kernel-level agent is a risk of its own (the July 2024 CrowdStrike outage); not built for log-driven IP banning</td></tr>
+<tr><td><strong>SIEM</strong>: Splunk, Datadog Cloud SIEM, Microsoft Sentinel, Elastic</td><td>central search, correlation and retention across all systems</td><td>by data volume ingested</td><td>correlation across systems, long retention, investigations</td><td>cost grows with log volume; they detect but don't prevent: something on the host still has to ban</td></tr>
+<tr><td><strong>Tripwire Enterprise</strong> (Fortra)</td><td>compliance-grade FIM and configuration management</td><td>per node, by quote</td><td>audit evidence, policy libraries</td><td>price and weight for a few VPS</td></tr>
+</tbody></table>
+</div>
+<p><strong>What commercial products do better:</strong></p>
+<ul>
+<li>Support with an SLA, and someone to call during an incident.</li>
+<li>Compliance evidence and certifications that auditors and insurers accept.</li>
+<li>Threat research teams, and intelligence from millions of endpoints.</li>
+<li>Every common OS, fleets of thousands, central consoles with roles.</li>
+<li>Kernel-level visibility and tamper protection.</li>
+</ul>
+<p><strong>What they do worse, for a small self-hosted setup:</strong></p>
+<ul>
+<li>A recurring cost per host that can exceed the cost of the servers.</li>
+<li>Security telemetry, including your users' addresses, leaves your servers.</li>
+<li>Vendor lock-in, agent weight, and agents that need constant connectivity.</li>
+<li>Most of them still don't ban an SSH or XMPP brute-forcer in the host firewall within seconds.</li>
+</ul>
+<hr />
+<h2 id="14-scorecard"><a class="header" href="#14-scorecard">14. Scorecard</a></h2>
+<p>Our judgment for a setup of 1 to 10 self-hosted Linux servers.
+●●● strong · ●●○ good · ●○○ basic · ○○○ not covered.</p>
+<div class="table-wrapper"><table><thead><tr><th>category</th><th>vpsfort</th><th>fail2ban</th><th>sshguard</th><th>CrowdSec (free)</th><th>Wazuh</th><th>CSF/LFD</th><th>commercial EDR</th></tr></thead><tbody>
+<tr><td>detection and banning, for the services vpsfort knows</td><td>●●●</td><td>●●○</td><td>●○○</td><td>●●●</td><td>●●○</td><td>●●○</td><td>●○○</td></tr>
+<tr><td>detection breadth, for any other service</td><td>●●○</td><td>●●●</td><td>●○○</td><td>●●●</td><td>●●●</td><td>●●○</td><td>●●○</td></tr>
+<tr><td>firewall enforcement</td><td>●●●</td><td>●●○</td><td>●●○</td><td>●●●</td><td>●○○</td><td>●●●</td><td>●○○</td></tr>
+<tr><td>sharing within your own servers</td><td>●●●</td><td>○○○</td><td>○○○</td><td>●●●</td><td>●●●</td><td>●●○</td><td>●●●</td></tr>
+<tr><td>global threat intelligence</td><td>●●○</td><td>●○○</td><td>○○○</td><td>●●●</td><td>●○○</td><td>●●○</td><td>●●●</td></tr>
+<tr><td>host integrity</td><td>●●○</td><td>○○○</td><td>○○○</td><td>○○○</td><td>●●●</td><td>●○○</td><td>●●●</td></tr>
+<tr><td>exposure, patches, certificates</td><td>●●○</td><td>○○○</td><td>○○○</td><td>○○○</td><td>●●●</td><td>●○○</td><td>●●○</td></tr>
+<tr><td>operations health</td><td>●●○</td><td>○○○</td><td>○○○</td><td>●○○</td><td>●○○</td><td>●○○</td><td>●○○</td></tr>
+<tr><td>alert privacy</td><td>●●●</td><td>●○○</td><td>○○○</td><td>●○○</td><td>●○○</td><td>●○○</td><td>●○○</td></tr>
+<tr><td>choice of alert channels</td><td>●●○</td><td>●○○</td><td>○○○</td><td>●●●</td><td>●●●</td><td>●○○</td><td>●●●</td></tr>
+<tr><td>day-to-day UI</td><td>●●●</td><td>●○○</td><td>○○○</td><td>●●●</td><td>●●●</td><td>●●○</td><td>●●●</td></tr>
+<tr><td>footprint</td><td>●●●</td><td>●●○</td><td>●●●</td><td>●●○</td><td>●○○</td><td>●●○</td><td>●○○</td></tr>
+<tr><td>platforms and packaging</td><td>●●○</td><td>●●●</td><td>●●●</td><td>●●●</td><td>●●●</td><td>●●○</td><td>●●●</td></tr>
+<tr><td>maturity and community</td><td>●○○</td><td>●●●</td><td>●●○</td><td>●●●</td><td>●●●</td><td>●●○</td><td>●●●</td></tr>
+<tr><td>cost</td><td>free</td><td>free</td><td>free</td><td>free; paid tiers</td><td>free; paid cloud</td><td>free</td><td>per host, by quote</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="15-what-vpsfort-does-not-do-yet"><a class="header" href="#15-what-vpsfort-does-not-do-yet">15. What vpsfort does not do (yet)</a></h2>
+<p>Know these before you adopt it:</p>
+<ul>
+<li><strong>No HTTP layer of its own:</strong> no WAF, captcha or CDN integration. It can enforce a WAF's
+decisions at the firewall (<code>[waf]</code>: CrowdSec, or any app that gives out a list).</li>
+<li><strong>A limited set of built-in sources:</strong> sshd, ejabberd, the kernel log, Nextcloud, su and sudo,
+PAM and the audit log, and 24 common services (web servers and proxies, HAProxy, Prosody,
+Synapse, databases, Redis, mail, ownCloud, Forgejo, Vaultwarden, Keycloak, authentik, OpenVPN,
+FTP, Jellyfin), the latter tested against log lines but not yet on a host. Everything else
+needs regex patterns of your own.</li>
+<li><strong>One platform family:</strong> Linux with systemd and journald. Debian, Ubuntu and Fedora have run
+it; ARM builds exist but haven't run on an ARM server.</li>
+<li><strong>No control from a browser, by design:</strong> vpsfort-web shows the cluster to a few admins,
+with a REST API and Prometheus metrics, and changes nothing on the servers: a browser, with
+its extensions and the exploits aimed at it, is no place to hold the firewall's controls,
+whatever the login method. What it lacks: roles (every admin sees everything), and age.</li>
+<li><strong>No crowd-sourced intelligence</strong> (only CrowdSec has one). It has static public feeds,
+country and network blocking from a free database that misplaces some addresses (a
+commercial one, read as it is, can take its place), and a CrowdSec's decisions through
+<code>[waf]</code>.</li>
+<li><strong>Host watches poll</strong> (every minute, with inotify waking the file watch at once) or run once
+a week; they don't see which process did what. There is no tamper protection against root.</li>
+<li><strong>No CVE matching, hardening benchmark or compliance reports</strong> (the hardening audit covers sshd and the kernel's sysctls only).</li>
+<li><strong>Six alert channels:</strong> XMPP, Telegram, e-mail, Signal, Matrix, and ntfy, Gotify or a webhook.</li>
+<li><strong>A young package repository:</strong> the signed apt and dnf repository on GitHub Pages is built by CI after each release (it needs a signing key in the repository's secrets); apt and dnf have installed from it, on one server each. Without it: <code>.deb</code> and <code>.rpm</code> files from the releases, installed one by one, or a release zip with <code>install.sh</code>.</li>
+<li><strong>Young:</strong> version 0.6.1, running on the authors' own servers only, written by one maintainer
+in collaboration with an AI model (see the <a href="index.html#authorship">README</a>). It has had internal
+security reviews, but no independent audit.</li>
+<li><strong>Covered by tests, not yet run on a host:</strong> the plain iptables backend, <code>sudo</code> and
+new-SSH-key alerts, PAM failures and audit alerts, the built-in sources for common services,
+<code>[waf]</code> against a real CrowdSec, the Telegram relay node and the Telegram, Signal and
+XMPP-client bots against their real services, the desktop profile, and the ARM builds
+(<a href="#16-evidence-so-far">Evidence so far</a>). Users' own warnings work in tests but have not yet
+been confirmed reaching a user.</li>
+<li><strong>Forged sources:</strong> evidence that rests only on blocked packets can name a forged source.
+vpsfort limits the harm, but someone who forges packets can still get outsiders banned for
+an hour.</li>
+</ul>
+<hr />
+<h2 id="16-evidence-so-far"><a class="header" href="#16-evidence-so-far">16. Evidence so far</a></h2>
+<p><strong>In production.</strong> Five servers run in enforce mode: one Ubuntu 22.04 (a VPN host, kernel
+5.15), three Debian 13 (an XMPP and Nextcloud server, kernel 6.12, since mid-October 2026 after
+a shadow-mode period, and two more that joined in late October) and one Fedora 44 (the test
+server below, which stayed on). Seen there, with the details in the README's
+<a href="vpsfort.html#verified-on-the-servers">Verified on the servers</a>:</p>
+<ul>
+<li><strong>Input and blocking:</strong> live journal input, and the warning when a source goes quiet; bans in
+nftables with kernel timeouts, placed after connection tracking, so the servers' own pings
+and TCP connections to banned addresses get their replies; IPv4 and IPv6 bans, and subnet
+bans growing from a /24 to a /22; the table rebuilt within 30 s after it was deleted; kernel
+rate limits; SSH canary bans; blocklist feeds and the geo database; operator controls.</li>
+<li><strong>Cluster:</strong> facts in both directions, with repeat offences escalating across nodes; node
+identities (every node signs its facts and pins the others' keys); forward secrecy between
+the real nodes (every peer answers the key exchange); a node reported when it stopped
+answering during a reinstall.</li>
+<li><strong>Host watches:</strong> the exposure watch (Docker ports recognised; a new listener and an allow
+rule with nothing behind it reported); the process watch (a new outbound connection);
+certificate checks; the cron watch and antivirus results; OOM alerts; changed files scanned
+with ClamAV, and with ClamAV and YARA (YARA Forge's core set, compiled); <code>su</code> alerts with the
+account's last SSH login and its place; account changes reported, and an installer's new
+system user logged as announced; the package and set-uid check with dpkg (no file differs,
+17 set-uid programs) and the patch status with apt (the old kernel still running after an
+upgrade); the SSH audit (a hardened gateway found clean; on a cloud image, root's password
+login and cloud-init's override of <code>PasswordAuthentication</code> found, then logged as fixed); the
+systemd watchdog.</li>
+<li><strong>Channels:</strong> the XMPP bot delivering OMEMO-encrypted, and back online about two minutes
+after an ejabberd restart; the Matrix bot delivering alerts, a digest and the weekly abuse
+report (as an encrypted attachment) end-to-end encrypted through matrix.org to Element X; the
+mail bot delivering alerts and the weekly report PGP-encrypted, read in Proton Mail on
+Android.</li>
+<li><strong>Packages:</strong> vpsfort installed from the signed apt and dnf repositories on GitHub Pages, on
+the XMPP server and the Fedora server, each taking over a running bundle install: config,
+bans, scores and alerts kept across the restart, and vpsfort's self-audit of its own files
+clean afterwards.</li>
+<li><strong>The web console</strong> showing every node, all but one through their agents.</li>
+</ul>
+<p>These runs found thirteen problems, all fixed the same day: two misleading SSH audit messages, an
+installer's new user raising high alerts, the web console's <code>check</code> misreading lists with
+blanks, an empty console socket setting refused, no way to correct a country the geo
+database gets wrong (now <code>[geo] places</code>), the XMPP bot never coming back after an ejabberd
+restart (a session it could not resume), the console's filters drawn below their tables, a
+package upgrade's new config template raising a high integrity alert, the repository's
+signing key saved unreadable for apt under a strict umask, the TUI's count of the running
+process's decisions labelled as if it counted everything, the packages' config question
+hidden by dnf until it timed out, and the sysctl audit's advice putting the <code>sysctl -w</code>
+command in a sysctl.d file, which ignores it at boot.</p>
+<p><strong>On the Fedora 44 server's first evening</strong> (2026-10-25, x86_64, firewalld 2.4.4, rpm 6 and
+dnf5, real scanners and a VPN as the test client), following
+<a href="testing-fedora.html">TESTING-fedora.md</a>:</p>
+<ul>
+<li>install from the release bundle with a <code>-dnf</code> template;</li>
+<li>firewalld's denied-packet log as a signal source: real scanners banned on their first
+tripwire hit;</li>
+<li>honeypot ports 22 and 23, tried with <code>nc</code> from the VPN's exits;</li>
+<li>the exposure watch reading firewalld's zones, rich rules and dead rules included;</li>
+<li>rpm origins, the package check (7,472 files; a tampered binary caught) and the dnf patch
+status (the newer kernel waiting for a reboot);</li>
+<li>the firewalld, nftables and ipset backends: bans, expiry, operator ban and unban, recovery
+within 30 s after <code>firewall-cmd --reload</code>, a firewalld restart or flushed chains;</li>
+<li>country blocking: two countries' 137,000 networks loaded, test clients there timed out and
+one elsewhere connected.</li>
+</ul>
+<p>The run found nine bugs (a bundle could carry an older binary, two misleading <code>status</code> lines,
+a failed start logged too quietly, a merged <code>/usr/sbin</code> doubling integrity alerts, and more),
+all fixed the same day.</p>
+<p><strong>Not yet seen on a server</strong> (covered by tests; the README's
+<a href="vpsfort.html#not-yet-verified">Not yet verified</a> has the full list): the plain iptables
+backend, a change the firewall program refused being tried again, the self-audit of vpsfort's
+own files finding a problem, the clock warning, and the kernel module,
+container and WireGuard peer baselines; <code>sudo</code> and new-SSH-key alerts, PAM failures and audit alerts, an infected file's alert;
+the built-in sources for common services on a host that runs one; patterns of your own on a
+live journal; a kernel tripwire hit, and country blocking under the nftables and firewalld
+backends; <code>[waf]</code> against a real CrowdSec; users' own warnings reaching a user; the Telegram
+relay node, and the Telegram, Signal and XMPP-client bots against their real services; the
+desktop profile; the ARM builds, RHEL and SELinux in enforcing mode.</p>
+<p><strong>On a real month of logs</strong> (Sep 11 to Oct 11, 2026, about 210,000 records from ejabberd, sshd
+and UFW):</p>
+<ul>
+<li>185 bans of 93 targets. None of them ever authenticated, and no user's address was banned.</li>
+<li>13,480 tripwire hits banned about 7,500 scanners on first contact.</li>
+<li>The OOM alerts revealed a nightly virus scan that had been killed for weeks, and a disabled
+signature updater.</li>
+<li>The old setup's generated UFW deny rules sat below the ALLOW rules, so they never matched:
+4,438 XMPP connections and 106 SSH sessions came from addresses they were meant to block. This
+is why vpsfort's bans sit in their own table, ahead of everything else.</li>
+</ul>
+<p><strong>In tests:</strong></p>
+<ul>
+<li>About 390 tests in vpsfort, about 220 more in the bots, 60 in the web console (an agent
+and a console against a stand-in vpsfort, logged into over TLS like a browser, proof of work
+included) plus the page's own JavaScript tests, and a few in the simulator. The firewalld, ipset
+and rpm code is also tested against stand-in <code>firewall-cmd</code>, <code>ipset</code>, <code>iptables</code> and <code>rpm</code>
+programs.</li>
+<li><code>tests/layouts.rs</code> runs the real daemon in each of the 16 supported layouts of bots and peers,
+end to end.</li>
+<li>The parsers, the decision-log readers and their index, the console's protocols and abuse
+reports, and the bots' inputs are fuzzed (23 targets).</li>
+<li>CI enforces on its runner's own kernel with the real <code>nft</code>, as root: a ban with its
+timeout, feeds, the table deleted and rebuilt with the bans still active, from the library
+and through the installed daemon.</li>
+<li>CI runs clippy with warnings as errors, <code>cargo audit</code>, <code>cargo deny</code>, and static musl builds for every
+commit: the tests on x86_64 and arm64, the ARMv7 binary started under qemu.</li>
+</ul>
+<hr />
+<h2 id="17-which-tool-for-which-situation"><a class="header" href="#17-which-tool-for-which-situation">17. Which tool for which situation</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>if you ...</th><th>consider</th></tr></thead><tbody>
+<tr><td>run 1 to 10 self-hosted Linux VPS (SSH, XMPP, Nextcloud, WireGuard) and want one small tool with encrypted alerts and nothing sent to a vendor</td><td><strong>vpsfort</strong></td></tr>
+<tr><td>want to drop whole countries cheaply, from an offline database, with the rest of vpsfort</td><td><strong>vpsfort</strong> <code>[geoblock]</code>; for per-port country rules, <strong>CSF</strong></td></tr>
+<tr><td>want a few servers on one read-only web page and in Prometheus, without a SaaS console</td><td><strong>vpsfort</strong> with <strong>vpsfort-web</strong></td></tr>
+<tr><td>want to hand a hosting provider the evidence against one of its customers, as a link or a ready e-mail</td><td><strong>vpsfort-web</strong>'s address pages and abuse tab</td></tr>
+<tr><td>mostly need SSH brute-force protection on any Unix, with minimal setup</td><td><strong>sshguard</strong> or <strong>fail2ban</strong></td></tr>
+<tr><td>protect many different services and want ready-made filters</td><td><strong>fail2ban</strong> or <strong>CrowdSec</strong></td></tr>
+<tr><td>run web applications and want a WAF, crowd intelligence and proxy or CDN integration</td><td><strong>CrowdSec</strong> with AppSec</td></tr>
+<tr><td>need compliance reports, CVE detection and one console for dozens of hosts on several operating systems</td><td><strong>Wazuh</strong>, self-hosted or Cloud</td></tr>
+<tr><td>run cPanel or DirectAdmin shared hosting</td><td>a <strong>CSF</strong> fork, or <strong>Imunify360</strong></td></tr>
+<tr><td>need runtime visibility into containers and Kubernetes</td><td><strong>Falco</strong> or <strong>Tetragon</strong></td></tr>
+<tr><td>need a vendor, a 24/7 security operations team, or must meet insurance requirements</td><td>a commercial <strong>EDR / MDR</strong></td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="18-good-companions"><a class="header" href="#18-good-companions">18. Good companions</a></h2>
+<p>vpsfort works well next to:</p>
+<ul>
+<li><strong>unattended-upgrades</strong> or <strong>dnf-automatic</strong>, to install what vpsfort's patch status
+reports.</li>
+<li><strong>An external uptime and certificate monitor</strong>, which sees the host from outside, even when it
+is down. Cluster peers already report a node that stops answering for 5 minutes.</li>
+<li><strong>A WAF for web applications:</strong> Coraza or ModSecurity, or CrowdSec AppSec with an HTTP-level
+bouncer only. Keep one ban manager per host: running fail2ban or CrowdSec's firewall bouncer
+next to vpsfort bans twice and splits the evidence between them.</li>
+<li><strong>Lynis</strong>, for a periodic hardening audit.</li>
+<li><strong>Falco or Tetragon</strong>, where containers matter.</li>
+<li><strong>ClamAV</strong>, whose results vpsfort reads and reports.</li>
+<li><strong>An off-host log archive</strong> (systemd-journal-remote, rsyslog) and backups, for forensics.</li>
+</ul>
+<hr />
+<h2 id="19-trying-it"><a class="header" href="#19-trying-it">19. Trying it</a></h2>
+<ol>
+<li><strong>Check the requirements:</strong> Linux with systemd (x86_64; ARM builds untried on servers), and
+one of nftables (recommended), firewalld, ufw, iptables or ipset
+(<a href="vpsfort.html#requirements">Requirements</a>).</li>
+<li><strong>Download a release bundle</strong> and verify its checksum and build provenance
+(<a href="vpsfort.html#install-from-a-release-bundle">Install from a release bundle</a>).</li>
+<li><strong>Install with a template:</strong> <code>vpsfort.toml</code> for an XMPP server, <code>vpsfort-standalone.toml</code> for a
+host with SSH and UFW only, <code>vpsfort-tg.toml</code> for a Telegram relay node; each has a <code>-dnf</code>
+variant for Fedora and RHEL.</li>
+<li><strong>Run in shadow mode</strong> (the default) for one to two weeks: it decides, but bans nothing. Watch
+<code>vpsfort tui</code>, and look for "likely false positive" alerts. You can replay a week of your
+journal first:
+<pre><code class="language-bash">journalctl -u ssh -k --since -7d -o json &gt; week.json &amp;&amp; vpsfort -c /etc/vpsfort/vpsfort.toml replay week.json
+</code></pre>
+</li>
+<li><strong>Enforce:</strong> set <code>mode = "enforce"</code>, restart, and check <code>nft list table inet vpsfort</code> (or
+<code>firewall-cmd --info-zone=vpsfort</code>). To roll back, switch to shadow mode and delete the table
+(<a href="vpsfort.html#rollout">Rollout</a>).</li>
+<li><strong>Add more</strong> when you want it: cluster peers, the bots, the web console
+(<a href="vpsfort-web.html">vpsfort-web</a>), blocklist feeds, country blocking, honeypot ports,
+built-in sources and patterns for your other services. Before the console goes on a server,
+<a href="vpsfort-sim.html">vpsfort-sim</a> runs it on your laptop from a few days of your decision
+logs (the health cards it can't read from a log are made up, and say so).</li>
+</ol>
+<hr />
+<h2 id="20-method-and-sources"><a class="header" href="#20-method-and-sources">20. Method and sources</a></h2>
+<p>The vpsfort facts and numbers come from its READMEs and code (2026-11-03); the
+measurements are the ones those READMEs report, the Fedora run included. The other tools were assessed from their
+documentation, release pages and advisories as of 2026-10-25. "✓" and "◐" mean what a tool
+offers out of the box or as a documented option, not everything a custom script could add. The
+scorecard is a judgment for small self-hosted setups, and others may weigh it differently.</p>
+<ul>
+<li>CrowdSec: <a href="https://www.crowdsec.net/pricing">pricing</a>,
+<a href="https://docs.crowdsec.net/docs/v1.8/intro">Security Engine docs (1.8)</a>,
+<a href="https://docs.crowdsec.net/docs/v1.7/appsec/intro">AppSec (1.7)</a>,
+<a href="https://doc.crowdsec.net/docs/next/central_api/community_blocklist">community blocklist</a>,
+<a href="https://linuxiac.com/crowdsec-1-7-intrusion-detection-and-prevention-system-released/">1.7 release notes, summarised</a></li>
+<li>fail2ban: <a href="https://pkgs.alpinelinux.org/package/edge/main/x86/fail2ban">Alpine package (1.1.0, 2026)</a>,
+<a href="https://nvd.nist.gov/vuln/detail/CVE-2021-32749">CVE-2021-32749</a></li>
+<li>sshguard: <a href="https://packages.fedoraproject.org/pkgs/sshguard/sshguard-nftables/">Fedora packages (2.5.1, nftables backend)</a></li>
+<li>reaction: <a href="https://linuxfr.org/news/reaction-remplacant-de-fail2ban">announcement (LinuxFr)</a>,
+<a href="https://www.openbsdhandbook.com/packages/current/sysutils/reaction/">OpenBSD package</a></li>
+<li>CSF/LFD: <a href="https://blog.centminmod.com/2025/09/04/2921/configserver-csf-firewall-shutdown-on-august-31-2025/">the ConfigServer shutdown</a>,
+<a href="https://linuxblog.io/configserver-firewall-csf-after-shutdown/">running CSF after the shutdown</a>,
+<a href="https://github.com/AfazTech/csf">a community fork</a></li>
+<li>Wazuh: <a href="https://documentation.wazuh.com/current/installation-guide/wazuh-indexer/">indexer requirements</a>,
+<a href="https://documentation.wazuh.com/5.0-beta/installation-guide/wazuh-indexer/index.html">5.0 beta requirements</a>,
+<a href="https://documentation.wazuh.com/5.0-beta/user-manual/capabilities/active-response/index.html">active response (5.0 beta)</a>,
+<a href="https://app.opencve.io/cve/CVE-2026-54085">CVE-2026-54085</a></li>
+<li>OSSEC: <a href="https://www.ossec.net/docs/about.html">project overview</a>,
+<a href="https://en.wikipedia.org/wiki/OSSEC">Wikipedia</a>,
+<a href="https://marketplace.redhat.com/en-us/products/atomic-workload-protection">Atomic Enterprise OSSEC</a></li>
+<li>Let's Encrypt: <a href="https://letsencrypt.org/2025/01/22/ending-expiration-emails/">ending expiration e-mails</a>,
+<a href="https://letsencrypt.org/2025/06/26/expiration-notification-service-has-ended/">the service has ended</a></li>
+<li>vpsfort: <a href="vpsfort.html">README</a>, <a href="index.html">repository README</a>, the
+<a href="vpsfort-web.html">web console's README</a>, the <a href="vpsfort-sim.html">simulator's README</a>,
+and each bot's README
+(<a href="vpsfort-xmpp-bot.html">XMPP</a>, <a href="vpsfort-tg-bot.html">Telegram</a>,
+<a href="vpsfort-mail-bot.html">mail</a>, <a href="vpsfort-signal-bot.html">Signal</a>,
+<a href="vpsfort-matrix-bot.html">Matrix</a>, <a href="vpsfort-push-bot.html">push</a>)</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="vpsfort.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="vpsfort.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

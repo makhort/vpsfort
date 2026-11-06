@@ -1,0 +1,464 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Matrix (vpsfort-matrix-bot) - vpsfort</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="Behaviour-based intrusion prevention for a small self-hosted server family">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('light')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item "><a href="index.html">vpsfort</a></li><li class="chapter-item "><a href="comparison.html">Compared with the alternatives</a></li><li class="chapter-item "><a href="vpsfort.html">vpsfort: the daemon</a></li><li class="chapter-item "><a href="vpsfort-web.html">vpsfort-web: the console</a></li><li class="chapter-item "><a href="vpsfort-sim.html">vpsfort-sim: the simulator</a></li><li class="chapter-item expanded "><div>The bots</div><a class="toggle"><div>❱</div></a></li><li><ol class="section"><li class="chapter-item "><a href="vpsfort-xmpp-bot.html">XMPP (vpsfort-xmpp-bot)</a></li><li class="chapter-item "><a href="vpsfort-tg-bot.html">Telegram (vpsfort-tg-bot)</a></li><li class="chapter-item "><a href="vpsfort-mail-bot.html">Mail (vpsfort-mail-bot)</a></li><li class="chapter-item "><a href="vpsfort-signal-bot.html">Signal (vpsfort-signal-bot)</a></li><li class="chapter-item expanded "><a href="vpsfort-matrix-bot.html" class="active">Matrix (vpsfort-matrix-bot)</a></li><li class="chapter-item "><a href="vpsfort-push-bot.html">ntfy, Gotify, a webhook (vpsfort-push-bot)</a></li></ol></li><li class="chapter-item "><a href="testing-fedora.html">Tried on Fedora</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">vpsfort</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/makhort/vpsfort" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="vpsfort-matrix-bot"><a class="header" href="#vpsfort-matrix-bot">vpsfort-matrix-bot</a></h1>
+<p>A Matrix bot that brings vpsfort's admin messages to the admin's Matrix account: the alerts,
+the daily digest and the weekly abuse report, <strong>end-to-end encrypted</strong> (Olm and Megolm, as
+Element, FluffyChat and other clients do it). When end-to-end encryption to the admin isn't
+possible, a message goes out as a file encrypted to the admin's OpenPGP key instead, or waits.
+It does for Matrix what <code>vpsfort-tg-bot</code> does for Telegram on vpsfort's side, through the
+same kind of outbox, and nothing else:</p>
+<ul>
+<li><strong>A client only.</strong> It logs in to an existing homeserver (matrix.org or your own) with an
+account of its own. No homeserver runs here, nothing listens.</li>
+<li><strong>Send only.</strong> It doesn't read the room (no <code>/sync</code>): no commands, and nothing anyone writes
+there reaches it. The servers are managed over SSH.</li>
+<li><strong>No link to ejabberd.</strong> It runs as its own user <code>vpsfort-matrix-bot</code>, which can't read
+ejabberd's files.</li>
+</ul>
+<p>vpsfort feeds it only when <code>[notify] matrix_outbox</code> is set. Without it, nothing changes. It
+can run next to the other bots, on any node: on the relay node (vpsfort's
+<code>deploy/vpsfort-tg.toml</code>), the XMPP server never connects to the homeserver.</p>
+<h2 id="contents"><a class="header" href="#contents">Contents</a></h2>
+<ol>
+<li><a href="#what-it-sends">What it sends</a></li>
+<li><a href="#end-to-end-encryption-and-who-gets-the-keys">End-to-end encryption, and who gets the keys</a></li>
+<li><a href="#when-end-to-end-encryption-isnt-possible">When end-to-end encryption isn't possible</a></li>
+<li><a href="#how-vpsfort-and-the-bot-meet">How vpsfort and the bot meet</a></li>
+<li><a href="#install-from-a-release-bundle">Install from a release bundle</a></li>
+<li><a href="#install-from-a-package">Install from a package</a></li>
+<li><a href="#setup">Setup</a></li>
+<li><a href="#settings">Settings</a></li>
+<li><a href="#retention-and-what-the-bot-keeps">Retention and what the bot keeps</a></li>
+<li><a href="#why-not-matrix-sdk">Why not matrix-sdk</a></li>
+<li><a href="#build-and-test">Build and test</a></li>
+</ol>
+<h2 id="what-it-sends"><a class="header" href="#what-it-sends">What it sends</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>From vpsfort</th><th>In the room</th></tr></thead><tbody>
+<tr><td>alerts, the daily digest</td><td>a text message, Megolm-encrypted</td></tr>
+<tr><td>the weekly abuse report</td><td>an encrypted attachment (AES-256-CTR, its key inside the Megolm-encrypted event)</td></tr>
+<tr><td>either, when end-to-end encryption isn't possible</td><td>a file <code>message-&lt;time&gt;.txt.pgp</code> / <code>report-&lt;time&gt;.txt.pgp</code> encrypted to <code>OPENPGP_KEY</code>, with a neutral caption, and once a day a short notice saying why</td></tr>
+</tbody></table>
+</div>
+<p>The homeserver sees that the bot sent something to the room, when, and how large: never what.
+With <code>SANITIZE=yes</code> alerts and digests also lose XMPP account names (they become
+pseudonyms) and the servers' addresses (node ids), as on Telegram; off by default, since they
+are end-to-end encrypted (<code>vpsfort-matrix-bot pseudonym &lt;jid&gt;</code> tells which account a pseudonym is).</p>
+<h2 id="end-to-end-encryption-and-who-gets-the-keys"><a class="header" href="#end-to-end-encryption-and-who-gets-the-keys">End-to-end encryption, and who gets the keys</a></h2>
+<p>The bot is a Matrix device of its own (<code>vpsfort-matrix-bot login</code> makes it). It makes a direct
+chat with the admin (<code>ADMIN</code>), encrypted from its first event, and invites them. For each
+message it:</p>
+<ol>
+<li>asks the homeserver for the admin's devices and cross-signing keys, and checks every
+signature itself (<code>src/crypto.rs</code>): a device must sign its own keys; with cross-signing,
+the admin's self-signing key must carry their master key's signature and the device the
+self-signing key's. The homeserver can withhold keys, not forge them.</li>
+<li>decides which devices are the admin's:
+<ul>
+<li><strong>with cross-signing</strong> (the usual case: every current client sets it up): only the
+devices the admin verified, under the admin's <strong>master key</strong>, which the bot pins the
+first time it sees it (or takes from <code>ADMIN_MASTER_KEY</code>). A changed master key, as
+after a reset of your cross-signing or a homeserver handing out keys of its own, gets
+nothing: messages come as OpenPGP files until you set <code>ADMIN_MASTER_KEY</code> to the new key
+(the bot logs it, and so does its notice) and restart the bot.</li>
+<li><strong>without cross-signing:</strong> every device that signs its own keys, each pinned by device
+id on first sight (a device id that comes back with other keys gets nothing). The bot
+logs a warning: anyone who controls the homeserver could add a device then.</li>
+</ul>
+</li>
+<li>shares the room's Megolm session key with those devices over Olm (a one-time key claimed
+for each, checked against the device's signature), and sends the message as a Megolm
+event. A new session is made after 100 messages, after a week, and whenever a device that
+had the key is no longer trusted (removed, or unverified), so it can't read what follows.</li>
+</ol>
+<p>The bot's own device is signed by the bot account's cross-signing keys (made at the first
+<code>login</code>), so clients show its messages as from a device its owner verified rather than with a
+red warning. You can also verify the bot user in your client; the bot doesn't need it.</p>
+<p>The Olm and Megolm code is <a href="https://github.com/matrix-org/vodozemac">vodozemac</a> (matrix.org's
+pure-Rust implementation, Apache-2.0, audited); the rest (key checks, sharing, the client API
+calls) is in this crate. <code>state.json</code> keeps the device's keys, the sessions and the pins
+(mode 0600); a Megolm ratchet is saved before each message leaves, so no message index is
+ever used twice.</p>
+<h2 id="when-end-to-end-encryption-isnt-possible"><a class="header" href="#when-end-to-end-encryption-isnt-possible">When end-to-end encryption isn't possible</a></h2>
+<ul>
+<li><code>E2EE=no</code>;</li>
+<li>the admin's master key changed or vanished (above);</li>
+<li>with cross-signing, none of the admin's devices is verified;</li>
+<li>no device could take the room key (no one-time key to start an Olm session with);</li>
+<li>the room isn't encrypted (it always is, unless someone with power in it changed that).</li>
+</ul>
+<p>Then a message or file goes out as one OpenPGP message to <code>OPENPGP_KEY</code> (v4, RSA or
+Curve25519, SEIPD v1 with AES-256: what OpenKeychain on Android and iPGMail on iPhone read),
+uploaded as a file in a plain event, with a notice at most once a day saying why. Without
+<code>OPENPGP_KEY</code> messages wait in the outbox (alerts for <code>ALERT_MAX_HOURS</code>, files for
+<code>OUTBOX_MAX_DAYS</code>), and the notice says that instead. Nothing goes to the homeserver in clear
+but these notices, which name keys, never content. vpsfort warns the admins over its other
+ways when copies wait longer than <code>bot_stuck_after</code>.</p>
+<h2 id="how-vpsfort-and-the-bot-meet"><a class="header" href="#how-vpsfort-and-the-bot-meet">How vpsfort and the bot meet</a></h2>
+<p>They share one directory, <code>/opt/vpsfort-matrix-bot/outbox</code> (root:vpsfort-matrix-bot 1770,
+sticky), in vpsfort-xmpp-bot's file format (<code>src/outbox.rs</code>, vpsfort's <code>src/botbox.rs</code>):</p>
+<ol>
+<li>vpsfort writes a copy of each message to the first of <code>[notify] admins</code> (every admin
+message when <code>admins</code> is empty or <code>xmpp = false</code>) as <code>alert-&lt;time&gt;-&lt;n&gt;.msg</code>, gives the
+file to <code>matrix_user</code>, and renames it into place.</li>
+<li>The bot looks every 5 seconds, claims a message by renaming it to <code>.&lt;name&gt;.sending</code>, sends
+it and deletes it. If sending fails it renames it back and tries again (after the
+homeserver's <code>retry_after_ms</code>, or 30 s). A half-sent one is put back at the next start.</li>
+<li>There is no plain-text fallback on vpsfort's side: copies wait until the bot sends them.</li>
+<li><code>vpsfort-abuse-report.sh</code> puts the weekly report into this outbox too when
+<code>[notify] matrix_outbox</code> (or <code>ABUSE_REPORT_MATRIX_OUTBOX</code>) is set. The bot looks every
+minute.</li>
+</ol>
+<p>Check it as root: <code>vpsfort -c /etc/vpsfort/vpsfort.toml notify-test --matrix</code> puts a test in
+the outbox and waits until the bot has sent it.</p>
+<h2 id="install-from-a-release-bundle"><a class="header" href="#install-from-a-release-bundle">Install from a release bundle</a></h2>
+<p>As for the other crates (see vpsfort-tg-bot's README, "Install from a release bundle"): the
+tag is <code>vpsfort-matrix-bot-v&lt;version&gt;</code>, the zip <code>vpsfort-matrix-bot-&lt;version&gt;-&lt;commit&gt;-&lt;arch&gt;.zip</code>;
+unzip it on the server and run <code>sudo ./install.sh</code>. The first install doesn't start the bot:
+continue with step 3 below.</p>
+<h2 id="install-from-a-package"><a class="header" href="#install-from-a-package">Install from a package</a></h2>
+<p>The same release has a package per architecture, for the distribution's package manager instead of <code>install.sh</code>: <code>vpsfort-matrix-bot_&lt;version&gt;-1_&lt;arch&gt;.deb</code> (<code>amd64</code>, <code>arm64</code>, <code>armhf</code>; Debian, Ubuntu and their derivatives) <code>vpsfort-matrix-bot-&lt;version&gt;-1.&lt;arch&gt;.rpm</code> (<code>x86_64</code>, <code>aarch64</code>, <code>armv7hl</code>; Fedora, RHEL and its rebuilds) and <code>vpsfort-matrix-bot-&lt;version&gt;-r0.&lt;arch&gt;.apk</code> (<code>x86_64</code>, <code>aarch64</code>, <code>armv7</code>; Alpine, with OpenRC: below), each with its <code>.sha256</code> and <code>.sigstore.json</code>, downloaded and verified as the bundle above (<code>--pattern "*.deb*"</code>, <code>"*.rpm*"</code> or <code>"*.apk*"</code>). CI keeps them for every commit as workflow artifacts, and <code>scripts/package.sh</code> builds them locally (<code>cargo install cargo-deb cargo-generate-rpm --locked</code> once, and python3 for the <code>.apk</code>, which <code>scripts/apk.py</code> at the repository's root writes; none needs dpkg, rpm or apk-tools, so it runs on macOS too; <code>--target aarch64-unknown-linux-musl</code> or <code>armv7-unknown-linux-musleabihf</code> for the ARM ones). Or from the signed apt and dnf repository on GitHub Pages, once it is set up (the repository README, "Deployment"), where <code>apt upgrade</code> and <code>dnf upgrade</code> then bring new versions.</p>
+<pre><code class="language-bash">sudo apt install ./vpsfort-matrix-bot_0.3.1-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-matrix-bot-0.3.1-1.x86_64.rpm
+sudoedit /opt/vpsfort-matrix-bot/config.env                 # the first install put the template there
+sudo systemctl enable --now vpsfort-matrix-bot
+</code></pre>
+<p>The package puts the same files in the same places as <code>install.sh</code> (<code>/opt/vpsfort-matrix-bot</code> with the binary and <code>config.env.example</code>, the user <code>vpsfort-matrix-bot</code>, <code>/var/log/vpsfort-matrix-bot</code>, the logrotate rule), except the unit, which is in <code>/usr/lib/systemd/system</code>. Its post-install step does what <code>install.sh</code> does apart from copying files: the user, <code>config.env</code> from the template the first time, the owners and modes, the outbox and the log directory; and it prints what is left to do ("Setup": the homeserver and accounts, your OpenPGP key, then <code>login</code> as the bot's user (the install prints the command)). <code>dpkg-reconfigure vpsfort-matrix-bot</code> (rpm: <code>dnf reinstall ./vpsfort-matrix-bot-*.rpm</code>) runs that step again, e.g. after copying a key there. <code>apt remove vpsfort-matrix-bot</code> (<code>dnf remove</code>) stops the bot and keeps <code>/opt/vpsfort-matrix-bot</code>; <code>apt purge vpsfort-matrix-bot</code> removes it with the state and keys (rpm: by hand).</p>
+<p><strong>Nothing starts on its own.</strong> The first install puts the template in place and prints what to fill in; you enable the service once it is filled in. An upgrade keeps the config and restarts the service only if it was running and the config is filled in. <strong>Over a bundle or <code>deploy.sh</code> install</strong> the package takes over: the config, state and keys stay; the bundle's unit in <code>/etc/systemd/system</code> (it would shadow the package's) and its rollback files go, and the service is enabled again on the package's unit if it was (vpsfort's integrity watch reports the removed unit as a warning once). <strong>Replacing the config:</strong> when a terminal is there, the install asks whether to replace the config with the new template (the old one kept with the suffix <code>.old</code>); Enter, a timeout of a minute, no terminal or <code>DEBIAN_FRONTEND=noninteractive</code> keep it. <code>VPSFORT_PACKAGE_CONFIG=replace</code> (or <code>keep</code>) answers without asking: <code>sudo VPSFORT_PACKAGE_CONFIG=replace apt install ./&lt;file&gt;.deb</code>. <strong>Rollback</strong> is installing the previous version's package (<code>apt install ./&lt;old&gt;.deb --allow-downgrades</code>, <code>dnf downgrade ./&lt;old&gt;.rpm</code>): there is no <code>.prev</code> file.</p>
+<p><strong>Alpine (apk, OpenRC):</strong> <code>apk add --allow-untrusted ./vpsfort-matrix-bot-&lt;version&gt;-r0.x86_64.apk</code> puts the same files in the same places, with the OpenRC script <code>/etc/init.d/vpsfort-matrix-bot</code> instead of the unit: the settings exported from <code>config.env</code> as <code>EnvironmentFile=</code> does, supervised by <code>supervise-daemon</code> and started again 5 seconds after a crash; systemd's sandboxing has no equivalent there. The package is unsigned, hence <code>--allow-untrusted</code>: <code>sha256sum -c</code> and the attestation verify it. Its install scripts are POSIX sh and do what the post-install step above does: the user, <code>config.env</code> from the template the first time, the owners and modes, the log directory; an upgrade restarts a running bot. Then <code>rc-update add vpsfort-matrix-bot default &amp;&amp; rc-service vpsfort-matrix-bot start</code>. <code>apk del vpsfort-matrix-bot</code> stops it and keeps <code>/opt/vpsfort-matrix-bot</code>. Not yet run on an Alpine host: CI installs the package in an Alpine container.</p>
+<h2 id="setup"><a class="header" href="#setup">Setup</a></h2>
+<ol>
+<li><strong>An account for the bot</strong> on a homeserver, made in any client (not your own account).
+Note its user id (<code>@vpsfort:example.org</code>) and password. Your own client should have
+cross-signing set up (current Element, Element X, FluffyChat do it by default) and your
+devices verified.</li>
+<li><strong>Deploy</strong> from the Mac (runs <code>scripts/ci.sh</code> first, builds the static binary):
+<pre><code class="language-bash">./deploy/deploy.sh          # to the relay node "tg"; name another host as the argument
+</code></pre>
+The first install creates the user, <code>/opt/vpsfort-matrix-bot</code> and <code>config.env</code>.</li>
+<li><strong>Fill in <code>config.env</code></strong> as root: <code>MATRIX_HOMESERVER</code>, <code>MATRIX_USER</code>, <code>ADMIN</code>, and your
+OpenPGP public key as <code>OPENPGP_KEY</code> (<code>/opt/vpsfort-matrix-bot/admin.asc</code>, root:vpsfort-matrix-bot
+640), then log the bot in, as its own user (it asks for the password, which it doesn't keep):
+<pre><code class="language-bash">runuser -u vpsfort-matrix-bot -- sh -c 'set -a; . /opt/vpsfort-matrix-bot/config.env; exec /opt/vpsfort-matrix-bot/vpsfort-matrix-bot login'
+</code></pre>
+It prints the bot's device and keys (<code>vpsfort-matrix-bot info</code> again later). If the
+account already has cross-signing keys from another client, <code>login --reset-cross-signing</code>
+replaces them; a homeserver behind Matrix Authentication Service then asks you to approve
+the reset in the account's web page (the bot prints the link). Run <code>bash install.sh</code> again
+(or <code>systemctl enable --now vpsfort-matrix-bot</code>).</li>
+<li><strong>Accept the invitation</strong> in your client. The first message pins your master key; check
+it in the bot's log (<code>pinned ... master cross-signing key</code>) against your client's, or set
+<code>ADMIN_MASTER_KEY</code> before the first message.</li>
+<li><strong>Tell vpsfort</strong>, in <code>[notify]</code> of <code>/etc/vpsfort/vpsfort.toml</code> (deploy a vpsfort that
+knows the key first):
+<pre><code class="language-toml">matrix_outbox = "/opt/vpsfort-matrix-bot/outbox"
+matrix_user = "vpsfort-matrix-bot"
+</code></pre>
+then <code>systemctl restart vpsfort</code> and <code>vpsfort ... notify-test --matrix</code>. Adding
+<code>vpsfort-matrix-bot.service</code> to vpsfort's <code>[sources] services</code> gets an alert when it fails.</li>
+</ol>
+<p><code>install.sh rollback</code> goes back to the previous binary and unit. The host needs outgoing HTTPS
+to the homeserver; the homeserver sees the host's address.</p>
+<h2 id="settings"><a class="header" href="#settings">Settings</a></h2>
+<p>All in <code>config.env</code> (<code>deploy/config.env.example</code> has each with a comment; <code>--help</code> lists the
+matching flags):</p>
+<div class="table-wrapper"><table><thead><tr><th>Variable</th><th>Default</th><th></th></tr></thead><tbody>
+<tr><td><code>MATRIX_HOMESERVER</code></td><td></td><td>the client URL, https (http only to localhost)</td></tr>
+<tr><td><code>MATRIX_USER</code></td><td></td><td>the bot's account, for <code>login</code></td></tr>
+<tr><td><code>ADMIN</code></td><td></td><td>your user id: the only one the bot writes to</td></tr>
+<tr><td><code>ADMIN_MASTER_KEY</code></td><td>(pinned on first sight)</td><td>your master cross-signing key</td></tr>
+<tr><td><code>E2EE</code></td><td>yes</td><td>no: everything as OpenPGP files</td></tr>
+<tr><td><code>OPENPGP_KEY</code></td><td></td><td>your OpenPGP public key, for the fallback; without it messages wait</td></tr>
+<tr><td><code>SANITIZE</code></td><td>no</td><td>yes: pseudonyms and node ids in alerts (<code>XMPP_DOMAINS</code>, <code>SERVER_NAMES</code>, <code>PSEUDONYM_KEY</code>)</td></tr>
+<tr><td><code>ALERT_MAX_HOURS</code></td><td>24</td><td>older alerts are dropped unsent</td></tr>
+<tr><td><code>OUTBOX_MAX_DAYS</code></td><td>7</td><td>older files are deleted unsent</td></tr>
+<tr><td><code>BOT_STATE_PATH</code></td><td><code>/opt/vpsfort-matrix-bot/state.json</code></td><td></td></tr>
+<tr><td><code>OUTBOX_DIR</code></td><td><code>outbox</code> next to the state</td><td></td></tr>
+<tr><td><code>LOG_DIR</code></td><td><code>/var/log/vpsfort-matrix-bot</code></td><td><code>bot.log</code>, 14 days</td></tr>
+</tbody></table>
+</div>
+<p>Exit status 78 (a setting is wrong, no login yet, or the homeserver no longer knows the
+login: a device deleted in a client, a password change that logged out every device) is not
+restarted by the unit: run <code>login</code> again, then start it.</p>
+<h2 id="retention-and-what-the-bot-keeps"><a class="header" href="#retention-and-what-the-bot-keeps">Retention and what the bot keeps</a></h2>
+<ul>
+<li><strong>On the homeserver:</strong> the room's events (encrypted) and uploads (encrypted) stay as long
+as the homeserver keeps them; delete the room in your client to drop them for you.</li>
+<li><strong>On the server:</strong> <code>bot.log</code> (14 days), <code>state.json</code> (login token, device keys, Olm and
+Megolm sessions, the bot's self-signing key, your pinned keys: no message text), with
+<code>SANITIZE</code> the pseudonym key, and outbox files until they are sent or expire. Whoever reads
+<code>state.json</code> (root) could read what the bot sends while the current Megolm session lasts.</li>
+</ul>
+<div class="table-wrapper"><table><thead><tr><th>Path</th><th>Owner</th><th>Mode</th></tr></thead><tbody>
+<tr><td><code>/opt/vpsfort-matrix-bot/</code></td><td>root:vpsfort-matrix-bot</td><td>1770 (sticky)</td></tr>
+<tr><td><code>config.env</code>, <code>OPENPGP_KEY</code></td><td>root:vpsfort-matrix-bot</td><td>640</td></tr>
+<tr><td><code>state.json</code>, <code>pseudonym.key</code></td><td>vpsfort-matrix-bot</td><td>600</td></tr>
+<tr><td><code>outbox/</code></td><td>root:vpsfort-matrix-bot</td><td>1770; files vpsfort-matrix-bot 600</td></tr>
+<tr><td><code>/var/log/vpsfort-matrix-bot/</code>, <code>bot.log</code></td><td>vpsfort-matrix-bot</td><td>700, 600</td></tr>
+</tbody></table>
+</div>
+<p>The unit drops every capability, makes the file system read-only except its two directories,
+allows only IPv4 and IPv6 sockets, denies writable-executable memory, and is held to 128 MB of memory (<code>MemoryMax</code>).</p>
+<h2 id="why-not-matrix-sdk"><a class="header" href="#why-not-matrix-sdk">Why not matrix-sdk</a></h2>
+<p>matrix-rust-sdk's crypto needs a persistent store, and its only native one is SQLite (C code),
+which would end the static musl build from macOS without a C cross toolchain; it would also
+bring a sync loop and room state the bot doesn't need. The bot uses the same audited Olm and
+Megolm (vodozemac) and does the few steps of a send-only device itself (<code>src/api.rs</code>, <code>crypto.rs</code>, <code>bot.rs</code>, <code>login.rs</code>: under 2000 lines with their tests).</p>
+<h2 id="build-and-test"><a class="header" href="#build-and-test">Build and test</a></h2>
+<pre><code class="language-bash">./scripts/ci.sh            # fmt, clippy, tests, cargo audit, static Linux binary
+</code></pre>
+<p>The static build needs <code>rustup target add x86_64-unknown-linux-musl</code> (or the ARM targets) and
+<code>rustup component add llvm-tools</code>, as the other crates. <code>tests/fake_homeserver.rs</code> runs the
+bot against a fake homeserver on 127.0.0.1 whose admin devices are vodozemac accounts of their
+own: <code>login</code> (device keys that verify, cross-signing keys, the device signed by them, the
+password step when the homeserver asks), the room made encrypted with the admin invited, an
+alert and the report that decrypt on the verified phone and not on the unverified laptop
+(nothing of them in any request), a newly verified device getting the current key, a removed
+one forcing a new session, rate limiting, a changed master key giving OpenPGP files that the
+admin's key opens (and <code>ADMIN_MASTER_KEY</code> bringing end-to-end back), messages that wait without
+any route, <code>E2EE=no</code>, an admin without cross-signing, a device id with new keys left out, a
+second <code>login</code> keeping the room and pins, a wrong password leaving the working device alone,
+and a revoked token stopping the bot.</p>
+<p><strong>On matrix.org</strong> (since 2026-10-29): <code>notify-test --matrix</code>, real alerts and a daily digest
+arrived in Element X end-to-end encrypted, without warnings, and so did the weekly abuse report
+(51 KB, covering two nodes) as an encrypted attachment, which Element X decrypted and opened in
+its file viewer. Its event shows the file encrypted with AES-256-CTR and the key inside the
+Megolm-encrypted event, as above; Element X lists the bot's identity as unverified (the admin
+never verified the bot account) without warning about it.</p>
+<p><strong>Not yet seen for real:</strong> the OpenPGP files (a changed master key, no verified device), and a
+homeserver other than matrix.org.</p>
+<p><strong>Fuzzing.</strong> <code>fuzz/</code> has cargo-fuzz targets (code in <code>src/fuzzing.rs</code>): <code>keys_query</code> (the
+homeserver's key replies: only self-signed devices come out, cross-signed ones only under a
+master key), <code>alert_file</code> (outbox files), <code>attachment</code> (encrypt and decrypt, damage caught).
+Under cargo-fuzz vodozemac accepts every signature (its <code>fuzzing</code> cfg), so the targets reach
+past the checks; the signature checks themselves are in <code>src/crypto.rs</code>'s tests.
+<code>tests/fuzz_smoke.rs</code> runs the targets on stable over realistic inputs, <code>fuzz/seeds/</code> and
+thousands of mutations (<code>VPSFORT_MATRIX_BOT_WRITE_SEEDS=1</code> regenerates the seeds).</p>
+<pre><code class="language-bash">cargo +nightly fuzz run keys_query fuzz/corpus/keys_query fuzz/seeds/keys_query -- -max_total_time=600
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="vpsfort-signal-bot.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="vpsfort-push-bot.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="vpsfort-signal-bot.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="vpsfort-push-bot.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

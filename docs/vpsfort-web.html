@@ -1,0 +1,823 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>vpsfort-web: the console - vpsfort</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="Behaviour-based intrusion prevention for a small self-hosted server family">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('light')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item "><a href="index.html">vpsfort</a></li><li class="chapter-item "><a href="comparison.html">Compared with the alternatives</a></li><li class="chapter-item "><a href="vpsfort.html">vpsfort: the daemon</a></li><li class="chapter-item expanded "><a href="vpsfort-web.html" class="active">vpsfort-web: the console</a></li><li class="chapter-item "><a href="vpsfort-sim.html">vpsfort-sim: the simulator</a></li><li class="chapter-item "><div>The bots</div><a class="toggle"><div>❱</div></a></li><li><ol class="section"><li class="chapter-item "><a href="vpsfort-xmpp-bot.html">XMPP (vpsfort-xmpp-bot)</a></li><li class="chapter-item "><a href="vpsfort-tg-bot.html">Telegram (vpsfort-tg-bot)</a></li><li class="chapter-item "><a href="vpsfort-mail-bot.html">Mail (vpsfort-mail-bot)</a></li><li class="chapter-item "><a href="vpsfort-signal-bot.html">Signal (vpsfort-signal-bot)</a></li><li class="chapter-item "><a href="vpsfort-matrix-bot.html">Matrix (vpsfort-matrix-bot)</a></li><li class="chapter-item "><a href="vpsfort-push-bot.html">ntfy, Gotify, a webhook (vpsfort-push-bot)</a></li></ol></li><li class="chapter-item "><a href="testing-fedora.html">Tried on Fedora</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">vpsfort</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/makhort/vpsfort" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="vpsfort-web"><a class="header" href="#vpsfort-web">vpsfort-web</a></h1>
+<p>A read-only web console for a vpsfort cluster: every node's bans, alerts, decisions,
+offenders, countries and networks, cluster peers, certificates, disks, updates and integrity
+checks on one HTTPS page, with what needs attention first, and every node's abuse report of the
+last day or week, split per network owner and ready to mail. For one admin or a few, all equal.
+<code>/metrics</code> gives the same in Prometheus' format for Grafana.</p>
+<p>It <strong>only reads</strong>. Nothing in it can ban, unban, allow or change a setting: those stay on the
+servers, over SSH, as <code>vpsfort unban …</code> and the TUI.</p>
+<pre><code> every node                                              the console's node
+ ┌────────────────────────────────────┐                  ┌──────────────────────────────────────────┐
+ │ vpsfort ── console socket ──► agent│ ◄── TCP 7949 ───│ console ── HTTPS 7948 (TLS 1.3) ──► browser│
+ │ (root)      read-only, 0660   vpsfort-web             vpsfort-web       password + one-time code │
+ └────────────────────────────────────┘   request sealed │ + its own node's vpsfort (socket)        │
+                                          with the web    └──────────────────────────────────────────┘
+                                          key; reply under
+                                          a fresh X25519 key
+</code></pre>
+<p>One binary, two roles, each switched on by a setting: the <strong>agent</strong> (<code>AGENT_LISTEN</code>, on every
+node) hands its node's vpsfort data to the consoles; the <strong>console</strong> (<code>CONSOLE_LISTEN</code>, on the
+node or nodes you choose) asks the agents in <code>NODES</code> and its own vpsfort, and serves the page.</p>
+<h2 id="contents"><a class="header" href="#contents">Contents</a></h2>
+<ol>
+<li><a href="#security-design">Security design</a></li>
+<li><a href="#setup">Setup</a></li>
+<li><a href="#settings-optvpsfort-webconfigenv">Settings (<code>/opt/vpsfort-web/config.env</code>)</a></li>
+<li><a href="#commands">Commands</a></li>
+<li><a href="#the-page">The page</a></li>
+<li><a href="#api">API</a>
+<ul>
+<li><a href="#prometheus-and-grafana">Prometheus and Grafana</a></li>
+</ul>
+</li>
+<li><a href="#files">Files</a></li>
+<li><a href="#install-from-a-release-bundle">Install from a release bundle</a></li>
+<li><a href="#install-from-a-package">Install from a package</a></li>
+<li><a href="#development">Development</a></li>
+<li><a href="#verified">Verified</a></li>
+<li><a href="#not-yet-verified">Not yet verified</a></li>
+</ol>
+<h2 id="security-design"><a class="header" href="#security-design">Security design</a></h2>
+<p><strong>Its own key, never the cluster key.</strong> vpsfort's cluster key lets its holder ban, unban,
+allowlist and trust addresses on every node. A web console is the part of a system most exposed
+to the network, so it must not hold that key: the agents and the console share a separate
+<strong>web key</strong> (32 random bytes, <code>vpsfort-web keygen</code>), and a stolen web key reads status data,
+nothing more. It cannot forge cluster facts, and the console can't ask an agent for anything but
+reading (<code>snapshot</code>, <code>digest</code>, <code>abuse_24h</code>, <code>abuse_7d</code>). An agent says what it answers; the console
+asks older agents for snapshots and digests only (an agent refuses a request it can't read, and
+vpsfort bans an address that sends many of those).</p>
+<p><strong>The agent protocol</strong> (<code>src/wire.rs</code>), one request and one reply per TCP connection:</p>
+<ul>
+<li>The request is sealed with XChaCha20-Poly1305 under the web key (as the cluster's messages
+are), with its time (refused beyond 5 minutes of clock difference), a random id (refused if
+seen again) and a fresh X25519 public key.</li>
+<li>The reply is sealed under a key derived (HKDF-SHA-256) from a second fresh X25519 key and the
+console's, with the web key as salt and the request id and both public keys bound in. Only a
+holder of the web key can make or read it, it answers that one request only, and <strong>once both
+fresh keys are gone nobody can read a recorded reply, even with the web key</strong> (forward
+secrecy). The cluster's own link does the same since its key exchange (vpsfort's README,
+"Cluster"); snapshots name accounts and addresses.</li>
+<li>Frames are bounded (4 KB requests, 16 MB compressed replies, 64 MB uncompressed); an agent
+takes 8 connections at once, 2 per address, 10 seconds for a whole request, and only from
+<code>AGENT_ALLOW</code>. Memory follows what is kept: long lists (every active ban of a flood) are cut
+to their newest few thousand while parsing, their full lengths kept.</li>
+</ul>
+<p><strong>The console:</strong></p>
+<ul>
+<li><strong>HTTPS, TLS 1.3 only</strong> (rustls with ring), with a self-signed certificate made at install
+(compare its fingerprint with the browser's once) or a Let's Encrypt one (read again when it
+changes). Older clients (TLS 1.2 only) are refused.</li>
+<li><strong>Admins, two factors each:</strong> <code>admin</code> and any others you add, all equal (no roles). Each has a
+password (Argon2id, <code>passwd [--user NAME]</code>) and a one-time code from an authenticator app (TOTP,
+RFC 6238, <code>totp-setup [--user NAME]</code> shows a QR code); each code works once, and only for its
+admin. <code>TOTP=off</code> leaves the passwords alone. <strong>Or a passkey</strong> (WebAuthn: a security key, the
+phone's, the browser's keychain), registered on the "Your account" page (up to 10 per admin,
+kept in <code>STATE_DIR/passkeys/&lt;admin&gt;.passkeys</code>, <code>vpsfort-web passkeys</code> and <code>remove-passkey</code> on the
+server): the login page offers "Log in with a passkey" for an account that has one. A passkey that
+checked its holder (a fingerprint, a face, the key's PIN: the user-verification flag) is the login
+on its own, without the password or the code; one that was only touched (a security key without a
+PIN) stands in for the code beside the password, and the page says so. A password that is given
+must still be right. The console checks the answer itself (<code>src/webauthn.rs</code>): the challenge it issued
+for that account, the origin, the site's hash and the user-presence flag in the authenticator
+data, the signature (ECDSA P-256 or Ed25519, with ring) and a signature counter that must grow
+(a cloned key is refused). Attestation is not checked (the key is the admin's own). Passkeys need
+the console reached by a host name, not an address: <code>localhost</code> through an SSH tunnel works. Every attempt costs the same Argon2 check (one at a
+time), whichever factor is wrong and also for an account that doesn't exist, and the answer
+doesn't say which. Five failures from an address within 15 minutes lock it out for 15 minutes,
+and vpsfort bans it (below); ten failures at one account from anywhere lock the account for 15
+minutes, except for addresses it was logged in to from (the admin's own) and for a login with
+the account's current one-time code (a guesser can't produce one), so a guesser spread over many
+addresses is stopped without locking the admin out, even from a new address. With <code>TOTP=off</code>
+the lock holds for every unknown address.</li>
+<li><strong>Proof of work before each login</strong> (<code>LOGIN_WORK</code>, default 20 bits; <code>0</code> off): the page's
+JavaScript (<code>web/work.js</code>, in a Web Worker, plain SHA-256) must find a nonce such that
+<code>SHA-256(challenge ‖ nonce)</code> starts with that many zero bits, about 2^20 hashes, and the console
+checks it with one hash before any Argon2 runs. That's under a second on a laptop and a few on a
+phone, solved while you type; a guesser pays it for every guess. The difficulty ramps with
+failures lately (15 minutes): each failure from the address adds a bit (up to 6: 64× the work),
+every 3 failures at the account from anywhere adds one (up to 4), every 50 failures from everyone
+adds one (up to 3), capped at 28 bits. A challenge is signed by the console (a key made at start),
+good for 5 minutes, works once, and one solved before the difficulty rose is refused (428 with a
+fresh challenge: the page solves it and tries once more). A challenge is for the address and
+account it was issued to (both in its signature), so one solved cheaply for an account with no
+failures can't be spent on the one under attack; nothing is kept for challenges handed out and
+not used, so asking for them costs the console nothing. <code>vpsfort-web check</code> times a solve.
+Nothing fingerprints the browser and no cookie is set for it: Mullvad or Tor are treated like
+anyone else; a browser without JavaScript or Web Workers can't log in, which was true already.</li>
+<li><strong>Sessions</strong> are named by a random 256-bit cookie
+<code>__Host-lgw</code> (Secure, HttpOnly, SameSite=Strict); 30 idle minutes or 12 hours end one, and so
+does removing its admin (<code>remove-admin</code>), at its next request. 8 per admin, 64 in all. An admin
+sees their own sessions (address, browser, times) and can end the others; after a login the page
+says when that admin last logged in, from where, and how many failed attempts at the account came
+since. The sessions (as the cookies' digests), these records, the lockouts and the failure
+counters are written to <code>STATE_DIR</code> and read back at start, so a restart (an upgrade, or a crash
+an attacker provokes) neither resets a lockout nor logs every admin out; without a <code>STATE_DIR</code>
+they live in memory.</li>
+<li><strong>Read only</strong>, and only for this site's pages: the API answers GET; login and logout take
+JSON (a form from another site can't send it) and check <code>Origin</code>; requests another site's page
+makes (<code>Origin</code>, <code>Sec-Fetch-Site</code>) are refused.</li>
+<li><strong>The page</strong> is a few files compiled into the binary (<code>web/</code>: <code>app.js</code> the views, <code>dom.js</code>
+building and patching the page, <code>core.js</code> what it works out), no libraries, nothing from other
+hosts. <code>Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; ...</code>,
+no inline script, no framing, <code>no-store</code>; <code>connect-src</code> adds RDAP's servers (rdap.org and the
+five registries) for the abuse-mailbox lookup below. Everything a node sends (log lines, account names, a
+peer's notices) goes into the page as text (<code>textContent</code>), never as HTML.</li>
+<li><strong>A small HTTP parser</strong> of its own (<code>src/http.rs</code>): no chunked bodies, no proxy requests, no
+folded headers, one Host and one Content-Length, 16 KB of headers, 8 KB bodies; anything else is
+refused and the connection closed. 64 connections at once, 12 per address, 30 seconds per request
+and 10 minutes per connection however busy (a few addresses can't hold every slot by sending a
+byte every 29 seconds). <code>CONSOLE_ALLOW</code> drops other addresses before TLS.</li>
+</ul>
+<p><strong>Privilege separation.</strong> vpsfort runs as root; vpsfort-web as its own system user, under a
+sandboxed unit (<code>ProtectSystem=strict</code>, no capabilities, <code>MemoryDenyWriteExecute</code>, 128 MB at
+most), writing only its own state (<code>STATE_DIR</code>, the admins' passkeys among it). It reaches vpsfort only through vpsfort's <strong>console socket</strong>
+(<code>[console]</code> in vpsfort.toml): root's directory, mode 0750, group <code>vpsfort-web</code>, which answers
+<code>snapshot</code>, <code>digest</code> and <code>abuse 24h</code> / <code>abuse 7d</code> and refuses every other command before the daemon
+sees it. The control socket, the cluster key and vpsfort's state stay root's.</p>
+<p><strong>What a break-in would give.</strong> The console broken into: everything the page shows, read only;
+the web key. An agent's node broken into: the web key, and with it the power to show the console
+false data (what a node reports is displayed, never acted on: the console has nothing to act
+with). Neither gives a ban, an unban or the cluster key.</p>
+<p><strong>vpsfort watches it.</strong> vpsfort-web writes to the journal: <code>login failed from &lt;address&gt;: …</code>
+(with the account tried, if it can be one: nothing else a stranger types reaches the log),
+<code>console: unknown path from &lt;address&gt;: GET /.env</code>, refused connections, agent requests without the
+web key. With <code>[sources] apps = ["vpsfort-web"]</code> vpsfort scores them (25 points a failed login,
+40 a probe for secrets, 20 a refused connection) and bans the address like any other attacker,
+on every node through the cluster.</p>
+<h2 id="setup"><a class="header" href="#setup">Setup</a></h2>
+<p>On every node of the cluster (the console's too):</p>
+<ol>
+<li>Install it (from a release bundle, below, or <code>./deploy/deploy.sh &lt;host&gt;</code> from a checkout). The
+first run puts <code>/opt/vpsfort-web/config.env</code> in place and creates the user <code>vpsfort-web</code>.</li>
+<li>The <strong>web key</strong>, once, on one node, then the same file to every other node's
+<code>/opt/vpsfort-web/web.key</code>:
+<pre><code class="language-bash">/opt/vpsfort-web/vpsfort-web keygen --out /opt/vpsfort-web/web.key
+/opt/vpsfort-web/vpsfort-web key-id     # the same fingerprint on every node
+</code></pre>
+</li>
+<li>vpsfort's console socket, in <code>/etc/vpsfort/vpsfort.toml</code>, then <code>systemctl restart vpsfort</code>:
+<pre><code class="language-toml">[console]
+socket = "/run/vpsfort-console/console.sock"
+group = "vpsfort-web"
+</code></pre>
+And in <code>[sources]</code>, <code>apps = ["vpsfort-web"]</code> (with your other apps) to ban password guessers.</li>
+<li>In <code>config.env</code>: <code>AGENT_LISTEN=0.0.0.0:7949</code>, and <code>AGENT_ALLOW</code> the console node's address.
+Open the port to that address only:
+<code>ufw allow from 203.0.113.10 to any port 7949 proto tcp</code> (firewalld:
+<code>firewall-cmd --permanent --zone=public --add-rich-rule='rule family=ipv4 source address=203.0.113.10 port port=7949 protocol=tcp accept'</code>).
+The console's own node needs no agent: the console reads that node's vpsfort through
+<code>VPSFORT_SOCKET</code>, so <code>AGENT_LISTEN</code> stays empty there and 7949 needs no rule.</li>
+</ol>
+<p>On the console's node, also:</p>
+<ol start="5">
+<li>In <code>config.env</code>: <code>CONSOLE_LISTEN</code>, and <code>NODES</code> the other nodes' agents
+(<code>vpn.example.org:7949, 198.51.100.20:7949</code>). Either:
+<ul>
+<li><code>CONSOLE_LISTEN=127.0.0.1:7948</code>, reached through SSH:
+<code>ssh -L 7948:127.0.0.1:7948 &lt;host&gt;</code>, then <code>https://127.0.0.1:7948</code> (a hardened SSH gateway
+needs <code>PermitOpen 127.0.0.1:7948</code> for its user); or</li>
+<li><code>CONSOLE_LISTEN=0.0.0.0:7948</code> with <code>CONSOLE_ALLOW</code> the networks you work from, and the port
+opened to them in the firewall. vpsfort's exposure watch reports the new listener once.</li>
+</ul>
+</li>
+<li>The admin's login:
+<pre><code class="language-bash">/opt/vpsfort-web/vpsfort-web passwd        # asked twice, not shown; 12 characters at least
+/opt/vpsfort-web/vpsfort-web totp-setup    # scan the QR code, or add the otpauth:// link
+</code></pre>
+It then asks for the code the app shows and writes the secret only when it matches: if the
+scan didn't take, nothing is written and you run it again.
+More admins, the same way, each with their own password and codes (they log in with their name
+in "Account"; <code>admin</code> is the default):
+<pre><code class="language-bash">/opt/vpsfort-web/vpsfort-web passwd --user alice
+/opt/vpsfort-web/vpsfort-web totp-setup --user alice   # alice scans it with her own app
+/opt/vpsfort-web/vpsfort-web admins                    # who can log in
+/opt/vpsfort-web/vpsfort-web remove-admin alice        # her sessions end at once
+</code></pre>
+No restart needed: the console reads the files at each login.</li>
+<li><code>bash /opt/vpsfort-web/install.sh</code> again (a package install: <code>dpkg-reconfigure vpsfort-web</code>, or
+<code>dnf reinstall</code> the rpm; it starts nothing, so finish with <code>systemctl enable --now vpsfort-web</code>): it sets the files' owners and modes, makes the
+self-signed certificate if there is none, and starts the service once nothing is missing
+(until then it lists what is). Check it:
+<pre><code class="language-bash">/opt/vpsfort-web/vpsfort-web check     # reads config.env itself, as the unit does
+</code></pre>
+<code>check</code> reads every file and asks this node's vpsfort and every agent in <code>NODES</code> once.</li>
+<li>Open the console. The browser warns about the self-signed certificate once: compare the
+SHA-256 fingerprint it shows with <code>vpsfort-web fingerprint</code> (install.sh prints it too) before
+you accept it.</li>
+</ol>
+<p><strong>A console without vpsfort</strong> (a host that only aggregates the nodes and serves the page):
+<code>VPSFORT_SOCKET=</code>, <code>CONSOLE_LISTEN</code> and <code>NODES</code>, no agent, and skip step 3. Every node shown is
+then an agent's. One thing is missing there: with no vpsfort on that host, nothing bans password
+guessers at its console from the journal; the lockout above still applies, so keep <code>CONSOLE_ALLOW</code>
+narrow (or the console on 127.0.0.1 behind SSH). Two consoles: both in each agent's
+<code>AGENT_ALLOW</code>. A node without the console: <code>CONSOLE_LISTEN=</code> (the default).</p>
+<h2 id="settings-optvpsfort-webconfigenv"><a class="header" href="#settings-optvpsfort-webconfigenv">Settings (<code>/opt/vpsfort-web/config.env</code>)</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>variable</th><th>default</th><th>meaning</th></tr></thead><tbody>
+<tr><td><code>NODE_NAME</code></td><td>vpsfort's <code>[cluster] node_id</code>, else the host name</td><td>this node's name in the console</td></tr>
+<tr><td><code>VPSFORT_SOCKET</code></td><td><code>/run/vpsfort-console/console.sock</code></td><td>vpsfort's <code>[console] socket</code>; empty without vpsfort</td></tr>
+<tr><td><code>WEB_KEY_FILE</code></td><td><code>/opt/vpsfort-web/web.key</code></td><td>the web key, the same on every node</td></tr>
+<tr><td><code>AGENT_LISTEN</code></td><td>empty (no agent)</td><td>where the consoles ask for this node's data, e.g. <code>0.0.0.0:7949</code></td></tr>
+<tr><td><code>AGENT_ALLOW</code></td><td>required with an agent</td><td>the consoles' addresses or networks; <code>any</code>: the web key alone decides</td></tr>
+<tr><td><code>CONSOLE_LISTEN</code></td><td>empty (no console)</td><td>where the console serves HTTPS, e.g. <code>127.0.0.1:7948</code></td></tr>
+<tr><td><code>CONSOLE_ALLOW</code></td><td>empty: every address</td><td>addresses or networks that may reach the login page</td></tr>
+<tr><td><code>NODES</code></td><td>empty</td><td>the other nodes' agents, <code>host:port</code>, separated by commas or blanks</td></tr>
+<tr><td><code>TLS_CERT</code>, <code>TLS_KEY</code></td><td><code>/opt/vpsfort-web/tls.crt</code>, <code>tls.key</code></td><td>PEM certificate chain and key; read again when they change</td></tr>
+<tr><td><code>LOGIN_WORK</code></td><td><code>20</code></td><td>bits of proof of work before a login (ramps with failures; <code>0</code>: off)</td></tr>
+<tr><td><code>RDAP_LOOKUPS</code></td><td><code>on</code></td><td>the console looks up abuse mailboxes (rdap.org, HTTPS with the system's CA bundle) when an admin asks; <code>off</code>, or when it can't get out, the admin's browser asks rdap.org itself</td></tr>
+<tr><td><code>PASSWORD_FILE</code></td><td><code>/opt/vpsfort-web/admin.password</code></td><td><code>admin</code>'s Argon2id hash (<code>passwd</code>)</td></tr>
+<tr><td><code>TOTP</code>, <code>TOTP_FILE</code></td><td><code>on</code>, <code>/opt/vpsfort-web/admin.totp</code></td><td>one-time codes for every admin (<code>off</code>: passwords only); <code>admin</code>'s secret (<code>totp-setup</code>)</td></tr>
+<tr><td><code>ADMINS_DIR</code></td><td><code>/opt/vpsfort-web/admins</code></td><td>the other admins: <code>&lt;name&gt;.password</code>, <code>&lt;name&gt;.totp</code> (<code>passwd --user</code>, <code>totp-setup --user</code>)</td></tr>
+<tr><td><code>METRICS_TOKEN_FILE</code></td><td>unset</td><td>a token that reads <code>/metrics</code> without a login (Prometheus)</td></tr>
+<tr><td><code>REFRESH_SECS</code></td><td>10</td><td>how old the nodes' data may get while a page is open</td></tr>
+<tr><td><code>SESSION_IDLE_MINUTES</code>, <code>SESSION_MAX_HOURS</code></td><td>30, 12</td><td>when a session ends</td></tr>
+<tr><td><code>EXPECTED_VERSION</code></td><td>unset</td><td>the vpsfort-web release every node should run (<code>0.5.0</code>): a node on another gets a row on the Overview. Nothing is downloaded or checked online</td></tr>
+<tr><td><code>STATE_DIR</code></td><td><code>/var/lib/vpsfort-web</code></td><td>where the attention history, the nodes' digests, the admins' marks, the share links, the lockouts and failure counters, and the sessions are kept across restarts (the unit's <code>StateDirectory</code>); empty: in memory only (a restart then forgets the lockouts and logs every admin out)</td></tr>
+<tr><td><code>HISTORY_DAYS</code>, <code>DIGEST_DAYS</code></td><td>7, 14</td><td>how long the attention history keeps a problem that went, and how many days of each node's digests are kept</td></tr>
+</tbody></table>
+</div>
+<p>The console asks the nodes only while someone looks (a page open, a Prometheus scrape): an
+idle console sends nothing. A slow node's answer shows with the next refresh; one that doesn't
+answer shows as down, with the reason and its last data, and is asked less and less often (twice
+the wait after each failure, up to a minute) until it answers again. The page asks for what its
+tab shows (<code>/api/v1/cluster?only=...</code>), not the whole cluster document every time.</p>
+<h2 id="commands"><a class="header" href="#commands">Commands</a></h2>
+<pre><code>vpsfort-web                  run (the unit does)
+vpsfort-web check            settings, files, this node's vpsfort and every agent, once
+vpsfort-web keygen [--out F] a new web key (or metrics token); F mode 0640, never overwritten
+vpsfort-web key-id           the web key's fingerprint (and a rotation's .next/.prev keys)
+vpsfort-web gen-cert --name console.example.org --name 203.0.113.10 [--force]
+vpsfort-web fingerprint      the certificate's SHA-256 fingerprint, as browsers show it
+vpsfort-web passwd [--user NAME] [--stdin]       an admin's password (a new NAME: a new admin)
+vpsfort-web totp-setup [--user NAME] [--force] [--no-confirm]
+                              their one-time codes' secret: a QR code, the otpauth:// link (also
+                              without a label, for password managers) and the secret in groups;
+                              written only after a code from the app matches, so a failed scan
+                              leaves nothing behind (--no-confirm writes at once, for scripts)
+vpsfort-web admins                               the admins, and whether each can log in
+vpsfort-web remove-admin NAME                    remove one (not admin): files gone, sessions end
+vpsfort-web passkeys [--user NAME]               an admin's passkeys (registered on the "Your account" page)
+vpsfort-web remove-passkey --user NAME --id ID   remove one (a lost key)
+</code></pre>
+<p><strong>Rotating the web key</strong> (<code>deploy/rotate-web-key.sh</code>, as vpsfort's <code>rotate-cluster-key.sh</code>): the
+agent also answers requests sealed under <code>&lt;WEB_KEY_FILE&gt;.next</code> and <code>.prev</code>, while the console
+sends with <code>WEB_KEY_FILE</code>, so the key changes in three rounds without a moment in which the
+console can't ask an agent: <code>start</code> (the new key as <code>.next</code> on every node), <code>switch</code> (it becomes
+the key, the old one <code>.prev</code>), <code>finish</code> (the old one goes). Each round copies the files over SFTP
+and prints the command to paste into a root shell on each node, which checks them, installs the
+key and restarts vpsfort-web; <code>key-id</code> and <code>check</code> show a rotation in progress. Share links made
+before <code>switch</code> end with it (they are signed with the key).</p>
+<h2 id="the-page"><a class="header" href="#the-page">The page</a></h2>
+<ul>
+<li>
+<p><strong>Overview:</strong> nodes up, active bans (and how many distinct addresses), bans and events in the
+last hour, alerts in 24 hours, tracked addresses; <strong>Needs attention</strong> (a node without data, a
+failing cluster peer, differing cluster keys, shadow mode, a certificate running out, a full
+disk, security updates, infected files, changed package files, feed errors...); events and
+bans per minute over three hours, per node (also as a table); a card per node.</p>
+</li>
+<li>
+<p><strong>Alerts, Activity</strong> (every decision), <strong>Bans</strong> (per node, or one row per address with the
+nodes that ban it), <strong>Offenders</strong> (scores, evidence, accounts with failed logins): filters,
+sorting, details on click, a column chooser (kept per browser), CSV and JSON. On Alerts and
+Activity, <strong>Merge</strong> folds the same alert or decision on several nodes (a peer's ban relayed to
+each; a cron's ten <code>su</code> lines within a minute) into one row with every node and a ×N count; rows
+carry their severity as a left edge, and rows newer than your last look are tinted, with their
+count in the header ("12 new").</p>
+</li>
+<li>
+<p><strong>World:</strong> countries, networks and ports, all nodes added up. Every list folds: the Countries
+picker shows the top 15, a country's Networks and Busiest ports the top 10 each (a big country
+has dozens of networks; a port scan lists hundreds of ports), with "Show all N" under each and
+the full lists on a search; each scrolls inside its card, so picking a country shows its
+networks and ports side by side with the picker on a desktop, and above it on a phone, with the
+country's figures as a chip in the filter row and a link to the map.</p>
+</li>
+<li>
+<p><strong>Map:</strong> the TUI's map, drawn properly. Countries from Natural Earth (public domain) in the Equal
+Earth projection, the whole world or Europe. ▲ sized by active bans, offenders or events, at
+the addresses' coordinates where a node's geo database is a city-level one (one marker per
+place, "Germany, Nuremberg" on hover) and at the country's capital for the rest (the free
+databases name only the country; a node without coordinates, or an older one, draws as
+before); ● where addresses logged in during the last hour; countries <code>[geoblock]</code> blocks
+hatched, with the nodes that block them and whether it is in force. Hover for the figures; a
+click opens the country on World. <code>web/world.json</code> is made by <code>scripts/world-map.py</code>.</p>
+</li>
+<li>
+<p><strong>An address's page</strong> (<code>#/address/&lt;address or network&gt;</code>; every address or network shown is a
+link, also inside log lines and messages): the bans covering it on every node, its scores, the
+decisions and alerts naming it, whether a node trusts or allows it, its entry in the last week's
+abuse report, and who runs its network (RDAP).</p>
+</li>
+<li>
+<p><strong>Abuse:</strong> every node's abuse report merged (<strong>To send</strong> turns it into the checklist: networks
+not yet mailed, most bans first, with Copy, Mail and Mark mailed on each row and nothing else), for the last 24 hours or the last 7 days (each
+button shows how many networks it has), one row per network owner (by AS number, else by name):
+its countries, sources, bans, log lines, the nodes that banned them and when last seen. A click
+opens its sources: what each did, in the words of the weekly report, and its first log lines
+marked with the node they hit. <strong>Copy</strong> puts that network's part on the clipboard as an e-mail
+to its abuse desk ("Hello, the following addresses in your network ... attacked our servers"),
+<strong>.txt</strong> saves it as a file, <strong>Mail</strong> looks up the network's abuse mailbox (RDAP) and opens the
+e-mail in your mail program, addressed and with a subject (a report too long for a mail link goes
+in part, the rest saved as a .txt to attach). The text names the attacked servers by their public
+address, never by the nodes' names. The mailbox lookup: the console asks rdap.org (one a second,
+kept a day, following a registry's redirects only to public host names); if it can't (<code>RDAP_LOOKUPS=off</code>, no way out from its host) the page asks rdap.org
+itself, which then learns the address asked about and the admin's address. The console follows a
+registry's redirects only to rdap.org and the five registries (<code>*.arin.net</code>, <code>*.ripe.net</code>,
+<code>*.apnic.net</code>, <code>*.lacnic.net</code>, <code>*.afrinic.net</code>), and only to their public addresses. Only plain
+e-mail addresses are taken from RDAP (the network's owner writes it, and may be the attacker). <strong>Mark
+mailed</strong> remembers a network as reported, shown on its row; "Hide those already
+mailed" leaves out its sources for 30 days. The marks (mailed networks, problems seen) are kept
+by the console in <code>STATE_DIR</code>, so every admin and browser sees the same and a restart keeps them;
+this browser's copy stands in while the console has none. <strong>CSV</strong>: one line per source. Sources with fewer than
+3 log lines are left out unless you ask, as in the weekly report. Each node builds its report from its actions log when asked (vpsfort keeps
+it a minute, the console too); the page asks again every 5 minutes or on "Again".</p>
+</li>
+<li>
+<p><strong>A node's page</strong> starts with what changed since the console's previous snapshot of it ("+3
+bans, 1 new alert, new listener on 0.0.0.0:7949"), then vpsfort's mode and figures, log sources, the cluster as that node sees it
+(peers, facts, key), certificates, disk and memory, updates, cron, antivirus and package checks,
+listening services, blocklists, the allowlists, patterns, today's digest so far, that node's
+abuse report (as on Abuse), and its whole snapshot as JSON.</p>
+</li>
+<li>
+<p><strong>Overview</strong> also has sparklines under the bans and events tiles (the last 3 hours), the
+activity charts over 3 hours (per minute), 24 hours or 7 days (per hour, from vpsfort's hourly
+figures since its start), node cards you can <strong>pin</strong> to the top (★, per browser), <strong>Needs
+attention</strong> as a queue (click a problem once seen: it dims, "3 unseen of 8" in the header), and
+<strong>Nodes side by side</strong>: each node's vpsfort and vpsfort-web versions, mode, firewall,
+thresholds, cluster key and which watches are on, the cells that differ from most nodes marked;
+click two nodes to see only what differs between those two.</p>
+</li>
+<li>
+<p><strong>Your account</strong> (your name in the header): this session, the login before it, your sessions
+with "Log out the others", your passkeys (add one: the browser asks the security key or the
+phone; remove one), this browser's settings (colours, notifications, the node legend, the
+saved views, the keys), and <strong>Console health</strong>: what <code>vpsfort-web check</code> prints, on the page:
+the certificate's expiry (a warning under 14 days), the web key's id, the admins, the proof of
+work, the sessions open, every node's state and vpsfort-web version.</p>
+</li>
+<li>
+<p><strong>Attention history</strong> (Overview, under Needs attention): the problems of the last 7 days as the
+console saw them appear and go, with how long each lasted. Kept in <code>STATE_DIR</code>
+(<code>/var/lib/vpsfort-web</code>, the unit's <code>StateDirectory</code>), so a restart keeps it; with <code>STATE_DIR</code>
+empty, in memory. A changing count ("3 high or critical alert(s)") is one problem.</p>
+</li>
+<li>
+<p><strong>A node's digests:</strong> "Past days" on a node's page shows the last two weeks' digests as the
+console kept them (each day's when it was shown, and every node's 15 minutes before midnight UTC:
+the console's only traffic to the nodes while nobody looks), in <code>STATE_DIR</code> across restarts. <strong>Snapshot</strong> saves the node's
+snapshot alone, as <code>vpsfort tui --file</code> reads it; <strong>Export JSON</strong> on the Overview saves
+everything the console has (the merged view and every node's snapshot) for a ticket.</p>
+</li>
+<li>
+<p><strong>Share links</strong> (an address's page): "Share link" makes a link to that page that needs no
+login, for handing the evidence to the address's hosting provider: it opens that address's data
+only, read-only like everything here, and ends when it expires (24 hours, 3 days or a week; a
+week at most). Its holder is a stranger to the cluster and sees what the weekly abuse report
+would, no more: the bans covering the address, the ban and unban decisions about it with their
+evidence, and its scores. Account names are withheld as the abuse report withholds them
+("failed password login (account name withheld)"), anything with an <code>@</code> becomes <code>[account]</code>,
+internal points go, and the alerts about the host, the users notified, the admin's notes, and
+what the nodes trust or allow are left out altogether; the nodes are numbered, not named, in
+fields and texts alike; no abuse report, no RDAP, no other page, every link plain text. One
+address may open shared pages 30 times a minute (429 beyond); a wrong, expired or hammering
+request is logged with the address first (<code>share link refused from …</code>), and vpsfort's
+<code>vpsfort_web_share</code> pattern bans an address that keeps trying. The link carries the address
+and its expiry, signed with the web key (on a console without one, a key made at start: its
+links end with a restart). The links made are listed on the account page (who made it, for
+which address, until when; in <code>STATE_DIR</code> across restarts), and any admin can <strong>end one
+early</strong> there: it is refused from then on. Making and ending one is logged.</p>
+</li>
+<li>
+<p><strong>Re-offended:</strong> a network marked mailed whose sources were banned again after the mark shows
+"seen again: N" on Abuse, so you can tell which reports worked.</p>
+</li>
+<li>
+<p><strong>Saved views:</strong> ★ in the header saves the tab you are on with its filters ("alerts · level=high
+q=ssh"), in this browser; the same menu lists them for one click back.</p>
+</li>
+<li>
+<p><strong>Keys:</strong> <code>/</code> the tab's search, <code>g</code> the address box, <code>1</code>–<code>8</code> the tabs, <code>j</code>/<code>k</code> the next and
+previous row, <code>Enter</code> opens it, <code>Esc</code> leaves a box, <code>?</code> shows the list. Never while typing.</p>
+</li>
+<li>
+<p><strong>The node legend</strong> under the header (on the tabs with node chips) says which colour is which
+node; "hide" there, and the Account page brings it back.</p>
+</li>
+<li>
+<p><strong>Times:</strong> a table cell shows the time (today's as a time, this year's with the day, older
+with the year) and, within a day, how long ago; the full date is in the tooltip.</p>
+</li>
+<li>
+<p><strong>Every table</strong> of the Alerts, Activity, Bans and Offenders tabs exports as CSV or JSON (the rows
+as filtered, all of them). CSV cells that would start a spreadsheet formula (<code>=</code>, <code>+</code>, <code>-</code>, <code>@</code>)
+get a <code>'</code> first: log lines and network names come from strangers.</p>
+</li>
+</ul>
+<p>The page refreshes in place: only what changed is redrawn, so the scroll position, rows opened,
+text selected and the focus stay, and charts and the map are redrawn only when their data
+changes. While text in the page is selected, refreshes wait ("held" in the header) so it can be
+copied. A tab left in the background asks again when shown; data older than three refreshes shows
+in red in the header; the tab's title counts what needs attention (high or critical). Filters and
+settings (not searches) are remembered in the browser. <code>/</code> jumps to the page's search box.
+The header's search box takes an address or network and opens its page, or searches the open
+tab. Each tab keeps its scroll position and opened rows while you look at another. If the console
+stops answering, the page says so with how old its data is, tries again with backoff (up to a
+minute) and offers "Try now". Printing a page (an abuse report, a node) gives black on white
+without the header or buttons. A tab's filters are in its address (<code>#/alerts?level=high&amp;q=ssh</code>), so a link shows another admin
+the same. 🔔 in the header turns on browser notifications of new critical problems while a console
+tab is open; ◐ picks light, dark or the system's colours. On a phone, tables turn into cards.</p>
+<h2 id="api"><a class="header" href="#api">API</a></h2>
+<p>JSON over HTTPS, GET, with the session cookie (log in with <code>POST /api/login</code>
+<code>{"user": "admin", "password": "...", "code": "123456", "work": {...}}</code>, <code>Content-Type: application/json</code>; without <code>user</code>: admin; <code>work</code> is the challenge from <code>/api/v1/session?user=…</code>
+with the <code>nonce</code> found, see "Proof of work" above; without it, or with one too easy for the
+failures since, 428 and a fresh challenge).</p>
+<div class="table-wrapper"><table><thead><tr><th>path</th><th></th></tr></thead><tbody>
+<tr><td><code>/api/v1/session</code></td><td><code>{"logged_in": …, "user": …, "totp": …, "node": …, "work": {"salt", "difficulty", "expires", "mac"}}</code> (needs no session; <code>?user=NAME</code> for that account's difficulty)</td></tr>
+<tr><td><code>/world.json</code></td><td>the Map tab's countries and capitals (public data, needs no session)</td></tr>
+<tr><td><code>/api/v1/cluster</code></td><td>everything below in one document; <code>?only=alerts,history</code> only those parts (and <code>nodes</code>, <code>totals</code>, <code>attention</code>, <code>refresh_secs</code>)</td></tr>
+<tr><td><code>/api/v1/overview</code></td><td><code>nodes</code>, <code>totals</code>, <code>attention</code></td></tr>
+<tr><td><code>/api/v1/{attention,alerts,actions,bans,offenders,accounts,world,history,nodes}</code></td><td>one part; list entries carry <code>node</code> and <code>node_id</code>; <code>world</code> also has <code>by_country</code> (each country's networks and ports), <code>geoblock</code> (what each node blocks) and <code>port_names</code></td></tr>
+<tr><td><code>/api/v1/nodes/&lt;id&gt;</code></td><td>one node: its summary, what needs attention, its whole snapshot (<code>_cut</code> gives the full length of lists cut short)</td></tr>
+<tr><td><code>/api/v1/nodes/&lt;id&gt;/digest</code></td><td><code>{"text": …}</code>: that node's digest so far</td></tr>
+<tr><td><code>/api/v1/nodes/&lt;id&gt;/digests</code></td><td><code>{"digests": [{"day", "text"}, …]}</code>: the last 14 days' digests of that node the console kept (each day's when shown, and every node's 15 minutes before midnight UTC)</td></tr>
+<tr><td><code>/api/v1/attention/history</code></td><td><code>{"problems": [{"level", "text", "nodes", "first", "last", "gone"}, …]}</code>: what needed attention in the last 7 days, with when it appeared and went (<code>gone</code> null: still there); a count in the text is left out, so a changing count is one problem</td></tr>
+<tr><td><code>/api/v1/check</code></td><td>the console's own health: version, certificate (fingerprint, <code>not_after</code>, <code>days_left</code>), web key id, admins, TOTP, proof of work, sessions, every node's state and version</td></tr>
+<tr><td><code>/api/v1/export</code></td><td>everything as one JSON file (a download): the cluster document and each node's whole snapshot (<code>vpsfort tui --file</code> reads a node's <code>snapshot</code>)</td></tr>
+<tr><td><code>POST /api/v1/share</code></td><td><code>{"net": …, "hours": 1–168}</code> → <code>{"path": "/#/share/&lt;net&gt;?t=&lt;token&gt;", "expires": …}</code>: a link to that address's page that needs no login (see below)</td></tr>
+<tr><td><code>/api/v1/share</code></td><td>the share links made that haven't expired (<code>id</code>, <code>net</code>, <code>by</code>, <code>made</code>, <code>expires</code>, <code>ended</code>); <code>POST /api/v1/share/end</code> with an <code>id</code> ends one early</td></tr>
+<tr><td><code>/api/v1/address/&lt;net&gt;?share=&lt;token&gt;</code></td><td>the address's data for a share link's holder: that address only, until the link expires</td></tr>
+<tr><td><code>/api/v1/abuse/{24h,7d}</code></td><td>every node's abuse report merged: <code>nodes</code> (each with <code>sources</code>, or <code>error</code>), <code>sources</code>, <code>providers</code> (<code>key</code>, <code>asn</code>, <code>name</code>, <code>countries</code>, <code>bans</code>, <code>events</code>, <code>first</code>, <code>last</code>, <code>nodes</code>, <code>sources</code> with <code>activity</code>, <code>evidence</code>, <code>omitted</code>, <code>members</code>)</td></tr>
+<tr><td><code>/api/v1/nodes/&lt;id&gt;/abuse/{24h,7d}</code></td><td>the same for one node</td></tr>
+<tr><td><code>/api/v1/address/&lt;address or network&gt;</code></td><td><code>bans</code>, <code>actions</code>, <code>offenders</code>, <code>trusted</code>, <code>allowed</code> naming it or overlapping it, each with its node</td></tr>
+<tr><td><code>/api/v1/rdap/&lt;address&gt;</code></td><td><code>{"abuse": [...], "network": ...}</code>; 502 with <code>"fallback": true</code> when the console can't look up</td></tr>
+<tr><td><code>/api/v1/sessions</code></td><td>this admin's sessions; <code>POST /api/v1/sessions/end-others</code> ends the others</td></tr>
+<tr><td><code>/api/v1/marks</code></td><td>the admins' marks (networks marked mailed, problems seen) as the page keeps them, and <code>kept</code>: whether the console stores them; <code>POST</code> replaces them (an object, 256 KB at most)</td></tr>
+<tr><td><code>/api/v1/passkeys</code></td><td>this admin's passkeys (<code>id</code>, <code>name</code>, <code>added</code>, <code>alg</code>, <code>logins</code> and <code>last_used</code> as the console counted them, <code>sign_count</code>: the authenticator's own counter, 0 for passkeys that sync) and the relying party id; <code>POST /api/v1/passkeys/begin</code> gives the registration options, <code>/finish</code> takes the browser's answer (<code>challenge</code>, <code>id</code>, <code>clientDataJSON</code>, <code>attestationObject</code>, <code>name</code>), <code>/remove</code> an <code>id</code>. At the login, <code>/api/v1/session?user=NAME</code> carries <code>passkey</code> (the request options) for an account that has one, and <code>POST /api/login</code> takes <code>passkey: {id, challenge, clientDataJSON, authenticatorData, signature}</code> instead of <code>code</code></td></tr>
+<tr><td><code>/metrics</code></td><td>Prometheus' text format</td></tr>
+</tbody></table>
+</div>
+<p>Times are microseconds since 1970 (UTC), as in vpsfort. Node ids are <code>0</code> for this node and
+<code>1</code>, <code>2</code>, ... for the entries of <code>NODES</code>.</p>
+<h3 id="prometheus-and-grafana"><a class="header" href="#prometheus-and-grafana">Prometheus and Grafana</a></h3>
+<pre><code class="language-bash">/opt/vpsfort-web/vpsfort-web keygen --out /opt/vpsfort-web/metrics.token   # then METRICS_TOKEN_FILE=... and restart
+</code></pre>
+<pre><code class="language-yaml">scrape_configs:
+  - job_name: vpsfort
+    scheme: https
+    scrape_interval: 60s
+    authorization: { credentials_file: /etc/prometheus/vpsfort.token }
+    tls_config: { ca_file: /etc/prometheus/vpsfort-web.crt }   # the self-signed certificate
+    static_configs: [{ targets: ["console.example.org:7948"] }]
+rule_files: [vpsfort-rules.yml]   # deploy/prometheus-rules.yml: node down, data stale, critical attention, ban spike, infected files, changed package files, disk, memory, certificates, peers, updates
+</code></pre>
+<p><code>deploy/prometheus-rules.yml</code> holds alerting rules for every series above with thresholds to
+start from; every series carries the node's name in <code>node</code>.</p>
+<p>Everything the console shows, per node (<code>node</code> label), in about 110 families:</p>
+<div class="table-wrapper"><table><thead><tr><th>area</th><th>series</th></tr></thead><tbody>
+<tr><td>the console's view</td><td><code>vpsfort_up</code>, <code>vpsfort_data_age_seconds</code>, <code>vpsfort_fetch_duration_seconds</code>, <code>vpsfort_web_agent_info{version}</code>, <code>vpsfort_attention{level}</code> (the overview's "needs attention", for alert rules)</td></tr>
+<tr><td>vpsfort</td><td><code>vpsfort_info{mode,backend}</code>, <code>vpsfort_enforcing</code>, <code>vpsfort_started_timestamp_seconds</code>, <code>vpsfort_snapshot_timestamp_seconds</code>, <code>vpsfort_tracked_addresses</code>, <code>vpsfort_tracked_connections</code>, <code>vpsfort_unapplied_changes</code>, <code>vpsfort_apply_failures_total</code>, <code>vpsfort_ban_threshold{window}</code>, <code>vpsfort_offenders</code>, <code>vpsfort_last_line_timestamp_seconds{source}</code></td></tr>
+<tr><td>bans, alerts, events</td><td><code>vpsfort_active_bans{origin,kind}</code> (every ban counted: <code>origin</code> local or the peer that decided it, <code>kind</code> address or network), <code>vpsfort_bans_total</code>, <code>vpsfort_alerts_total</code>, <code>vpsfort_bans_last_hour</code>, <code>vpsfort_events_last_hour</code>, <code>vpsfort_alerts_last_day{severity}</code>, <code>vpsfort_records_total{source}</code>, <code>vpsfort_events_total{signal}</code>, <code>vpsfort_unattributed_lines_total</code>, <code>vpsfort_hidden_addresses_total</code></td></tr>
+<tr><td>accounts and trust</td><td><code>vpsfort_accounts_with_failures</code>, <code>vpsfort_accounts_under_attack</code>, <code>vpsfort_trusted_addresses</code>, <code>vpsfort_operator_allowlist_entries</code></td></tr>
+<tr><td>places</td><td><code>vpsfort_country_{active_bans,offenders,events}{country}</code>, <code>vpsfort_network_{active_bans,offenders,events}{asn,name,country}</code>, <code>vpsfort_port_events{port}</code>, <code>vpsfort_logged_in_addresses{country}</code>, <code>vpsfort_offenders_unlocated</code></td></tr>
+<tr><td>blocking</td><td><code>vpsfort_geoblock_networks{family}</code>, <code>vpsfort_geoblock_applied</code>, <code>vpsfort_geoblock_error</code>, <code>vpsfort_geoblock_asns</code>, <code>vpsfort_geoblock_country{country,list}</code>, <code>vpsfort_feed_networks{family}</code>, <code>vpsfort_feed_applied</code>, <code>vpsfort_feed_error</code>, <code>vpsfort_feed_refreshed_timestamp_seconds</code>, <code>vpsfort_feed_skipped_entries</code>, <code>vpsfort_feed_asns</code>, <code>vpsfort_feed_source_{entries,error}{url}</code></td></tr>
+<tr><td>cluster</td><td><code>vpsfort_cluster_info{node_id,key_id}</code>, <code>vpsfort_cluster_key_installed_timestamp_seconds</code>, <code>vpsfort_cluster_rotation_keys</code>, <code>vpsfort_cluster_peer_up{peer}</code>, <code>vpsfort_cluster_peer_last_ok_timestamp_seconds{peer}</code>, <code>vpsfort_cluster_peer_failing_since_timestamp_seconds{peer}</code>, <code>vpsfort_cluster_heard_from_timestamp_seconds{from}</code>, <code>vpsfort_cluster_facts_known</code>, <code>vpsfort_cluster_facts_{received,sent}_total</code>, <code>vpsfort_cluster_rejected_total</code>, <code>vpsfort_cluster_refused_by_limit_total</code></td></tr>
+<tr><td>host</td><td><code>vpsfort_cert_{expiry,start,checked}_timestamp_seconds{target}</code>, <code>vpsfort_cert_error{target}</code>, <code>vpsfort_cert_wrong_name{target}</code>, <code>vpsfort_disk_{size,available}_bytes{mount}</code>, <code>vpsfort_disk_free_ratio{mount}</code>, <code>vpsfort_memory_{total,available}_bytes</code>, <code>vpsfort_memory_available_ratio</code>, <code>vpsfort_swap_{total,free}_bytes</code>, <code>vpsfort_memory_pressure_ratio{kind}</code>, <code>vpsfort_updates_pending</code>, <code>vpsfort_security_updates</code>, <code>vpsfort_reboot_required</code>, <code>vpsfort_kernel_outdated</code>, <code>vpsfort_processes_using_replaced_files</code>, <code>vpsfort_updates_checked_timestamp_seconds</code></td></tr>
+<tr><td>integrity</td><td><code>vpsfort_av_{infected_files,scanned_files,errors}</code>, <code>vpsfort_av_signatures_outdated</code>, <code>vpsfort_av_scan_completed</code>, <code>vpsfort_av_last_scan_timestamp_seconds</code>, <code>vpsfort_verify_{checked_files,mismatched_files,setuid_programs}</code>, <code>vpsfort_verify_last_run_timestamp_seconds</code>, <code>vpsfort_cron_{tasks,scripts,files,errors}</code>, <code>vpsfort_cron_scanned_timestamp_seconds</code>, <code>vpsfort_procwatch_{pairs,outbound}</code></td></tr>
+<tr><td>exposure</td><td><code>vpsfort_listeners{exposure}</code>, <code>vpsfort_public_listener{proto,port,process}</code>, <code>vpsfort_firewall_dead_rules</code>, <code>vpsfort_ufw_active</code></td></tr>
+<tr><td>patterns</td><td><code>vpsfort_pattern_{lines,matches,unaddressed}_total{pattern,kind}</code>, <code>vpsfort_pattern_addresses{pattern,kind}</code></td></tr>
+<tr><td>the console</td><td><code>vpsfort_web_logins_total{result}</code> (ok, failed, locked_out), <code>vpsfort_web_sessions</code>, <code>vpsfort_web_nodes</code></td></tr>
+</tbody></table>
+</div>
+<p>No series names an attacker's address or an account (personal data, and unbounded); countries,
+networks, ports, peers and the rest are bounded by vpsfort's own caps. A family appears when the
+node has that part (<code>[feeds]</code>, <code>[antivirus]</code>, ... switched on). Rules to start from:
+<code>vpsfort_up == 0</code>, <code>vpsfort_attention{level=~"critical|high"} &gt; 0</code>,
+<code>vpsfort_cluster_peer_up == 0</code>, <code>increase(vpsfort_web_logins_total{result="failed"}[15m]) &gt; 3</code>,
+<code>vpsfort_cert_expiry_timestamp_seconds - time() &lt; 7 * 86400</code>.</p>
+<h2 id="files"><a class="header" href="#files">Files</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>path</th><th>owner, mode</th><th></th></tr></thead><tbody>
+<tr><td><code>/opt/vpsfort-web/vpsfort-web</code></td><td>root 0755</td><td>the binary (<code>.prev</code>: the rollback one)</td></tr>
+<tr><td><code>/opt/vpsfort-web/config.env</code></td><td>root:vpsfort-web 0640</td><td>settings</td></tr>
+<tr><td><code>/opt/vpsfort-web/web.key</code></td><td>root:vpsfort-web 0640</td><td>the web key</td></tr>
+<tr><td><code>/opt/vpsfort-web/tls.crt</code>, <code>tls.key</code></td><td>0644, root:vpsfort-web 0640</td><td>the console's certificate</td></tr>
+<tr><td><code>/opt/vpsfort-web/admin.password</code>, <code>admin.totp</code></td><td>root:vpsfort-web 0640</td><td><code>admin</code>'s login</td></tr>
+<tr><td><code>/opt/vpsfort-web/admins/</code></td><td>root:vpsfort-web 0750, files 0640</td><td>the other admins' logins</td></tr>
+<tr><td><code>/etc/systemd/system/vpsfort-web.service</code></td><td>root 0644</td><td>the unit</td></tr>
+<tr><td><code>/run/vpsfort-console/console.sock</code></td><td>root:vpsfort-web 0660</td><td>vpsfort's console socket (vpsfort makes it)</td></tr>
+<tr><td><code>/var/lib/vpsfort-web/passkeys/&lt;admin&gt;.passkeys</code></td><td>vpsfort-web 0600</td><td>the admins' passkeys: public keys, written by the console at registration (the directory of the passwords is root's, and the unit may write nowhere else). With <code>STATE_DIR=</code> empty they go beside the password file, which the console must then be able to write. A file beside the password file is still read while the state directory has none for that admin</td></tr>
+<tr><td><code>/var/lib/vpsfort-web/</code> (<code>STATE_DIR</code>)</td><td>vpsfort-web 0700</td><td><code>attention-history.json</code>, <code>digests.json</code>, <code>marks.json</code>, <code>share-links.json</code>, <code>lockouts.json</code>, <code>sessions.json</code> (the cookies' digests only): the console's own state across restarts</td></tr>
+</tbody></table>
+</div>
+<p>Logs: <code>journalctl -u vpsfort-web</code>.</p>
+<h2 id="install-from-a-release-bundle"><a class="header" href="#install-from-a-release-bundle">Install from a release bundle</a></h2>
+<p>Every version tag <code>vpsfort-web-v&lt;version&gt;</code> gets its bundle, <code>vpsfort-web-&lt;version&gt;-&lt;commit&gt;-&lt;arch&gt;.zip</code>
+for each architecture (<code>x86_64-linux-musl</code>, <code>aarch64-linux-musl</code> for arm64,
+<code>armv7-linux-musleabihf</code> for 32-bit ARMv7), as an asset of the tag's GitHub Release (see
+"Releases" in the <a href="index.html#deployment">repository README</a>). Take the one for the server's
+architecture (<code>uname -m</code>) and check it:</p>
+<pre><code class="language-bash">arch=x86_64-linux-musl     # the server's: aarch64-linux-musl (arm64), armv7-linux-musleabihf (32-bit ARM)
+gh release download vpsfort-web-v0.5.1 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
+sha256sum -c vpsfort-web-*-$arch.zip.sha256          # the download is intact (macOS: shasum -a 256 -c)
+gh attestation verify vpsfort-web-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-web-v0.5.1
+</code></pre>
+<p>Then on the server:</p>
+<pre><code class="language-bash">unzip vpsfort-web-*-$arch.zip &amp;&amp; cd vpsfort-web-*-$arch
+sudo ./install.sh            # or as root; again after editing config.env
+sudo ./install.sh rollback   # back to the previous version
+</code></pre>
+<h2 id="install-from-a-package"><a class="header" href="#install-from-a-package">Install from a package</a></h2>
+<p>The same release has a package per architecture, for the distribution's package manager instead of <code>install.sh</code>: <code>vpsfort-web_&lt;version&gt;-1_&lt;arch&gt;.deb</code> (<code>amd64</code>, <code>arm64</code>, <code>armhf</code>; Debian, Ubuntu and their derivatives) <code>vpsfort-web-&lt;version&gt;-1.&lt;arch&gt;.rpm</code> (<code>x86_64</code>, <code>aarch64</code>, <code>armv7hl</code>; Fedora, RHEL and its rebuilds) and <code>vpsfort-web-&lt;version&gt;-r0.&lt;arch&gt;.apk</code> (<code>x86_64</code>, <code>aarch64</code>, <code>armv7</code>; Alpine, with OpenRC: below), each with its <code>.sha256</code> and <code>.sigstore.json</code>, downloaded and verified as the bundle above (<code>--pattern "*.deb*"</code>, <code>"*.rpm*"</code> or <code>"*.apk*"</code>). CI keeps them for every commit as workflow artifacts, and <code>scripts/package.sh</code> builds them locally (<code>cargo install cargo-deb cargo-generate-rpm --locked</code> once, and python3 for the <code>.apk</code>, which <code>scripts/apk.py</code> at the repository's root writes; none needs dpkg, rpm or apk-tools, so it runs on macOS too; <code>--target aarch64-unknown-linux-musl</code> or <code>armv7-unknown-linux-musleabihf</code> for the ARM ones). Or from the signed apt and dnf repository on GitHub Pages, once it is set up (the repository README, "Deployment"), where <code>apt upgrade</code> and <code>dnf upgrade</code> then bring new versions.</p>
+<pre><code class="language-bash">sudo apt install ./vpsfort-web_0.5.1-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-web-0.5.1-1.x86_64.rpm
+sudoedit /opt/vpsfort-web/config.env                 # the first install put the template there; then the keys, password, codes ("Setup")
+sudo dpkg-reconfigure vpsfort-web                    # rpm: sudo dnf reinstall ./vpsfort-web-*.rpm  (step 7: owners, modes, the certificate)
+/opt/vpsfort-web/vpsfort-web check &amp;&amp; sudo systemctl enable --now vpsfort-web
+</code></pre>
+<p>The package puts the same files in the same places as <code>install.sh</code> (<code>/opt/vpsfort-web</code> with the binary and <code>config.env.example</code>, the user <code>vpsfort-web</code>), except the unit, which is in <code>/usr/lib/systemd/system</code>. Its post-install step does what <code>install.sh</code> does apart from copying files: the user, <code>config.env</code> from the template the first time, the owners and modes, the self-signed certificate once <code>CONSOLE_LISTEN</code> is set; and it lists what is still missing (the to-do list of "Setup"). <code>dpkg-reconfigure vpsfort-web</code> (rpm: <code>dnf reinstall</code>) runs that step again, as "<code>bash install.sh</code> again" does for the bundle. <code>apt remove vpsfort-web</code> (<code>dnf remove</code>) stops the service and keeps <code>/opt/vpsfort-web</code>; <code>apt purge</code> removes it with the keys, password and certificate (rpm: by hand).</p>
+<p><strong>Nothing starts on its own.</strong> The first install puts the template in place and prints what to fill in; you enable the service once it is filled in. An upgrade keeps the config and restarts the service only if it was running and the config is filled in. <strong>Over a bundle or <code>deploy.sh</code> install</strong> the package takes over: the config, state and keys stay; the bundle's unit in <code>/etc/systemd/system</code> (it would shadow the package's) and its rollback files go, and the service is enabled again on the package's unit if it was (vpsfort's integrity watch reports the removed unit as a warning once). <strong>Replacing the config:</strong> when a terminal is there, the install asks whether to replace the config with the new template (the old one kept with the suffix <code>.old</code>); Enter, a timeout of a minute, no terminal or <code>DEBIAN_FRONTEND=noninteractive</code> keep it. <code>VPSFORT_PACKAGE_CONFIG=replace</code> (or <code>keep</code>) answers without asking: <code>sudo VPSFORT_PACKAGE_CONFIG=replace apt install ./&lt;file&gt;.deb</code>. <strong>Rollback</strong> is installing the previous version's package (<code>apt install ./&lt;old&gt;.deb --allow-downgrades</code>, <code>dnf downgrade ./&lt;old&gt;.rpm</code>): there is no <code>.prev</code> file.</p>
+<p><strong>Alpine (apk, OpenRC):</strong> <code>apk add --allow-untrusted ./vpsfort-web-&lt;version&gt;-r0.x86_64.apk</code> puts the same files in the same places, with the OpenRC script <code>/etc/init.d/vpsfort-web</code> instead of the unit: the settings exported from <code>config.env</code> as <code>EnvironmentFile=</code> does, <code>STATE_DIR</code> <code>/var/lib/vpsfort-web</code> (the console's own, mode 0700) unless <code>config.env</code> says otherwise, the console's own messages in <code>/var/log/vpsfort-web/console.log</code>, supervised by <code>supervise-daemon</code> and started again 5 seconds after a crash; systemd's sandboxing has no equivalent there. The package is unsigned, hence <code>--allow-untrusted</code>: <code>sha256sum -c</code> and the attestation verify it. Its install scripts are POSIX sh and do what the post-install step above does: the user, <code>config.env</code> from the template the first time, the owners and modes; an upgrade restarts a running console. Then <code>rc-update add vpsfort-web default &amp;&amp; rc-service vpsfort-web start</code>. <code>apk del vpsfort-web</code> stops it and keeps <code>/opt/vpsfort-web</code> and the state. Not yet run on an Alpine host: CI installs the package in an Alpine container.</p>
+<h2 id="development"><a class="header" href="#development">Development</a></h2>
+<pre><code class="language-bash">./scripts/ci.sh              # fmt, clippy -D warnings, tests, cargo audit, static musl build
+./deploy/deploy.sh &lt;host&gt;    # ci.sh, then the files over SFTP and the command for a root shell
+</code></pre>
+<p><code>node --test web/tests/*.test.mjs</code> (in <code>ci.sh</code> when Node is installed) tests the page's patching against a
+small fake DOM, the proof of work's SHA-256 against the standard's vectors and the console's check, and the abuse e-mail, mail links, RDAP parsing, CSV, address links and link
+filters. <code>tests/end_to_end.rs</code> runs an agent and a console against a fake vpsfort socket and logs in
+over TLS like a browser (it listens on 127.0.0.1 and a Unix socket). The fuzz targets in
+<code>fuzz/</code> (<code>cargo +nightly fuzz run http_request</code>, <code>agent_request</code>, <code>snapshot</code>, <code>abuse_report</code>) cover what strangers
+and key holders send; <code>tests/fuzz_smoke.rs</code> runs them over their seeds on stable.</p>
+<h2 id="verified"><a class="header" href="#verified">Verified</a></h2>
+<p><strong>On the Mac</strong>, beyond the tests above: runs against snapshots made from real decision logs,
+through real TLS and the agent protocol, with the page looked at in a browser (light and dark;
+phone, tablet and desktop widths; keyboard only), and two reviews of the rendered page with the
+fixes they named. Abuse reports built by vpsfort from a copy of real actions logs and merged
+from two fake nodes through a real agent, per-provider Copy and .txt, several admins (also
+against a console without vpsfort), the in-place refresh; the address page, Mail with RDAP (the
+console's lookup and the browser's fallback both asked rdap.org for real addresses), mailed
+marks, CSV/JSON exports, links with filters, sessions, the 7-day charts, the table of
+differences; the proof of work and the account lockout through the demo (a wrong password
+raised the difficulty from 20 to 21 bits, the next login solved it and got in; 20 bits took
+0.7 s in the browser, 22 bits 2.4 s) and in the end-to-end test; the no-JavaScript notice
+rendered from its markup.</p>
+<p><strong>On the real cluster</strong> (since 2026-10-27; five nodes, all but one
+through their agents): the unit under systemd's sandboxing, vpsfort's real console socket,
+<code>install.sh</code>, a browser reaching the console without a tunnel with its self-signed certificate;
+every node's alerts and bans on one page; a node's stale state during its agent's restart, the
+"since the last snapshot" line as its data came back, the filters above the tables.</p>
+<p><strong>Reviewed</strong> (2026-10-29): an audit of the whole crate (the proof of work first): six fixes,
+each with a test, listed in the commit <code>vpsfort-web: audit fixes</code>; the rest of what was read
+(the HTTP parser, the agent protocol, sessions, the page's handling of what nodes send, the
+unit's sandbox, the installer's modes) found sound. A second audit the same day, after the
+page's changes: two small fixes (a locked account's files were read for any login attempt at
+it, now only for one carrying something shaped like a code; the page's "seen" marks are pruned
+after 30 days). Known and accepted: someone holding an account's TOTP secret but not its
+password can keep failing at a locked account (the lock is for password guessers; the secret is
+the larger loss); <code>/api/v1/session?user=NAME</code> shows a raised difficulty for a name under
+attack, which says the name is being tried, not that it exists.</p>
+<p><strong>Found by these runs</strong>, fixed the same day: <code>check</code> misread an <code>AGENT_ALLOW</code> list with blanks
+when <code>config.env</code> was sourced in a shell (the commands now read the file themselves, as systemd
+does); the installer's new system user raised high alerts in vpsfort (the installers now
+announce the account files); an empty console socket setting was refused; on the real cluster
+the Bans, Offenders and Activity tabs had their heading and filters below the table.</p>
+<h2 id="not-yet-verified"><a class="header" href="#not-yet-verified">Not yet verified</a></h2>
+<p>Covered by tests, not yet seen on a server:</p>
+<ul>
+<li>a Let's Encrypt certificate's reload, and Prometheus scraping the metrics;</li>
+<li>vpsfort building a week's abuse report under its unit's memory limit;</li>
+<li>agents of mixed versions;</li>
+<li>browser notifications firing, and RDAP from a server's sandboxed unit;</li>
+<li>a phone's proof-of-work solve time;</li>
+<li>the ARM builds on a server;</li>
+<li>the map's markers at coordinates, from a node with a city-level geo database;</li>
+<li>passkeys with a real security key or phone (the checks run against a fake authenticator's answers in the tests), <code>STATE_DIR</code> on a server (the history, digests, marks, share links, lockouts and sessions read back after a restart), ending a share link early, <code>HISTORY_DAYS</code>/<code>DIGEST_DAYS</code> other than the defaults, and a web key rotation between real nodes.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="vpsfort.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="vpsfort-sim.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="vpsfort.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="vpsfort-sim.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

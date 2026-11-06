@@ -1,0 +1,59 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA256
+
+Architectures: amd64 arm64 armhf
+Codename: stable
+Components: main
+Date: Fri, 06 Nov 2026 23:40:01 +0000
+Description: vpsfort, its bots and web console (static binaries)
+Label: vpsfort
+Origin: vpsfort
+Suite: stable
+MD5Sum:
+ 3c4df0541b935c1388d50ac97cd58e0c              215 Release
+ 59e29a629b47bd9db23dfa85fcaa3554             9056 main/binary-amd64/Packages
+ b761985a165986e5e42e83bccb283a1e             3232 main/binary-amd64/Packages.gz
+ 0abd5be059ce269103329cf229327a7b             9054 main/binary-arm64/Packages
+ f868edb0bd586c04ccd96e9b062e7ec2             3227 main/binary-arm64/Packages.gz
+ 3f337328520b79a8fc9590804c5cde8c             9054 main/binary-armhf/Packages
+ ae6c3303c4e2ed9f5e6998e824801dbf             3224 main/binary-armhf/Packages.gz
+SHA1:
+ a52822059083d25b006fd300aae7db697c93b4a3              215 Release
+ 744758a81653b2daab92c2b82a97261aea84e6d4             9056 main/binary-amd64/Packages
+ 20515f34643d7c2755e8a00df86ca986a1a33d3c             3232 main/binary-amd64/Packages.gz
+ c92cb4724643a578b40f4286c80d909558977771             9054 main/binary-arm64/Packages
+ 4137ac14ad696b13de91a3e1015acc2a07e2c228             3227 main/binary-arm64/Packages.gz
+ 3013a3332cb728adf242c6c33db9d80e842ecbb5             9054 main/binary-armhf/Packages
+ 924deeba616519eb9f0ea871108ad166bfd43bb5             3224 main/binary-armhf/Packages.gz
+SHA256:
+ 184c95ea032a3bfb5fa13d4c0ce104b1438687ef3b31682625f28d8a11ceb7f7              215 Release
+ 6cbed297efb5fe35cb166ec7a0ab04a3cd6dc802e7cec7ac16d4399e2ddbfe28             9056 main/binary-amd64/Packages
+ 1e6dbeb2fdee6b9904c63a610d0ff6bf5139057505f951ed81ef28c0c01bd334             3232 main/binary-amd64/Packages.gz
+ cc87b34a4f08b4f6c6cd4b38a017b4035129f91eb37b08dc4f8ad488f459f866             9054 main/binary-arm64/Packages
+ ad031f0a1ffacedf08ac0797ef4dd27440edf744a84bfc87b1820a4e744aebdb             3227 main/binary-arm64/Packages.gz
+ 3475f3642f919dac88e8ecdaa139761f9d48ae0c96f5e8376f50fc61f63f8d54             9054 main/binary-armhf/Packages
+ 094f56f0f988e5ed10dd9d92af53b4bb4efe6b3159f51e299b00ed934dbc7650             3224 main/binary-armhf/Packages.gz
+SHA512:
+ cf371cccdaeaf846aedef9589f9680dab934c184a4e369838f0dbdcf4034d1d957d418384c5009052705050cc3b6301c3991296aa64c98132b0c32058703e74a              215 Release
+ 0a964654149969d6cdcd04ae3d3d885efd778a223404feb8efadf87c8bd5add443cb98e99efed3071c03f86572e756275e34928e82b69e1b6d2a1c67c1d2329a             9056 main/binary-amd64/Packages
+ 9086c076a07c7c862c15408dc963f2fb372e704d4178f1a436997f61b5e296f02e7653e079dfa19bd7e8f53cbc2289164ec696f47bb84352aafc9545ab964436             3232 main/binary-amd64/Packages.gz
+ e7950f6977920b72383269f069a7c790b416521686aff63bfe34e2170beadd5c68bcbcf81489267626f3312a93300b261854c1e181b6cf2400f488ea24cd92b5             9054 main/binary-arm64/Packages
+ c5db0a6c930325afbb8c43819a4602e674a46925e09d0df41b7f35c9b9b9b866691559c8fc42b296b4f1c2fb4796e6d74d359e71d2fa8a92a14ee0f829992a1a             3227 main/binary-arm64/Packages.gz
+ 3ad1c26b563471341a03dabb12eef94eab9531ecda3e0d444fb1006fe6399091e4ad4b71c3067a8bc93a904e024aa5281db3fe91f9212203c4f6dcc13818cb30             9054 main/binary-armhf/Packages
+ 104a263003749a606aec5f5d0f091de50c050ce401f5c88c4c03844afa49c8d8f96fc4cad98e60a9f4add3de3f97c34c841c34881b87f46e418e0f127b4cea08             3224 main/binary-armhf/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCAAdFiEEEqdbQsSt00CJb156L2S3EuN/POwFAmruZVEACgkQL2S3EuN/
+POz02RAAjOcoQU5zHzFLtzRWcXW4xNHhMbR5kjmBvHI46FhZf4tTfcZHQY9uPEKw
+mJTncEq7YYOeyqr4+diAV9uiTYUfTWPAafzVUxTEkygxn/wYU+3jm85SWFw5YlLZ
+YkxAjUiPuDOqDdrlJIFmmZh7HYovNRP4BivORPd418nApJu8UDS0Y1hLaLZwFDBa
+TyyTC56S9wlGVUynr9LvlOiHAowLBdma4rO5mpy3o3rhN+t/5kwGysciuyVHHUQM
+R8HN/BhLH49sVp6IYNu++3txA/uDgUnBfdmkn4/BEAEHvFmHpAeClEkxmpE7DWEP
+N89oXmI+z3VHzCjJtncfcTkJGnvXBd3Mfi4kR5ex+0BN6mWe6hUV7VZVPBdFdYIQ
+dFcJgG+iBl6/CzgZjOerLWG6cZCarFpE+2PGlKPvC3okO43UUh0L74VEDYmy2X9E
+CT/ENpdAeZ4AiSeUYZI8FZuhzYi9F3hHJOj2lmkg9o9LJnzASwqk3XxYxqLdEpRo
+iBK8xdYzyJnk2LqmZwplL27sn2AjnhP3M1PGnu2Lw0NvqSWKcVbk0EA+0JqGuwOv
+LynJ/9iJQJptEVC83kj7O2Gkc6OCHyNrd4Oi+NqAC5JvUsl9/4YdV9dYUlybnGTf
+0/BMuLFyTe/qrUA5T9iN3X9abYNNB828jU6Tx3k0OAhXayU5Sfc=
+=acUB
+-----END PGP SIGNATURE-----
