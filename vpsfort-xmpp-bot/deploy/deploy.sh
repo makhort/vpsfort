@@ -4,6 +4,9 @@
 # to paste into a root shell there: it verifies the files and runs install.sh from a root-only
 # copy. On a clean host that first run installs the bot with the config template in place
 # and doesn't start it (see install.sh): fill the config in there, then enable the service.
+# It upgrades the bots of the server's other domains too (vpsfort-xmpp-bot@<name>: they run the
+# same binary); a new one is set up there afterwards with
+#   bash /opt/vpsfort-xmpp-bot/install.sh --instance <name>
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -16,7 +19,7 @@ export TARGET=${TARGET:-x86_64-unknown-linux-musl}   # ci.sh builds it
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 cp "target/$TARGET/release/vpsfort-xmpp-bot" deploy/vpsfort-xmpp-bot.service deploy/vpsfort-xmpp-bot-client.service \
-    deploy/vpsfort-xmpp-bot.logrotate deploy/ejabberd-logs.logrotate deploy/config.env.example \
+    deploy/vpsfort-xmpp-bot@.service deploy/vpsfort-xmpp-bot.logrotate deploy/ejabberd-logs.logrotate deploy/config.env.example \
     deploy/config-client.env.example deploy/install.sh "$STAGE/"
 
 # The staging directory belongs to the SSH user, who could swap files between the copy and

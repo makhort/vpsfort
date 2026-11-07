@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::io::Cursor;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -35,7 +35,7 @@ use tokio_xmpp::xmlstream::{FallibleStreamElement, PendingFeaturesRecv, Timeouts
 use tokio_xmpp::{client_login, Client, Error, Event, IqRequest, Stanza};
 
 use crate::commands::{Bot, Reply, Response};
-use crate::ctl::{running_as_root, Ejabberdctl, RunAs};
+use crate::ctl::{running_as_root, Ejabberd, Ejabberdctl, RunAs};
 use crate::i18n::Texts;
 use crate::state::State;
 
@@ -668,8 +668,8 @@ impl Session {
     fn may_use(&self, jid: &BareJid) -> bool {
         let sender = jid.to_string().to_lowercase();
         match &self.role {
-            // exactly our domain: the Python bot's suffix test let "evil<domain>" through
-            Role::Admin(bot) => jid.domain().as_str() == self.domain && bot.may_use(&sender),
+            // users of exactly our domain, the admin from any of the server's (Bot::may_use)
+            Role::Admin(bot) => bot.may_use(&sender),
             // the admin, on whatever server
             Role::Client(_) => sender == self.admin_jid,
         }
@@ -963,6 +963,22 @@ async fn admin_bot(args: &Args, domain: &str, bot_jid: &str) -> Result<Bot<Ejabb
     if let Err(e) = ctl.check().await {
         bail!("ejabberdctl not found or not accessible: {e}");
     }
+    // The server's domains: the admin may be on any of them, and none may be blocked.
+    let listed = match ctl.run(&["registered_vhosts"]).await {
+        Ok(out) => parse_hosts(&out),
+        Err(e) => {
+            log::warn!("listing ejabberd's domains (registered_vhosts): {e}; taking {domain} as its only one");
+            vec![]
+        }
+    };
+    if !listed.is_empty() && !listed.iter().any(|h| h == domain) {
+        log::warn!("XMPP_DOMAIN {domain} is not one of ejabberd's domains ({}): the account commands will fail", listed.join(", "));
+    }
+    let hosts: Vec<String> = std::iter::once(domain.to_owned()).chain(listed.into_iter().filter(|h| h != domain)).collect();
+    let admin = args.admin.trim().to_lowercase();
+    if !admin.split_once('@').is_some_and(|(_, d)| hosts.iter().any(|h| h == d)) {
+        log::warn!("ADMIN_JID {admin} is not an account on this server ({}): the bot takes no commands from it", hosts.join(", "));
+    }
     let state = State::load(&args.state_path)?;
     let invite_url = args.invite_url.clone().unwrap_or_else(|| format!("https://{domain}:5281/invites"));
     let retention = crate::commands::Retention {
@@ -978,6 +994,7 @@ async fn admin_bot(args: &Args, domain: &str, bot_jid: &str) -> Result<Bot<Ejabb
         .map_err(|e| crate::ConfigError(format!("ANNOUNCE_LANGUAGES {}: {e}", args.announce_languages)))?;
     Ok(Bot {
         domain: domain.to_owned(),
+        hosts,
         retention,
         invite_url,
         admin_jid: args.admin.to_lowercase(),
@@ -986,6 +1003,55 @@ async fn admin_bot(args: &Args, domain: &str, bot_jid: &str) -> Result<Bot<Ejabb
         ctl,
         announce_languages,
     })
+}
+
+/// The domains in `ejabberdctl registered_vhosts`' output (one per line), lowercase.
+fn parse_hosts(out: &str) -> Vec<String> {
+    let mut hosts: Vec<String> = Vec::new();
+    for h in out.lines().map(|l| l.trim().to_lowercase()) {
+        if !h.is_empty() && !h.contains(char::is_whitespace) && !hosts.contains(&h) {
+            hosts.push(h);
+        }
+    }
+    hosts
+}
+
+/// The directories a running bot writes in, with the settings naming them: two bots must not
+/// share any of them ([`crate::dirlock`]).
+fn own_dirs(args: &Args, outbox: &Path) -> Vec<(&'static str, PathBuf)> {
+    // a bare file name's directory is the working directory
+    let dir_of = |p: &Path| p.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
+    let mut dirs = vec![("BOT_STATE_PATH's directory", dir_of(&args.state_path))];
+    if let (Some(store), true) = (&args.omemo_store, args.omemo != OmemoMode::Off) {
+        dirs.push(("OMEMO_STORE's directory", dir_of(store)));
+    }
+    dirs.push(("OUTBOX_DIR", outbox.to_path_buf()));
+    dirs
+}
+
+/// Locks [`own_dirs`]. A bot that is just stopping (a restart) gets a few seconds to let go;
+/// one still holding them after that is another instance, a setting no restart fixes.
+async fn lock_own_dirs(args: &Args, outbox: &Path) -> Result<vpsfort_xmpp_bot::dirlock::DirLocks> {
+    let dirs = own_dirs(args, outbox);
+    let dirs: Vec<(&'static str, &Path)> = dirs.iter().map(|(s, d)| (*s, d.as_path())).collect();
+    let mut tries = 0;
+    loop {
+        match vpsfort_xmpp_bot::dirlock::lock(&dirs) {
+            Ok(held) => return Ok(held),
+            Err(e) if e.busy && tries < 20 => {
+                tries += 1;
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            Err(e) if e.busy => {
+                return Err(crate::ConfigError(format!(
+                    "{e}: each bot on this host needs its own BOT_STATE_PATH (and OMEMO_STORE and OUTBOX_DIR, if set); \
+                     README, \"Several domains\""
+                ))
+                .into())
+            }
+            Err(e) => bail!("{e}"),
+        }
+    }
 }
 
 /// Where to connect: XMPP_SERVER and the port, else the JID's domain through its SRV records.
@@ -1031,6 +1097,9 @@ pub async fn run(args: Args) -> Result<()> {
     // JIDs arrive with their domain in lower case (nodeprep/nameprep): compare with that
     let domain = args.domain.as_deref().unwrap_or(jid.domain().as_str()).trim().to_lowercase();
     let password = args.password.clone().unwrap_or_default();
+    let outbox_dir = args.outbox_dir.clone().unwrap_or_else(|| args.state_path.parent().unwrap_or(Path::new(".")).join("outbox"));
+    // before any file is read: another bot on this host may be using them
+    let _locks = lock_own_dirs(&args, &outbox_dir).await?;
 
     let role = match args.mode {
         BotMode::Admin => {
@@ -1119,7 +1188,7 @@ pub async fn run(args: Args) -> Result<()> {
     let caps = caps_of(&format!("https://{domain}/vpsfort-xmpp-bot"), &disco);
     let client = Client::new_with_connector(jid.clone(), password.clone(), connector.clone(), timeouts);
     let upload = upload::UploadCtx {
-        outbox: args.outbox_dir.clone().unwrap_or_else(|| args.state_path.parent().unwrap_or(Path::new(".")).join("outbox")),
+        outbox: outbox_dir,
         max_age: Duration::from_secs(u64::from(args.outbox_max_days) * 86400),
         configured: match &args.upload_service {
             Some(s) => Some(s.parse().map_err(|e| crate::ConfigError(format!("UPLOAD_SERVICE {s}: {e}")))?),
@@ -1127,12 +1196,20 @@ pub async fn run(args: Args) -> Result<()> {
         },
         service: None,
     };
-    if args.mode == BotMode::Client {
-        log::info!(
+    match &role {
+        Role::Client(_) => log::info!(
             "vpsfort-xmpp-bot {} in client mode as {bot_jid}; admin {admin_jid}; outbox {}",
             env!("CARGO_PKG_VERSION"),
             upload.outbox.display()
-        );
+        ),
+        // several bots on one server (one per domain) write logs alike: this says whose it is
+        Role::Admin(bot) => log::info!(
+            "vpsfort-xmpp-bot {} in admin mode as {bot_jid} for {domain}{}; admin {admin_jid}; state {}; outbox {}",
+            env!("CARGO_PKG_VERSION"),
+            if bot.hosts.len() > 1 { format!(" (the server's domains: {})", bot.hosts.join(", ")) } else { String::new() },
+            args.state_path.display(),
+            upload.outbox.display()
+        ),
     }
     let mut session = Session {
         client,
@@ -1276,6 +1353,27 @@ mod tests {
         assert!(matches!(reply(push(None)), Some(Iq::Result { .. })));
         assert!(matches!(reply(push(Some("bot@example.org"))), Some(Iq::Result { .. })));
         assert!(matches!(reply(push(Some("admin@example.org/phone"))), Some(Iq::Error { .. })));
+    }
+
+    #[test]
+    fn server_domains_from_registered_vhosts() {
+        assert_eq!(parse_hosts("crystal.example\nEasy.Example \n\ncrystal.example\nnot a host\n"), ["crystal.example", "easy.example"]);
+        assert!(parse_hosts("").is_empty());
+    }
+
+    #[test]
+    fn each_bot_locks_the_directories_it_writes() {
+        use clap::Parser;
+        let args = |extra: &[&str]| {
+            let base = ["vpsfort-xmpp-bot", "--jid", "bot@example.org", "--admin", "admin@example.org", "--password", "x"];
+            Args::try_parse_from(base.iter().chain(extra)).unwrap()
+        };
+        let dirs = |a: &Args| own_dirs(a, Path::new("/o")).into_iter().map(|(s, d)| format!("{s} {}", d.display())).collect::<Vec<_>>();
+        assert_eq!(dirs(&args(&[])), ["BOT_STATE_PATH's directory /opt/vpsfort-xmpp-bot", "OUTBOX_DIR /o"]);
+        let a = args(&["--state-path", "state.json", "--omemo-store", "/keys/omemo.json"]);
+        assert_eq!(dirs(&a), ["BOT_STATE_PATH's directory .", "OMEMO_STORE's directory /keys", "OUTBOX_DIR /o"]);
+        let a = args(&["--omemo", "off", "--omemo-store", "/keys/omemo.json"]);
+        assert_eq!(dirs(&a), ["BOT_STATE_PATH's directory /opt/vpsfort-xmpp-bot", "OUTBOX_DIR /o"], "no OMEMO, no store");
     }
 
     #[test]

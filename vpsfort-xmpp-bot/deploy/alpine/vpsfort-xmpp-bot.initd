@@ -5,14 +5,26 @@
 # crash. systemd's sandboxing (ProtectSystem, MemoryMax, ...) has no OpenRC equivalent here.
 #   rc-update add vpsfort-xmpp-bot default && rc-service vpsfort-xmpp-bot start
 # The admin bot runs as the ejabberd user (it reads ejabberd's logs and runs ejabberdctl).
+#
+# The bot for another domain of the same ejabberd (README, "Several domains") is this script
+# under the name vpsfort-xmpp-bot.<name>, with its files in /opt/vpsfort-xmpp-bot/instances/<name>/
+# and its log in /var/log/vpsfort-xmpp-bot/<name>/ (unless its config.env names others):
+#   ln -s vpsfort-xmpp-bot /etc/init.d/vpsfort-xmpp-bot.<name>
+#   rc-update add vpsfort-xmpp-bot.<name> default && rc-service vpsfort-xmpp-bot.<name> start
 description="XMPP bot for vpsfort: ejabberd admin commands and OMEMO-encrypted admin messages (admin mode)"
 supervisor=supervise-daemon
 command=/opt/vpsfort-xmpp-bot/vpsfort-xmpp-bot
 command_user="ejabberd:ejabberd"
 directory=/opt/vpsfort-xmpp-bot
+instance=${RC_SVCNAME#vpsfort-xmpp-bot}
+instance=${instance#.}
+if [ -n "$instance" ]; then
+    directory=/opt/vpsfort-xmpp-bot/instances/$instance
+    description="$description, for $instance"
+fi
 respawn_delay=5
 respawn_max=0
-config=/opt/vpsfort-xmpp-bot/config.env
+config=$directory/config.env
 
 depend() {
     need net
@@ -24,7 +36,11 @@ start_pre() {
         eerror "$config is missing: copy the template next to it and fill it in"
         return 1
     fi
-    # the settings, for the bot only (supervise-daemon passes its environment on)
+    # the settings, for the bot only (supervise-daemon passes its environment on); an
+    # instance's own files unless its config names others, as the systemd template's
+    if [ -n "$instance" ]; then
+        export BOT_STATE_PATH="$directory/state.json" LOG_DIR="/var/log/vpsfort-xmpp-bot/$instance"
+    fi
     set -a
     . "$config"
     set +a

@@ -1,0 +1,74 @@
+# One more admin bot, for another domain of the same ejabberd (a server with several `hosts`):
+# vpsfort-xmpp-bot@<name>.service runs the same program as vpsfort-xmpp-bot.service with the
+# config, state, OMEMO keys, pins and outbox in /opt/vpsfort-xmpp-bot/instances/<name>/ and its
+# log in /var/log/vpsfort-xmpp-bot/<name>/. `install.sh --instance <name>` sets one up
+# (README, "Several domains"). Everything else as in vpsfort-xmpp-bot.service.
+[Unit]
+Description=XMPP Admin Chatbot Service (%i)
+After=network.target ejabberd.service
+Wants=ejabberd.service
+
+[Service]
+Type=simple
+# The user ejabberd runs as: ejabberdctl works for it directly, with no root and no
+# capabilities. install.sh sets the owners and modes of /opt/vpsfort-xmpp-bot to match.
+User=ejabberd
+Group=ejabberd
+WorkingDirectory=/opt/vpsfort-xmpp-bot/instances/%i
+
+# The instance's own files unless its config.env names others (its values win over these). The
+# bot refuses to start on a state directory, OMEMO store or outbox another bot is using.
+Environment=BOT_STATE_PATH=/opt/vpsfort-xmpp-bot/instances/%i/state.json
+Environment=LOG_DIR=/var/log/vpsfort-xmpp-bot/%i
+# The bot reads BOT_JID, BOT_PASSWORD, XMPP_DOMAIN, ... straight from the environment, so no
+# password on the command line.
+EnvironmentFile=/opt/vpsfort-xmpp-bot/instances/%i/config.env
+ExecStart=/opt/vpsfort-xmpp-bot/vpsfort-xmpp-bot
+
+Restart=always
+RestartSec=5
+# 78: wrong password, no SCRAM-SHA-256, or a bad setting. Restarting would only feed
+# mod_fail2ban.
+RestartPreventExitStatus=78
+# Stopping the bot stops only the bot: a pending /restart (ejabberdctl restart_kindly,
+# waiting out its delay) carries on.
+KillMode=process
+
+# Hardening; ejabberdctl and openssl inherit it.
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+UMask=0077
+ProtectSystem=full
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+PrivateTmp=yes
+PrivateDevices=yes
+# Other users' processes are hidden (ejabberd's own run as the same user, so a pending
+# restart_kindly is still seen).
+ProtectProc=invisible
+# XMPP and ejabberdctl's Erlang node (TCP to epmd), Unix sockets, netlink for getifaddrs.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# Not MemoryDenyWriteExecute: the Erlang VM that ejabberdctl starts compiles code (JIT).
+# If ejabberdctl fails under these settings, the bot stops at its startup check and
+# install.sh reports it (rollback: bash /opt/vpsfort-xmpp-bot/install.sh rollback).
+
+# At most this much memory (the bot itself is small, but every ejabberdctl command starts an Erlang VM of tens of MB inside this unit): the kernel
+# reclaims above MemoryHigh and ends the service above MemoryMax, so a leak or a flood of
+# messages can't take the host's memory from the services it protects.
+MemoryHigh=384M
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

@@ -3,7 +3,7 @@ name: vpsfort-xmpp-bot
 # Two kinds of push run this:
 #   - a branch push that changes these paths: the tests, then the bundles and the .deb, .rpm and .apk
 #     packages as workflow artifacts
-#   - a push of this crate's version tag, e.g. vpsfort-xmpp-bot-v0.6.1 (the version must be
+#   - a push of this crate's version tag, e.g. vpsfort-xmpp-bot-v0.7.0 (the version must be
 #     Cargo.toml's): the same, then the release job attaches them to the GitHub Release
 #     of that tag. GitHub doesn't evaluate paths for tag pushes; other crates' tags don't match.
 on:
@@ -114,6 +114,12 @@ jobs:
           sudo grep -q '^BOT_MODE=admin' /opt/vpsfort-xmpp-bot/config.env
           if systemctl is-active -q vpsfort-xmpp-bot; then exit 1; fi           # not started until it is filled in
           sudo /opt/vpsfort-xmpp-bot/vpsfort-xmpp-bot --version                 # the directory is the bot's and root's only
+          test -f /etc/systemd/system/vpsfort-xmpp-bot@.service                 # the template of the bots for other domains
+          sudo ./install.sh --instance second                                   # one for another domain: its config from the template
+          sudo grep -qx '#BOT_STATE_PATH=/opt/vpsfort-xmpp-bot/instances/second/state.json' /opt/vpsfort-xmpp-bot/instances/second/config.env
+          sudo test -d /opt/vpsfort-xmpp-bot/instances/second/outbox && sudo test -d /var/log/vpsfort-xmpp-bot/second
+          if systemctl is-active -q vpsfort-xmpp-bot@second; then exit 1; fi    # not started either
+          sudo bash /opt/vpsfort-xmpp-bot/install.sh --instance second          # the copy kept for rollback does it as well
       - name: Install the .deb on the runner
         if: matrix.native
         run: |
@@ -121,6 +127,8 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q "./$deb"     # over the bundle's config.env (admin mode: the user ejabberd is there)
           sudo test -f /opt/vpsfort-xmpp-bot/config.env && sudo grep -q '^BOT_MODE=admin' /opt/vpsfort-xmpp-bot/config.env
           test -f /usr/lib/systemd/system/vpsfort-xmpp-bot.service && test -f /usr/lib/systemd/system/vpsfort-xmpp-bot-client.service
+          test -f /usr/lib/systemd/system/vpsfort-xmpp-bot@.service && test ! -e /etc/systemd/system/vpsfort-xmpp-bot@.service   # the bundle's template taken over
+          sudo test -f /opt/vpsfort-xmpp-bot/instances/second/config.env        # the other domain's bot kept
           test -f /etc/logrotate.d/vpsfort-xmpp-bot && test -f /etc/logrotate.d/ejabberd-logs
           if systemctl is-active -q vpsfort-xmpp-bot; then exit 1; fi             # not started: placeholders
           sudo /opt/vpsfort-xmpp-bot/vpsfort-xmpp-bot --version

@@ -6,6 +6,10 @@
 #   ./install.sh             install, or upgrade (the running version becomes the rollback one)
 #   ./install.sh --client    the same; on the first install, with the client mode's template
 #   ./install.sh rollback    back to the previous version
+#   ./install.sh --instance NAME
+#                            the admin bot for another domain of the same ejabberd, once the bot
+#                            is installed (README.md, "Several domains"): the first run puts its
+#                            config in /opt/vpsfort-xmpp-bot/instances/NAME/, the next one starts it
 #   ./install.sh --check     only check the bundle's files (needs no root)
 #
 # The first install puts files/config.env.example (with --client, or where no user ejabberd
@@ -28,7 +32,8 @@ if [ "${1:-}" = --client ]; then
     shift
 fi
 case ${1:-} in
-    "" | rollback | --check) ;;
+    "" | rollback | --check) [ $# -le 1 ] || { usage >&2; exit 2; } ;;
+    --instance) [ -z "$client" ] && [ $# = 2 ] || { usage >&2; exit 2; } ;;
     -h | --help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
 esac
@@ -48,8 +53,9 @@ command -v systemctl > /dev/null || die "the bot runs as a systemd service: no s
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 while read -r _ f; do
-    # SHA256SUMS comes from the same untrusted directory: plain relative names only
-    [[ $f =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)?$ ]] || die "odd name in SHA256SUMS: $f"
+    # SHA256SUMS comes from the same untrusted directory: plain relative names only (an '@'
+    # after the first character, for the template unit files/vpsfort-xmpp-bot@.service)
+    [[ $f =~ ^[A-Za-z0-9_][A-Za-z0-9._@-]*(/[A-Za-z0-9_][A-Za-z0-9._@-]*)?$ ]] || die "odd name in SHA256SUMS: $f"
     mkdir -p "$work/$(dirname "$f")"
     cp -p -- "$f" "$work/$f"
 done < SHA256SUMS

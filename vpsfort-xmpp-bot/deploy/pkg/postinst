@@ -12,7 +12,9 @@
 # over an install from a bundle or deploy.sh: its unit in /etc/systemd/system (it would
 # shadow the package's) and its rollback files go; config.env, state, OMEMO keys and pins
 # stay. The bot is restarted only when it was running and its config has no placeholders
-# left; a first install prints what to fill in and starts nothing.
+# left; a first install prints what to fill in and starts nothing. The bots for the server's
+# other domains (vpsfort-xmpp-bot@<name>, their files in /opt/vpsfort-xmpp-bot/instances/<name>:
+# README, "Several domains") get the same owners and modes and restart.
 #
 # Asked, when a terminal is there: whether to replace config.env with this version's template
 # (the old one kept as config.env.old). Enter, a timeout, no terminal, or
@@ -25,6 +27,9 @@ DIR=/opt/$NAME
 SHARE=/usr/share/$NAME
 OLD_UNIT=/etc/systemd/system/$NAME.service
 OLD_WANTS=/etc/systemd/system/multi-user.target.wants/$NAME.service
+# the bundle's template unit of the bots for other domains, and where enabled units are linked
+OLD_TUNIT=/etc/systemd/system/$NAME@.service
+WANTS_DIR=/etc/systemd/system/multi-user.target.wants
 
 case ${1:-} in
     configure | 1 | 2 | [3-9]*) ;;
@@ -33,8 +38,16 @@ esac
 systemd() { [ -d /run/systemd/system ] && command -v systemctl > /dev/null; }
 sc() { systemctl "$@" 2> /dev/null || true; }
 note() { echo "$NAME: $*"; }
-setting() { # the value of $1 in config.env, quotes removed
-    grep -E "^$1=" "$DIR/config.env" 2> /dev/null | tail -n 1 | cut -d= -f2- | tr -d "\"'" || true
+setting() { # the value of $1 in config.env ($2: another config), quotes removed
+    grep -E "^$1=" "${2:-$DIR/config.env}" 2> /dev/null | tail -n 1 | cut -d= -f2- | tr -d "\"'" || true
+}
+# The bots for the server's other domains with a config here (install.sh --instance).
+instances() {
+    local d
+    for d in "$DIR"/instances/*/; do
+        [ -f "${d}config.env" ] && basename "$d"
+    done
+    return 0
 }
 # vpsfort's integrity watch covers the account files and the enabled units: announce what
 # changes, so it is logged instead of raised as a high alert. vpsfort is the package's
@@ -199,6 +212,44 @@ if [ "$MODE" = admin ] && [ -f "$DIR/state.json" ] && [ "$first" = no ]; then
     chown root:root "$DIR"/state.json.bak-* 2> /dev/null || true
 fi
 
+# The bots for the server's other domains: admin bots, as ejabberd. Their files' owners and
+# modes as the first bot's (the defaults are the template unit's: state.json in the instance's
+# directory, the log in /var/log/vpsfort-xmpp-bot/<name>).
+own_instance() {
+    local n=$1 idir=$DIR/instances/$1 conf=$DIR/instances/$1/config.env f sp logdir outbox
+    chown root:ejabberd "$DIR/instances" "$idir" "$conf"
+    chmod 750 "$DIR/instances"
+    chmod 1770 "$idir"
+    chmod 640 "$conf"
+    for f in "$idir/omemo-trust.txt" "$(setting AVATAR_PATH "$conf")"; do
+        if [ -n "$f" ] && [ -f "$f" ]; then chown root:ejabberd "$f"; chmod 640 "$f"; fi
+    done
+    sp=$(setting BOT_STATE_PATH "$conf"); sp=${sp:-$idir/state.json}
+    for f in "$sp" "$idir/state.json" "$idir/omemo.json" "$(setting OMEMO_STORE "$conf")"; do
+        if [ -n "$f" ] && [ -f "$f" ]; then chown ejabberd:ejabberd "$f"; chmod 600 "$f"; fi
+    done
+    rm -f "${idir:?}"/*.tmp
+    logdir=$(setting LOG_DIR "$conf"); logdir=${logdir:-/var/log/$NAME/$n}
+    mkdir -p "$logdir"
+    chown ejabberd:ejabberd "$logdir"
+    chmod 700 "$logdir"
+    if [ -f "$logdir/bot.log" ]; then chown ejabberd:ejabberd "$logdir/bot.log"; chmod 600 "$logdir/bot.log"; fi
+    outbox=$(setting OUTBOX_DIR "$conf"); outbox=${outbox:-$(dirname "$sp")/outbox}
+    mkdir -p "$outbox"
+    chown root:ejabberd "$outbox"
+    chmod 1770 "$outbox"
+    if [ "$(setting BOT_MODE "$conf")" = client ]; then
+        note "WARNING: $conf says BOT_MODE=client: the bots for other domains are admin bots ($NAME@$n runs as ejabberd)"
+    fi
+}
+if [ -n "$(instances)" ]; then
+    if id ejabberd > /dev/null 2>&1; then
+        for n in $(instances); do own_instance "$n"; done
+    else
+        note "no user 'ejabberd': the bots in $DIR/instances (other domains of an ejabberd) can't run here"
+    fi
+fi
+
 # The logrotate rules for this mode (the package's copies are in /usr/share/vpsfort-xmpp-bot):
 # the bot's log rotated as its user; in admin mode ejabberd's own logs too, 14 days at most
 # like the rest (/privacy), unless another rule already covers them (logrotate refuses
@@ -244,6 +295,24 @@ if [ -f "$OLD_UNIT" ] && [ ! -L "$OLD_UNIT" ]; then
 elif systemd && systemctl is-active -q "$UNIT"; then
     was_active=yes
 fi
+# The bundle's template unit of the bots for other domains likewise: the package's takes its
+# place, and the instances it enabled are enabled again on that one.
+if [ -f "$OLD_TUNIT" ] && [ ! -L "$OLD_TUNIT" ]; then
+    again=""
+    for n in $(instances); do
+        if [ -L "$WANTS_DIR/$NAME@$n.service" ]; then
+            again="$again $n"
+            rm -f "${WANTS_DIR:?}/$NAME@$n.service"
+        fi
+    done
+    rm -f "${OLD_TUNIT:?}" "$DIR/$NAME@.service.prev"
+    echo "  removed $OLD_TUNIT"
+    systemd && sc daemon-reload
+    for n in $again; do
+        announce "$WANTS_DIR/$NAME@$n.service=/usr/lib/systemd/system/$NAME@.service"
+        if systemd; then sc enable -q "$NAME@$n.service"; else ln -s "/usr/lib/systemd/system/$NAME@.service" "$WANTS_DIR/$NAME@$n.service"; fi
+    done
+fi
 systemd && sc daemon-reload
 
 # Filled in? config.env.example's placeholders are REPLACE...
@@ -269,6 +338,18 @@ else
     else
         echo "  (admin mode, as the user ejabberd; for the client bot on a host without ejabberd set BOT_MODE=client)"
     fi
+fi
+# The running bots for other domains run this binary too: each restarts onto it when its
+# config is filled in.
+if systemd; then
+    for n in $(instances); do
+        u=$NAME@$n.service
+        systemctl is-active -q "$u" || continue
+        if grep -qE '^[A-Z_]+=REPLACE' "$DIR/instances/$n/config.env"; then continue; fi
+        sc restart "$u"
+        sleep 3
+        if systemctl is-active -q "$u"; then note "restarted $u"; else note "WARNING: $u is not running after the restart:  journalctl -u $u -n 20"; fi
+    done
 fi
 if [ "$MODE" = client ] && [ -f "$LGCONF" ] && ! grep -qE "^[[:space:]]*xmpp_outbox[[:space:]]*=[[:space:]]*\"$OUTBOX\"" "$LGCONF"; then
     note "vpsfort doesn't write to this outbox yet. In [notify] of $LGCONF set"

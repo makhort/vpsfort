@@ -203,6 +203,9 @@ impl Default for Retention {
 
 pub struct Bot<E> {
     pub domain: String,
+    /// Every domain this ejabberd serves (`registered_vhosts`), lowercase, `domain` among them.
+    /// A server with several runs one bot per domain (README, "Several domains").
+    pub hosts: Vec<String>,
     pub retention: Retention,
     /// mod_invites' web page, where users sign in and create invitations.
     pub invite_url: String,
@@ -217,9 +220,21 @@ pub struct Bot<E> {
 }
 
 impl<E: Ejabberd> Bot<E> {
-    /// The admin, or someone the admin allowed.
+    /// Whether `sender` (a lowercase bare JID) may use the bot: the admin, on any domain of this
+    /// server (one admin account can run the bots of all of them), and the users of the bot's
+    /// domain the admin allowed. Domains compare exactly: the Python bot's suffix test let
+    /// "evil<domain>" through. Never accounts of other servers: the commands act as ejabberd.
     pub fn may_use(&self, sender: &str) -> bool {
-        sender == self.admin_jid || self.state.can_access_bot(sender)
+        let Some((_, domain)) = sender.split_once('@') else { return false };
+        if sender == self.admin_jid {
+            return self.is_own_domain(domain);
+        }
+        domain == self.domain && self.state.can_access_bot(sender)
+    }
+
+    /// One of the domains this ejabberd serves.
+    pub fn is_own_domain(&self, domain: &str) -> bool {
+        domain == self.domain || self.hosts.iter().any(|h| h == domain)
     }
 
     /// The language the bot uses with `sender`: English for the admin, otherwise the one
@@ -642,11 +657,16 @@ impl<E: Ejabberd> Bot<E> {
             Ok(out) => out,
             Err(e) => return format!("✗ Failed to list connected users: {e}").into(),
         };
-        // jid, connection, ip, port, priority, node, uptime (s), status, resource, text
+        // jid, connection, ip, port, priority, node, uptime (s), status, resource, text; the
+        // server's other domains have bots of their own
+        let ours = |jid: &str| {
+            let bare = jid.split('/').next().unwrap_or("");
+            bare.rsplit_once('@').is_some_and(|(_, d)| d.eq_ignore_ascii_case(&self.domain))
+        };
         let selected: Vec<String> = out
             .lines()
             .map(|l| l.split_whitespace().collect::<Vec<_>>())
-            .filter(|f| f.len() >= 8 && f[7].eq_ignore_ascii_case("available"))
+            .filter(|f| f.len() >= 8 && f[7].eq_ignore_ascii_case("available") && ours(f[0]))
             .map(|f| {
                 let uptime = f[6].parse().map(elapsed_time).unwrap_or_else(|_| f[6].to_string());
                 format!("• {}\n  [{}]{}:{}\n  {uptime}", f[0], f[1], f[2], f[3])

@@ -3,7 +3,9 @@
 # and .post-upgrade). What the bundle's install.sh does less the files the package puts in
 # place: /opt/vpsfort-xmpp-bot and config.env from the template the first time, the owners and
 # modes (everything root's, the bot's group may read, the directory is group-writable for
-# the outbox), the log directory. A running bot is restarted on an upgrade.
+# the outbox), the log directory. A running bot is restarted on an upgrade; so are the bots for
+# the server's other domains (vpsfort-xmpp-bot.<name>, files in $DIR/instances/<name>), whose
+# directories get the same owners and modes.
 NAME=vpsfort-xmpp-bot
 DIR=/opt/$NAME
 # the admin bot runs as ejabberd (BOT_MODE=admin, where ejabberd is); the client bot as its own user
@@ -33,8 +35,24 @@ LOGDIR=$(setting LOG_DIR); LOGDIR=${LOGDIR:-/var/log/$NAME}
 mkdir -p "$LOGDIR"
 chown "$BOT:$BOT" "$LOGDIR"
 chmod 750 "$LOGDIR"
+# the bots for other domains: admin bots, as ejabberd
+if [ "$BOT" = ejabberd ]; then
+    for d in "$DIR"/instances/*/; do
+        [ -f "${d}config.env" ] || continue
+        n=$(basename "$d")
+        chown root:ejabberd "$DIR/instances" "$d" "${d}config.env"
+        chmod 750 "$DIR/instances"
+        chmod 1770 "$d"
+        chmod 640 "${d}config.env"
+        mkdir -p "/var/log/$NAME/$n"
+        chown ejabberd:ejabberd "/var/log/$NAME/$n"
+        chmod 750 "/var/log/$NAME/$n"
+    done
+fi
 if [ "$first" = no ] && command -v rc-service > /dev/null; then
-    for s in vpsfort-xmpp-bot vpsfort-xmpp-bot-client; do
+    for s in vpsfort-xmpp-bot vpsfort-xmpp-bot-client /etc/init.d/vpsfort-xmpp-bot.*; do
+        s=${s##*/}
+        [ "$s" = "vpsfort-xmpp-bot.*" ] && continue   # no instance
         if rc-service "$s" status > /dev/null 2>&1; then
             rc-service "$s" restart || true
             echo "$NAME: restarted $s"

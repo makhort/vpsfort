@@ -315,7 +315,8 @@ enum Cmd {
     },
     /// Audit the kernel's hardening sysctls now (forwarding, redirects, source routing,
     /// rp_filter, SYN cookies, ASLR, kptr_restrict, dmesg_restrict, ptrace_scope, BPF,
-    /// protected links, ...), with the fix for each. Read-only; works without the daemon.
+    /// protected links, ...), with the fix for each, and what the sysctl.d files set at the
+    /// next boot. Read-only; works without the daemon.
     SysctlAudit {
         /// JSON instead of text.
         #[arg(long)]
@@ -323,6 +324,12 @@ enum Cmd {
         /// Also the notes (info), not only high problems and warnings.
         #[arg(short, long)]
         all: bool,
+        /// Only the `key = value` lines that keep every watched sysctl at a good value after a
+        /// reboot, for /etc/sysctl.d/90-hardening.conf: `vpsfort sysctl-audit --conf | tee -a
+        /// /etc/sysctl.d/90-hardening.conf && sysctl --system`. Where such a line can't help
+        /// (a file read after it, apport), stderr says what to do instead.
+        #[arg(long, conflicts_with_all = ["json", "all"])]
+        conf: bool,
     },
     /// List the accounts that can log in over SSH here but [canary] ssh matches: each one's
     /// next login would ban its address (the admin's own, for a gateway user missing from
@@ -1503,13 +1510,27 @@ fn real_main() -> Result<()> {
             }
             Ok(())
         }
-        Cmd::SysctlAudit { json, all } => {
-            let r = vpsfort::sysctlaudit::scan(&cfg.sysctl_audit, vpsfort::time::now());
+        Cmd::SysctlAudit { json, all, conf } => {
+            let now = vpsfort::time::now();
+            let r = vpsfort::sysctlaudit::scan(&cfg.sysctl_audit, now);
+            let safe = |s: &str| vpsfort::event::plain_text(s);
+            if conf {
+                // stdout is the file's lines only (keys are the audit's own, values numbers)
+                for n in &r.keep_notes {
+                    eprintln!("note: {}", safe(n));
+                }
+                if !r.keep.is_empty() {
+                    println!("# vpsfort sysctl-audit --conf, {} UTC", vpsfort::time::fmt_ts(now));
+                    for (k, v) in &r.keep {
+                        println!("{k} = {v}");
+                    }
+                }
+                return Ok(());
+            }
             if json {
                 println!("{}", serde_json::to_string_pretty(&r)?);
                 return Ok(());
             }
-            let safe = |s: &str| vpsfort::event::plain_text(s);
             println!("sysctl audit: {}", safe(&r.summary()));
             for e in &r.errors {
                 println!("  cannot read: {}", safe(e));
@@ -1524,6 +1545,15 @@ fn real_main() -> Result<()> {
             let notes = r.issues.iter().filter(|i| i.severity < vpsfort::engine::Severity::Warning).count();
             if !all && notes > 0 {
                 println!("\n(+{notes} notes: --all shows them; [sysctl_audit] ignore = [\"key\"] hides any)");
+            }
+            // right now, but only by the kernel's default or a `sysctl -w` since the boot
+            let unkept = r.keep.keys().filter(|k| !r.issues.iter().any(|i| &i.id == *k)).count();
+            if unkept > 0 {
+                let n = if unkept == 1 { "1 more sysctl is".to_string() } else { format!("{unkept} more sysctls are") };
+                println!(
+                    "\n({n} right, but no sysctl.d file sets them: a reboot leaves them to the kernel's defaults. \
+                     --conf prints the lines that keep them all)"
+                );
             }
             if !cfg.sysctl_audit.enabled {
                 println!("\n([sysctl_audit] is disabled: the daemon doesn't run this)");

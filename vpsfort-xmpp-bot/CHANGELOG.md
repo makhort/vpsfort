@@ -3,6 +3,16 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.7.0 - 2026-11-07
+
+Several domains on one ejabberd.
+
+- One admin bot per domain: `install.sh --instance <name>` sets up `vpsfort-xmpp-bot@<name>.service`, the same binary with its own config, state, OMEMO keys, outbox and log under `/opt/vpsfort-xmpp-bot/instances/<name>/` and `/var/log/vpsfort-xmpp-bot/<name>/`. Upgrades, rollbacks and the packages cover every instance; Alpine runs one as the link `vpsfort-xmpp-bot.<name>`.
+- The admin may be an account on any domain of the server (read from `registered_vhosts` at the start), so one admin account runs all the bots; accounts on other servers still get no commands.
+- A bot won't start (exit 78) on a state directory, OMEMO store or outbox that another running bot uses, and `install.sh` refuses two bots on one account or one directory.
+- `/block_domain` refuses each of the server's domains, and `/online` lists only the bot's own domain's users.
+- `config.env.example` leaves `BOT_STATE_PATH` and `LOG_DIR` to the defaults, which are the same as before.
+
 ## 0.6.1 - 2026-11-06
 
 Fixes.

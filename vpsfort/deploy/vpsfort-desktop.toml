@@ -155,7 +155,8 @@ ignore = []
 # rp_filter, SYN cookies, ASLR, kptr_restrict, dmesg_restrict, ptrace_scope, unprivileged BPF,
 # protected links, suid_dumpable, ...) against good practice. The first reading tells
 # everything; then a new or weakened one is an alert. `vpsfort sysctl-audit` shows all,
-# with the sysctl line to set. Forwarding is a note where a VPN, container or bridge
+# with the line to set, and what the sysctl.d files set at the next boot (`--conf`: the
+# lines that keep them all). Forwarding is a note where a VPN, container or bridge
 # interface exists.
 enabled = true
 interval = "1h"

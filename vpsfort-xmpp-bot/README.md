@@ -6,7 +6,8 @@ An XMPP bot for vpsfort, in one of two modes (`BOT_MODE` in `config.env`):
   before the rename below), on the XMPP server itself: the same chat commands over `ejabberdctl`
   for the admin and users, the same `state.json`, the same `config.env`, plus vpsfort's alerts
   and weekly report for the admin (vpsfort's `[notify] bot_outbox`, with vpsfort's plain-text
-  fallback). Most of this README is about it.
+  fallback). Most of this README is about it. An ejabberd with several domains runs one per
+  domain ("Several domains" below).
 - **client**: a copy bot like vpsfort-tg-bot or vpsfort-matrix-bot, on any host (a VPN server,
   a relay node, a desktop with vpsfort's desktop profile) with an account on any XMPP server. It
   only sends vpsfort's alerts, daily digest and weekly abuse report to its admin, OMEMO-encrypted,
@@ -24,11 +25,12 @@ OMEMO code and trust pins, the no-archive hints and the outbox format.
 3. [Alerts from vpsfort](#alerts-from-vpsfort)
 4. [Weekly abuse report](#weekly-abuse-report)
 5. [Client mode](#client-mode)
-6. [Connection drops (sleep, Wi-Fi, server restarts)](#connection-drops-sleep-wi-fi-server-restarts)
-7. [Install from a release bundle](#install-from-a-release-bundle)
-8. [Install from a package](#install-from-a-package)
-9. [Build, test, deploy](#build-test-deploy)
-10. [Settings](#settings)
+6. [Several domains](#several-domains)
+7. [Connection drops (sleep, Wi-Fi, server restarts)](#connection-drops-sleep-wi-fi-server-restarts)
+8. [Install from a release bundle](#install-from-a-release-bundle)
+9. [Install from a package](#install-from-a-package)
+10. [Build, test, deploy](#build-test-deploy)
+11. [Settings](#settings)
 
 ## What changed from the Python bot
 
@@ -370,7 +372,94 @@ and `systemctl restart vpsfort`, `vpsfort -c /etc/vpsfort/vpsfort.toml notify-te
 
 Switching an existing install between the modes: change `BOT_MODE` and run `install.sh`; it
 moves the files to the other mode's user. The OMEMO device stays the same if the bot's account
-does. One vpsfort-xmpp-bot per host: vpsfort refuses `bot_outbox` and `xmpp_outbox` together.
+does. One vpsfort-xmpp-bot in client mode per host: vpsfort refuses `bot_outbox` and
+`xmpp_outbox` together. (Several admin bots on one XMPP server: "Several domains".)
+
+## Several domains
+
+An ejabberd with several domains (`hosts:` in `ejabberd.yml`, e.g. while its users move from
+an old domain to a new one) runs one admin bot per domain. Each domain's users get a bot on
+their own domain (`bot@example.org`, `bot@example.net`) that works on that domain's accounts,
+announcements, message of the day, invite page and database. The first domain's bot is the
+usual `vpsfort-xmpp-bot.service`. Each further one is an instance of the template unit
+`vpsfort-xmpp-bot@.service`, running the same binary with files of its own:
+
+| | The first domain | Another domain (`<name>`) |
+|---|---|---|
+| Unit | `vpsfort-xmpp-bot.service` | `vpsfort-xmpp-bot@<name>.service` |
+| Config | `/opt/vpsfort-xmpp-bot/config.env` | `/opt/vpsfort-xmpp-bot/instances/<name>/config.env` |
+| State, OMEMO keys and pins, outbox | `/opt/vpsfort-xmpp-bot/` | `/opt/vpsfort-xmpp-bot/instances/<name>/` |
+| Log | `/var/log/vpsfort-xmpp-bot/bot.log` | `/var/log/vpsfort-xmpp-bot/<name>/bot.log` |
+
+As root on the XMPP server, once this version of the bot is installed (the name: lower-case
+letters, digits, `.`, `_` and `-`; the domain is a good one):
+
+```bash
+ejabberdctl register bot example.net 'a long random password'   # the second bot's own account
+bash /opt/vpsfort-xmpp-bot/install.sh --instance example.net     # its config from the template; not started
+sudoedit /opt/vpsfort-xmpp-bot/instances/example.net/config.env  # BOT_JID, BOT_PASSWORD, ADMIN_JID, XMPP_DOMAIN, EJABBERD_DB
+bash /opt/vpsfort-xmpp-bot/install.sh --instance example.net     # checks it, then enables and starts vpsfort-xmpp-bot@example.net
+```
+
+From an unzipped bundle, `sudo ./install.sh --instance example.net` does the same. Add the
+account to ejabberd's `protected_accounts` like the first bot's, and the instance's unit to
+vpsfort's `[sources] services` (`"vpsfort-xmpp-bot@example.net.service"`), so vpsfort tells you
+when it stops for good.
+
+- **Each bot has its own account and files.** `install.sh` refuses an instance whose `BOT_JID`
+  is another bot's: two logins as one JID and resource push each other out, and the reconnects
+  look like an attack to mod_fail2ban and vpsfort. It also refuses one whose state directory,
+  OMEMO store or outbox is another bot's. The bot itself won't start (exit 78) on a directory
+  another running bot holds, e.g. with `BOT_STATE_PATH` copied over from the first bot's
+  `config.env`: it locks its state directory, OMEMO store and outbox (flock) while it runs.
+  Each bot has its own OMEMO device, so users pin each bot's key on its own.
+- **The admin may be on any of the server's domains.** At its start the bot reads the
+  server's domains (`ejabberdctl registered_vhosts`). Its `ADMIN_JID` may be an account on any
+  of them, so one admin account can run all the bots. An account on another server never gets
+  the commands (the bot warns at its start). Users get a bot only on their own domain:
+  `/allow alice` in the example.net bot allows `alice@example.net`.
+- **Per domain:** the account commands (`/add`, `/remove`, `/list`, `/ban`, …), `/online` (the
+  domain's users only), `/announce`, `/warn` and `/maintenance` (run them in each bot to reach
+  everyone), the message of the day, `/spam_domains` (mod_antispam keeps a list per domain),
+  the purges, `/privacy`, `/invite`'s page (`INVITE_URL`, default
+  `https://<domain>:5281/invites`) and `/export` (`EJABBERD_DB`: the domain's own
+  `sql_database`, from `host_config` in `ejabberd.yml`).
+- **Server-wide**, whichever bot runs it: `/restart` (ejabberd's `restart_kindly` tells
+  everyone online, on every domain; one at a time), `/reload_config`, `/status`, `/certs`,
+  `/unban_ip`. `/block_domain` refuses each of the server's own domains.
+- **vpsfort's alerts go through one bot.** vpsfort's `[notify] bot_outbox` names one outbox:
+  keep it the first bot's (`/opt/vpsfort-xmpp-bot/outbox`, where the weekly abuse report goes
+  too), with its `ADMIN_JID` in `[notify] admins`. vpsfort sends a message for an admin that
+  bot doesn't serve itself, in plain text ("Admin only" above).
+- **Upgrades and rollbacks cover all bots.** They run the same binary: `install.sh` (and the
+  command `deploy.sh` prints) restarts each running instance after the first bot, and reports
+  one that doesn't come back without stopping. `install.sh rollback` takes every bot back to the
+  previous version. A package upgrade restarts the running instances too.
+- **Removing one:** `systemctl disable --now vpsfort-xmpp-bot@example.net`, then remove
+  `/opt/vpsfort-xmpp-bot/instances/example.net` and `/var/log/vpsfort-xmpp-bot/example.net`
+  (its OMEMO keys go with them), and the account if it goes too
+  (`ejabberdctl unregister bot example.net`).
+
+**From a package** there is no `install.sh`: the template unit is in `/usr/lib/systemd/system`,
+and the directory is made by hand. Its `config.env` leaves `BOT_STATE_PATH` and `LOG_DIR` to the
+unit's defaults (the instance's directory and log directory):
+
+```bash
+sudo install -d -o root -g ejabberd -m 0750 /opt/vpsfort-xmpp-bot/instances
+sudo install -d -o root -g ejabberd -m 1770 /opt/vpsfort-xmpp-bot/instances/example.net
+sudo install -o root -g ejabberd -m 0640 /opt/vpsfort-xmpp-bot/config.env.example /opt/vpsfort-xmpp-bot/instances/example.net/config.env
+sudoedit /opt/vpsfort-xmpp-bot/instances/example.net/config.env
+sudo dpkg-reconfigure vpsfort-xmpp-bot       # the owners, outbox and log directory of each instance (rpm: dnf reinstall ./vpsfort-xmpp-bot-*.rpm)
+sudo systemctl enable --now vpsfort-xmpp-bot@example.net
+```
+
+On Alpine the same directory and config, then a link named after the instance:
+`ln -s vpsfort-xmpp-bot /etc/init.d/vpsfort-xmpp-bot.example.net`, and
+`rc-update add vpsfort-xmpp-bot.example.net default && rc-service vpsfort-xmpp-bot.example.net start`.
+
+Not yet run on a server. CI's bundle install on the runner makes an instance's config, and its
+`.deb` install checks that the package takes the bundle's template unit over and keeps the
+instance.
 
 ## Connection drops (sleep, Wi-Fi, server restarts)
 
@@ -434,9 +523,9 @@ Without a Rust toolchain: every version tag `vpsfort-xmpp-bot-v<version>` gets i
 
 ```bash
 arch=x86_64-linux-musl     # the server's: aarch64-linux-musl (arm64), armv7-linux-musleabihf (32-bit ARM)
-gh release download vpsfort-xmpp-bot-v0.6.1 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
+gh release download vpsfort-xmpp-bot-v0.7.0 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
 sha256sum -c vpsfort-xmpp-bot-*-$arch.zip.sha256              # the download is intact (macOS: shasum -a 256 -c)
-gh attestation verify vpsfort-xmpp-bot-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-xmpp-bot-v0.6.1
+gh attestation verify vpsfort-xmpp-bot-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-xmpp-bot-v0.7.0
 ```
 
 `gh attestation verify` (after `gh auth login`) checks the signed build provenance: that this repository's CI built exactly this zip from that tag. With `--bundle vpsfort-xmpp-bot-*-$arch.zip.sigstore.json` it checks the attestation attached to the Release instead of fetching it from GitHub. Only a public repository's releases have one (GitHub offers attestations for private repositories only with Enterprise Cloud).
@@ -450,6 +539,7 @@ sudo ./install.sh          # first time: installs the bot with /opt/vpsfort-xmpp
 sudoedit /opt/vpsfort-xmpp-bot/config.env                     # the bot's account, ADMIN_JID, XMPP_DOMAIN ("Settings")
 sudo ./install.sh          # starts the bot (or: systemctl enable --now vpsfort-xmpp-bot); later: upgrades it
 sudo ./install.sh rollback # back to the previous version
+sudo ./install.sh --instance example.net   # the bot for another domain of this ejabberd ("Several domains")
 ```
 
 It doesn't start the bot while `config.env` still holds `REPLACE…` placeholders. It checks every file against `SHA256SUMS` in a copy only root can write, then runs the same `install.sh` as `deploy.sh` below (`./install.sh --check` only checks the files). Without `--client`, the first install takes the admin template where the user `ejabberd` exists and the client template elsewhere. An existing `/opt/xmpp-bot` (the bot's old name) is moved over as with `deploy.sh`.
@@ -459,12 +549,12 @@ It doesn't start the bot while `config.env` still holds `REPLACE…` placeholder
 The same release has a package per architecture, for the distribution's package manager instead of `install.sh`: `vpsfort-xmpp-bot_<version>-1_<arch>.deb` (`amd64`, `arm64`, `armhf`; Debian, Ubuntu and their derivatives) `vpsfort-xmpp-bot-<version>-1.<arch>.rpm` (`x86_64`, `aarch64`, `armv7hl`; Fedora, RHEL and its rebuilds) and `vpsfort-xmpp-bot-<version>-r0.<arch>.apk` (`x86_64`, `aarch64`, `armv7`; Alpine, with OpenRC: below), each with its `.sha256` and `.sigstore.json`, downloaded and verified as the bundle above (`--pattern "*.deb*"`, `"*.rpm*"` or `"*.apk*"`). CI keeps them for every commit as workflow artifacts, and `scripts/package.sh` builds them locally (`cargo install cargo-deb cargo-generate-rpm --locked` once, and python3 for the `.apk`, which `scripts/apk.py` at the repository's root writes; none needs dpkg, rpm or apk-tools, so it runs on macOS too; `--target aarch64-unknown-linux-musl` or `armv7-unknown-linux-musleabihf` for the ARM ones). Or from the signed apt and dnf repository on GitHub Pages, once it is set up (the repository README, "Deployment"), where `apt upgrade` and `dnf upgrade` then bring new versions.
 
 ```bash
-sudo apt install ./vpsfort-xmpp-bot_0.6.1-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-xmpp-bot-0.6.1-1.x86_64.rpm
+sudo apt install ./vpsfort-xmpp-bot_0.7.0-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-xmpp-bot-0.7.0-1.x86_64.rpm
 sudoedit /opt/vpsfort-xmpp-bot/config.env                  # the first install put the template there ("Settings")
 sudo systemctl enable --now vpsfort-xmpp-bot               # admin mode; client mode:  vpsfort-xmpp-bot-client
 ```
 
-The package puts the same files in the same places as `install.sh` (`/opt/vpsfort-xmpp-bot` with the binary and both templates, `/var/log/vpsfort-xmpp-bot`), with two units in `/usr/lib/systemd/system`: `vpsfort-xmpp-bot.service` for the admin bot (as the user ejabberd, on the XMPP server) and `vpsfort-xmpp-bot-client.service` for the client bot (`BOT_MODE=client`, its own user `vpsfort-xmpp-bot`, any host); you enable the one for the mode in `config.env`. The first install takes the admin template where the user `ejabberd` exists and the client template elsewhere. The post-install step does what `install.sh` does apart from copying files: the client mode's user, `config.env` the first time, the owners and modes for the mode's user, the outbox and the log directory, the logrotate rules for the mode (`/etc/logrotate.d/vpsfort-xmpp-bot`, and in admin mode `ejabberd-logs`, written from the copies in `/usr/share/vpsfort-xmpp-bot`), and the canary and `CTL_OVER_HTTP` checks as warnings. It refuses nothing: with `BOT_MODE=admin` and no user `ejabberd` it only says so. Switching modes: change `BOT_MODE`, run `dpkg-reconfigure vpsfort-xmpp-bot` (rpm: `dnf reinstall ./vpsfort-xmpp-bot-*.rpm`), then disable one unit and enable the other. In vpsfort's `[sources] services`, the client bot is `vpsfort-xmpp-bot-client.service`. `apt remove` stops the bot and keeps `/opt/vpsfort-xmpp-bot`; `apt purge` removes it with the state, OMEMO keys and pins, and the logrotate rules it wrote (rpm: by hand).
+The package puts the same files in the same places as `install.sh` (`/opt/vpsfort-xmpp-bot` with the binary and both templates, `/var/log/vpsfort-xmpp-bot`), with three units in `/usr/lib/systemd/system`: `vpsfort-xmpp-bot.service` for the admin bot (as the user ejabberd, on the XMPP server), `vpsfort-xmpp-bot-client.service` for the client bot (`BOT_MODE=client`, its own user `vpsfort-xmpp-bot`, any host), and the template `vpsfort-xmpp-bot@.service` for the admin bots of a server's other domains ("Several domains"); you enable the one for the mode in `config.env`. The first install takes the admin template where the user `ejabberd` exists and the client template elsewhere. The post-install step does what `install.sh` does apart from copying files: the client mode's user, `config.env` the first time, the owners and modes for the mode's user, the outbox and the log directory, the logrotate rules for the mode (`/etc/logrotate.d/vpsfort-xmpp-bot`, and in admin mode `ejabberd-logs`, written from the copies in `/usr/share/vpsfort-xmpp-bot`), and the canary and `CTL_OVER_HTTP` checks as warnings. It refuses nothing: with `BOT_MODE=admin` and no user `ejabberd` it only says so. Switching modes: change `BOT_MODE`, run `dpkg-reconfigure vpsfort-xmpp-bot` (rpm: `dnf reinstall ./vpsfort-xmpp-bot-*.rpm`), then disable one unit and enable the other. In vpsfort's `[sources] services`, the client bot is `vpsfort-xmpp-bot-client.service`. `apt remove` stops the bot and keeps `/opt/vpsfort-xmpp-bot`; `apt purge` removes it with the state, OMEMO keys and pins, and the logrotate rules it wrote (rpm: by hand).
 
 **Nothing starts on its own.** The first install puts the template in place and prints what to fill in; you enable the service once it is filled in. An upgrade keeps the config and restarts the service only if it was running and the config is filled in. **Over a bundle or `deploy.sh` install** the package takes over: the config, state and keys stay; the bundle's unit in `/etc/systemd/system` (it would shadow the package's) and its rollback files go, and the service is enabled again on the package's unit if it was (vpsfort's integrity watch reports the removed unit as a warning once). **Replacing the config:** when a terminal is there, the install asks whether to replace the config with the new template (the old one kept with the suffix `.old`); Enter, a timeout of a minute, no terminal or `DEBIAN_FRONTEND=noninteractive` keep it. `VPSFORT_PACKAGE_CONFIG=replace` (or `keep`) answers without asking: `sudo VPSFORT_PACKAGE_CONFIG=replace apt install ./<file>.deb`. **Rollback** is installing the previous version's package (`apt install ./<old>.deb --allow-downgrades`, `dnf downgrade ./<old>.rpm`): there is no `.prev` file. A bundle's client-mode install ran under the admin unit's name; the takeover enables `vpsfort-xmpp-bot-client.service` instead.
 
@@ -546,8 +636,8 @@ SHA-256). The one-off script that migrated the plain-text passwords
 (`ejabberd_scram_migration.py`) ran on 2026-10 and was retired with its backups; it is in
 the git history.
 
-`install.sh` keeps the previous binary and unit (`vpsfort-xmpp-bot.prev`, `vpsfort-xmpp-bot.service.prev`)
-for `rollback` (only while the running version runs cleanly), backs up `state.json`,
+`install.sh` keeps the previous binary and units (`vpsfort-xmpp-bot.prev`, `vpsfort-xmpp-bot.service.prev`,
+`vpsfort-xmpp-bot@.service.prev`) for `rollback` (only while the running version runs cleanly), backs up `state.json`,
 installs a logrotate rule for `/var/log/vpsfort-xmpp-bot/bot.log` (weekly, one old copy: 14 days
 at most, as `/privacy` says; older copies are deleted). The bot logs only there, not to
 systemd's journal, which would keep the lines longer (`tail -f /var/log/vpsfort-xmpp-bot/bot.log`
@@ -577,6 +667,7 @@ It also sets owners and modes, so the bot can change only what it has to:
 | `state.json`, `omemo.json` | ejabberd | 600 |
 | `/var/log/vpsfort-xmpp-bot/`, `bot.log` | ejabberd | 700, 600 |
 | `outbox/` (the weekly report waiting to be sent) | root:ejabberd | 1770; files ejabberd 600 |
+| `instances/` (the bots for other domains), and in it each `<name>/` with the files above | root:ejabberd | 750; 1770 |
 
 After editing `omemo-trust.txt` as root, keep it `root:ejabberd 640`; the bot trusts no key
 while others than root can write it.
@@ -592,7 +683,8 @@ delay) carries on when the bot restarts; a second one is refused while it runs.
 `BOT_MODE` (`admin`, the default, or `client`). Since 2026-10-26 `XMPP_SERVER` (unset: the JID's
 domain through SRV records), `XMPP_DOMAIN` (unset: the JID's domain), `XMPP_PORT` (unset: 5222,
 or 5223 with `XMPP_TLS=direct`), `BOT_NAME` (`vpsfort`) and `BOT_STATE_PATH`
-(`/opt/vpsfort-xmpp-bot/state.json`) have defaults, and `ALLOW_SCRAM_SHA1` (no) is new; client
+(`/opt/vpsfort-xmpp-bot/state.json`; an instance's: `state.json` in its own directory, see
+"Several domains") have defaults, and `ALLOW_SCRAM_SHA1` (no) is new; client
 mode adds `OPENPGP_KEY` and `ALERT_MAX_HOURS` (24) and uses the OMEMO, upload and outbox settings
 below.
 

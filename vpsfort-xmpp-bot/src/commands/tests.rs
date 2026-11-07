@@ -75,6 +75,7 @@ fn bot(name: &str, accounts: &[&str]) -> Bot<Fake> {
     ctl.accounts.borrow_mut().extend(accounts.iter().map(|s| s.to_string()));
     Bot {
         domain: "example.org".into(),
+        hosts: vec!["example.org".into()],
         retention: Retention::default(),
         invite_url: "https://example.org:5281/invites".into(),
         admin_jid: ADMIN.into(),
@@ -270,7 +271,8 @@ async fn listings() {
     b.ctl.outputs.insert(
         "connected_users_info",
         Ok("alice@example.org/phone c2s_tls 1.2.3.4 5555 0 ejabberd@node 3700 available phone\n\
-            bob@example.org/pc c2s_tls 5.6.7.8 6666 0 ejabberd@node 10 away pc"
+            bob@example.org/pc c2s_tls 5.6.7.8 6666 0 ejabberd@node 10 away pc\n\
+            carol@example.net/pc c2s_tls 192.0.2.9 6667 0 ejabberd@node 10 available pc"
             .into()),
     );
     assert_eq!(
@@ -522,6 +524,29 @@ async fn spam_domains() {
     assert_eq!(say(&mut b, ADMIN, "/unblock_domain spam.example").await.unwrap(), "✓ 'spam.example' unblocked.");
     assert_eq!(say(&mut b, ADMIN, "/block_domain example.org").await.unwrap(), "✗ Can not block this server's own domain.");
     assert_eq!(say(&mut b, ADMIN, "/block_domain nodot").await.unwrap(), "✗ Not a domain name.");
+    // a server with two domains: neither blocks the other
+    b.hosts = vec!["example.org".into(), "example.net".into()];
+    assert_eq!(say(&mut b, ADMIN, "/block_domain Example.NET").await.unwrap(), "✗ Can not block this server's own domain.");
+    assert_eq!(last_call(&b), ["remove_blocked_domain", "example.org", "spam.example"], "nothing ran");
+}
+
+/// A server with two domains, one bot each: the admin's account on either domain runs both
+/// bots; users only their own domain's, and nobody on another server.
+#[tokio::test]
+async fn the_admin_may_be_on_another_domain_of_this_server() {
+    let mut b = bot("hosts", &["alice"]);
+    b.hosts = vec!["example.org".into(), "example.net".into()];
+    b.admin_jid = "admin@example.net".into();
+    assert!(say(&mut b, "admin@example.net", "/help").await.unwrap().starts_with("*Accounts*"));
+    assert_eq!(say(&mut b, ADMIN, "/help").await, None, "the same name on this domain is a user");
+    assert_eq!(say(&mut b, "admin@example.net", "/allow alice").await.unwrap(), "✓ User 'alice' now has access to bot (language: EN).");
+    assert!(b.may_use(ALICE));
+    // alice's namesake on the other domain is not alice
+    assert!(!b.may_use("alice@example.net"));
+    // an admin on another server takes no commands, even if named in ADMIN_JID
+    b.admin_jid = "admin@elsewhere.example".into();
+    assert_eq!(say(&mut b, "admin@elsewhere.example", "/help").await, None);
+    assert!(!b.may_use("example.org"), "a server's own JID");
 }
 
 #[tokio::test]

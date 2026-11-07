@@ -1,6 +1,7 @@
 # The bot keeps bot.log open (appending), so it is copied and truncated in place.
 # Rotated weekly, one old copy kept: no line is older than 14 days (/privacy says so).
-/var/log/vpsfort-xmpp-bot/bot.log {
+# The second path: the logs of the bots for a server's other domains (vpsfort-xmpp-bot@<name>).
+/var/log/vpsfort-xmpp-bot/bot.log /var/log/vpsfort-xmpp-bot/*/bot.log {
     su ejabberd ejabberd
     weekly
     rotate 1

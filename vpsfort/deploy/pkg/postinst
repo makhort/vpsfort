@@ -156,18 +156,44 @@ fi
 chmod 0600 /var/lib/vpsfort/state.json "$CONF" "$CONF.new" 2> /dev/null || true
 chmod 0640 /var/log/vpsfort/actions.jsonl* 2> /dev/null || true
 
+# The peers' rules (one per line), each shown and applied unless it is in place already: every
+# upgrade runs them again, and firewalld answered each one with a warning (ALREADY_ENABLED),
+# ufw with "Skipping adding existing rule". firewalld reloads only when its running rules lack
+# one; a reload also forgets vpsfort's runtime bans until the restart below puts them back.
+firewalld_rules() {
+    local rule query reload=0
+    while read -r rule; do
+        [ -n "$rule" ] || continue
+        query=${rule/--add-rich-rule=/--query-rich-rule=}
+        if [ "$query" != "$rule" ] && eval "$query" > /dev/null 2>&1; then
+            eval "${query/--permanent /}" > /dev/null 2>&1 || reload=1
+            continue
+        fi
+        echo "  + $rule"
+        eval "$rule" > /dev/null || true
+        reload=1
+    done <<< "$1"
+    if [ "$reload" = 1 ]; then firewall-cmd --reload > /dev/null || true; fi
+}
+ufw_rules() {
+    local rule out
+    while read -r rule; do
+        [ -n "$rule" ] || continue
+        out=$(eval "$rule" 2>&1) || true
+        if [ -n "$out" ] && ! grep -qv '^Skipping adding existing rule' <<< "$out"; then continue; fi
+        echo "  + $rule"
+        if [ -n "$out" ]; then sed 's/^/    /' <<< "$out"; fi
+    done <<< "$1"
+}
+
 if [ "$valid" = yes ]; then
     # The cluster port for the peers, as the bundle's install.sh opens it (ufw: the rules are
     # applied; firewalld: rich rules in the default zone; plain iptables: only suggested).
     # A peer that is still a template's documentation address gets none: vpsfort says so.
     if command -v firewall-cmd > /dev/null && firewall-cmd --state > /dev/null 2>&1; then
-        rules=$("$BIN" --config "$CONF" cluster-ufw-rules --firewalld || true)
-        if [ -n "$rules" ]; then
-            echo "$rules" | while read -r rule; do echo "  + $rule"; eval "$rule" > /dev/null || true; done
-            firewall-cmd --reload > /dev/null || true
-        fi
+        firewalld_rules "$("$BIN" --config "$CONF" cluster-ufw-rules --firewalld || true)"
     elif command -v ufw > /dev/null; then
-        "$BIN" --config "$CONF" cluster-ufw-rules | while read -r rule; do echo "  + $rule"; eval "$rule" || true; done
+        ufw_rules "$("$BIN" --config "$CONF" cluster-ufw-rules || true)"
     else
         rules=$("$BIN" --config "$CONF" cluster-ufw-rules --iptables || true)
         if [ -n "$rules" ]; then

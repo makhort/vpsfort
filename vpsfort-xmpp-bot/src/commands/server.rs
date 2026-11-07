@@ -416,7 +416,8 @@ impl<E: Ejabberd> Bot<E> {
         if !is_domain(&domain) {
             return "✗ Not a domain name.".into();
         }
-        if domain == self.domain {
+        // nor the server's other domains: their users would lose this one's
+        if self.is_own_domain(&domain) {
             return "✗ Can not block this server's own domain.".into();
         }
         let command = if block { "add_blocked_domain" } else { "remove_blocked_domain" };

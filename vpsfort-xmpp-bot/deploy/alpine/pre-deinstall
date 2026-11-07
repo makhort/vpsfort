@@ -1,9 +1,12 @@
 #!/bin/sh
 # vpsfort-xmpp-bot's Alpine package, before its files are removed (apk runs this as .pre-deinstall;
-# an upgrade runs .pre-upgrade instead). The service stops and leaves the boot runlevel;
-# /opt/vpsfort-xmpp-bot (config.env, keys, the outbox) and the log stay.
+# an upgrade runs .pre-upgrade instead). The service stops and leaves the boot runlevel, and so
+# do the bots for other domains (the links vpsfort-xmpp-bot.<name>, which stay behind);
+# /opt/vpsfort-xmpp-bot (config.env, keys, the outbox, the instances) and the logs stay.
 if command -v rc-service > /dev/null; then
-    for s in vpsfort-xmpp-bot vpsfort-xmpp-bot-client; do
+    for s in vpsfort-xmpp-bot vpsfort-xmpp-bot-client /etc/init.d/vpsfort-xmpp-bot.*; do
+        s=${s##*/}
+        [ "$s" = "vpsfort-xmpp-bot.*" ] && continue   # no instance
         rc-service "$s" stop > /dev/null 2>&1 || true
         rc-update del "$s" default > /dev/null 2>&1 || true
     done

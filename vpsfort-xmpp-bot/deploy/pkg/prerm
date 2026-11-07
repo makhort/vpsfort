@@ -1,11 +1,17 @@
 #!/bin/bash
 # vpsfort-xmpp-bot's package, before its files are removed. dpkg runs it as  prerm remove|
 # upgrade..., rpm as %preun with 0 (removal) or 1 (upgrade): the same script for both. On
-# removal the bot stops, whichever mode's unit runs it; an upgrade keeps it running (postinst
-# restarts it).
+# removal the bot stops, whichever mode's unit runs it, and so do the bots for the server's
+# other domains (vpsfort-xmpp-bot@<name>); an upgrade keeps them running (postinst restarts them).
 set -eu
 case ${1:-} in remove | 0) ;; *) exit 0 ;; esac
 if [ -d /run/systemd/system ] && command -v systemctl > /dev/null; then
     systemctl disable --now -q vpsfort-xmpp-bot.service vpsfort-xmpp-bot-client.service 2> /dev/null || true
+    for d in /opt/vpsfort-xmpp-bot/instances/*/; do
+        [ -d "$d" ] || continue
+        systemctl disable --now -q "vpsfort-xmpp-bot@$(basename "$d").service" 2> /dev/null || true
+    done
+    # and any started by hand without a directory of its own
+    systemctl stop 'vpsfort-xmpp-bot@*.service' 2> /dev/null || true
 fi
 exit 0

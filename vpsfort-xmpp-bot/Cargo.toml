@@ -1,6 +1,6 @@
 [package]
 name = "vpsfort-xmpp-bot"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2021"
 description = "XMPP bot for vpsfort: an admin bot exposing curated ejabberdctl commands, or a client bot sending vpsfort's admin messages OMEMO-encrypted, else as OpenPGP files"
 license = "MIT"
@@ -72,6 +72,7 @@ assets = [
     ["target/package/stage/config-client.env.example", "opt/vpsfort-xmpp-bot/", "644"],
     ["target/package/stage/vpsfort-xmpp-bot.service", "usr/lib/systemd/system/", "644"],
     ["target/package/stage/vpsfort-xmpp-bot-client.service", "usr/lib/systemd/system/", "644"],
+    ["target/package/stage/vpsfort-xmpp-bot@.service", "usr/lib/systemd/system/", "644"],
     ["target/package/stage/vpsfort-xmpp-bot.logrotate", "usr/share/vpsfort-xmpp-bot/", "644"],
     ["target/package/stage/ejabberd-logs.logrotate", "usr/share/vpsfort-xmpp-bot/", "644"],
     ["README.md", "usr/share/doc/vpsfort-xmpp-bot/", "644"],
@@ -94,6 +95,7 @@ assets = [
     { source = "target/package/stage/config-client.env.example", dest = "/opt/vpsfort-xmpp-bot/config-client.env.example", mode = "644" },
     { source = "target/package/stage/vpsfort-xmpp-bot.service", dest = "/usr/lib/systemd/system/vpsfort-xmpp-bot.service", mode = "644" },
     { source = "target/package/stage/vpsfort-xmpp-bot-client.service", dest = "/usr/lib/systemd/system/vpsfort-xmpp-bot-client.service", mode = "644" },
+    { source = "target/package/stage/vpsfort-xmpp-bot@.service", dest = "/usr/lib/systemd/system/vpsfort-xmpp-bot@.service", mode = "644" },
     { source = "target/package/stage/vpsfort-xmpp-bot.logrotate", dest = "/usr/share/vpsfort-xmpp-bot/vpsfort-xmpp-bot.logrotate", mode = "644" },
     { source = "target/package/stage/ejabberd-logs.logrotate", dest = "/usr/share/vpsfort-xmpp-bot/ejabberd-logs.logrotate", mode = "644" },
     { source = "README.md", dest = "/usr/share/doc/vpsfort-xmpp-bot/README.md", mode = "644", doc = true },

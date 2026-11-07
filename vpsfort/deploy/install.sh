@@ -109,25 +109,49 @@ if command -v nft > /dev/null; then
     fi
 fi
 
+# The peers' rules (one per line), each shown and applied unless it is in place already: every
+# upgrade runs them again, and firewalld answered each one with a warning (ALREADY_ENABLED),
+# ufw with "Skipping adding existing rule". firewalld reloads only when its running rules lack
+# one. A rule that fails stops the install, as before.
+firewalld_rules() {
+    local rule query reload=0
+    while read -r rule; do
+        [ -n "$rule" ] || continue
+        query=${rule/--add-rich-rule=/--query-rich-rule=}
+        if [ "$query" != "$rule" ] && eval "$query" > /dev/null 2>&1; then
+            eval "${query/--permanent /}" > /dev/null 2>&1 || reload=1
+            continue
+        fi
+        echo "+ $rule"
+        eval "$rule" > /dev/null
+        reload=1
+    done <<< "$1"
+    if [ "$reload" = 1 ]; then firewall-cmd --reload > /dev/null; fi
+}
+ufw_rules() {
+    local rule out rc
+    while read -r rule; do
+        [ -n "$rule" ] || continue
+        rc=0
+        out=$(eval "$rule" 2>&1) || rc=$?
+        if [ "$rc" = 0 ] && [ -n "$out" ] && ! grep -qv '^Skipping adding existing rule' <<< "$out"; then continue; fi
+        echo "+ $rule"
+        if [ -n "$out" ]; then echo "$out"; fi
+        if [ "$rc" != 0 ]; then return "$rc"; fi
+    done <<< "$1"
+}
+
 if command -v firewall-cmd > /dev/null && firewall-cmd --state > /dev/null 2>&1; then
     # firewalld (Fedora, RHEL): the peers' rich rules in the default zone, kept across reloads
     rules=$(/usr/local/bin/vpsfort --config /etc/vpsfort/vpsfort.toml cluster-ufw-rules --firewalld)
-    if [ -n "$rules" ]; then
-        echo "$rules" | while read -r rule; do
-            echo "+ $rule"
-            eval "$rule" > /dev/null
-        done
-        firewall-cmd --reload > /dev/null
-    fi
+    firewalld_rules "$rules"
     if [ "$(firewall-cmd --get-log-denied)" = off ]; then
         echo "NOTE: firewalld doesn't log denied packets; enable it for firewall-based detection:"
         echo "    firewall-cmd --set-log-denied=unicast"
     fi
 elif command -v ufw > /dev/null; then
-    /usr/local/bin/vpsfort --config /etc/vpsfort/vpsfort.toml cluster-ufw-rules | while read -r rule; do
-        echo "+ $rule"
-        eval "$rule"
-    done
+    rules=$(/usr/local/bin/vpsfort --config /etc/vpsfort/vpsfort.toml cluster-ufw-rules)
+    ufw_rules "$rules"
     if ! ufw status verbose | grep -q '^Logging: on'; then
         echo "NOTE: UFW logging is off; enable it for firewall-based detection:  ufw logging low"
     fi
