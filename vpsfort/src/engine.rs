@@ -1588,9 +1588,16 @@ impl Engine {
         self.hard_protection(ip).or_else(|| self.is_trusted(ip).then_some("recently authenticated"))
     }
 
+    /// Whether a trusted address has failed too much for its login to excuse: `trust_limit`
+    /// ban thresholds of points (its noise scores 0, so only real failures count).
+    fn trust_spent(&self, st: &IpState) -> bool {
+        let (sc, limit) = (&self.cfg.scoring, self.cfg.allowlist.trust_limit);
+        limit > 0.0 && (st.fast >= sc.fast_threshold * limit || st.slow >= sc.slow_threshold * limit)
+    }
+
     /// Why `ip` must not be banned for what it did (`st`), if it must not.
     fn shield(&self, ip: IpAddr, st: &IpState) -> Option<&'static str> {
-        self.hard_protection(ip).or_else(|| self.trust_covers(ip, st).then_some("recently authenticated"))
+        self.hard_protection(ip).or_else(|| (self.trust_covers(ip, st) && !self.trust_spent(st)).then_some("recently authenticated"))
     }
 
     fn net_protected(&self, net: &Net) -> bool {
@@ -3111,7 +3118,8 @@ impl Engine {
         let mut counts: Vec<(Signal, u64)> = st.counts.iter().filter(|(s, _)| !s.is_success()).collect();
         counts.sort_by_key(|c| std::cmp::Reverse(c.1));
         let summary: Vec<String> = counts.iter().take(4).map(|(s, n)| format!("{n}x {}", s.name())).collect();
-        let reason = format!("{kind} score fast={fast:.0} slow={slow:.0} [{}]", summary.join(", "));
+        let excused = if self.trust_covers(ip, st) { " (past what a login excuses)" } else { "" };
+        let reason = format!("{kind} score fast={fast:.0} slow={slow:.0} [{}]{excused}", summary.join(", "));
         let evidence: Vec<String> = st.evidence.lines().map(String::from).collect();
         if let Some(why) = self.shield(ip, st) {
             self.alert_about(
@@ -4962,6 +4970,31 @@ mod tests {
             all.extend(e.on_event(&ev(day + 10 + i, "5.5.5.4", Signal::XmppAuthFail).account(Some("alice@x.org"))));
         }
         assert_eq!(bans(&all), vec!["5.5.5.4"]);
+    }
+
+    /// An account on a service is no licence to guess the others' from the same address:
+    /// `trust_limit` ban thresholds of real failures, and the login excuses nothing more.
+    #[test]
+    fn a_login_excuses_only_so_much() {
+        let login = |e: &mut Engine, ip: &str| {
+            e.on_event(&Event::new(0, ip.parse().unwrap(), Signal::XmppAuthOk).account(Some("mallory@x.org")));
+        };
+        let guess = |e: &mut Engine, ip: &str, from: i64, n: i64| -> Vec<Action> {
+            (from..from + n).flat_map(|t| e.on_event(&ev(t, ip, Signal::XmppAuthFail).account(Some("alice@x.org")))).collect()
+        };
+        let mut e = engine();
+        login(&mut e, "5.5.6.1");
+        let all = guess(&mut e, "5.5.6.1", 10, 10);
+        assert!(bans(&all).is_empty() && all.iter().any(|a| a.topic == Some(Topic::Protected)), "excused at first: {all:?}");
+        let all = guess(&mut e, "5.5.6.1", 20, 200);
+        let ban = all.iter().find(|a| a.kind == ActionKind::Ban).expect("banned in the end");
+        assert!(ban.message.contains("past what a login excuses"), "{}", ban.message);
+        // trust_limit = 0: never, as before
+        let mut cfg = Config::default();
+        cfg.allowlist.trust_limit = 0.0;
+        let mut e = Engine::new(Arc::new(cfg), 0);
+        login(&mut e, "5.5.6.2");
+        assert!(bans(&guess(&mut e, "5.5.6.2", 10, 210)).is_empty());
     }
 
     #[test]

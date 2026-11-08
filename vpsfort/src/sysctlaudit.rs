@@ -393,6 +393,8 @@ pub struct BootSetting {
     /// Read after 90-hardening.conf (its name sorts later, or it is sysctl.conf read last),
     /// so a line there loses to this one.
     pub later: bool,
+    /// ufw's own file, applied each time ufw starts or reloads, not by `sysctl --system`.
+    pub ufw: bool,
 }
 
 /// A line systemd-sysctl and `sysctl --system` skip: not `key = value`.
@@ -420,7 +422,7 @@ pub struct Boot {
 pub struct Host {
     /// It forwards on purpose (a VPN, container or bridge interface exists).
     pub router: bool,
-    /// apport is the core handler, which sets fs.suid_dumpable to 2 each time it starts.
+    /// apport starts at boot, and sets fs.suid_dumpable to 2 each time it starts.
     pub apport: bool,
     pub boot: Boot,
 }
@@ -435,6 +437,8 @@ struct Assignments {
     /// the end.
     globs: Vec<(String, BootSetting)>,
     skipped: Vec<Skipped>,
+    /// What is being parsed is ufw's own file.
+    ufw: bool,
 }
 
 impl Assignments {
@@ -464,7 +468,8 @@ impl Assignments {
                 continue;
             }
             let key = normalize(key);
-            let setting = value.map(|v| BootSetting { value: crate::event::clean(v, 64), file: file.to_string(), line: i + 1, later });
+            let setting =
+                value.map(|v| BootSetting { value: crate::event::clean(v, 64), file: file.to_string(), line: i + 1, later, ufw: self.ufw });
             if key.contains(['*', '?', '[']) {
                 let Some(s) = setting else { continue };
                 self.globs.retain(|(p, _)| *p != key);
@@ -544,8 +549,9 @@ fn read_conf(path: &Path) -> Option<String> {
 /// assignment wins, a key's own wins over a pattern's whatever the order, and `-key` keeps it
 /// out of patterns. `conf` (sysctl.conf) comes last where no systemd runs (OpenRC; also what
 /// `sysctl --system` does); under systemd it counts only through a link in sysctl.d, and its
-/// watched settings are `unread` without one.
-pub fn read_boot(dirs: &[PathBuf], conf: &Path, systemd: bool) -> Boot {
+/// watched settings are `unread` without one. `ufw` (its own sysctl file, where it is enabled)
+/// comes after them all.
+pub fn read_boot(dirs: &[PathBuf], conf: &Path, systemd: bool, ufw: Option<&Path>) -> Boot {
     let mut files: BTreeMap<String, PathBuf> = BTreeMap::new();
     for d in dirs {
         let Ok(rd) = std::fs::read_dir(d) else { continue };
@@ -584,13 +590,66 @@ pub fn read_boot(dirs: &[PathBuf], conf: &Path, systemd: bool) -> Boot {
             }
         }
     }
+    if let Some((path, text)) = ufw.and_then(|p| read_conf(p).map(|t| (p, t))) {
+        // `sysctl -e -p`, not systemd-sysctl: what the skipped-lines report says isn't about it
+        let skipped = a.skipped.len();
+        a.ufw = true;
+        a.parse(&text, &shown(path), true);
+        a.skipped.truncate(skipped);
+    }
     let settings = CHECKS.iter().filter_map(|c| a.get(c.key).map(|s| (c.key, s.clone()))).collect();
     Boot { settings, skipped: a.skipped, unread }
 }
 
-/// apport is the kernel's core handler (`kernel.core_pattern` pipes to it).
-fn apport_handles_cores(proc_sys: &Path) -> bool {
-    std::fs::read_to_string(proc_sys.join("kernel/core_pattern")).is_ok_and(|p| p.starts_with('|') && p.contains("apport"))
+/// A setting of a file a shell sources: its last assignment, quotes removed.
+fn shell_setting(path: &Path, name: &str) -> Option<String> {
+    let text = read_conf(path)?;
+    let value = text.lines().filter_map(|l| l.trim().strip_prefix(name)?.strip_prefix('=')).next_back()?;
+    Some(value.trim().trim_matches(['"', '\'']).to_string())
+}
+
+/// The file ufw applies with `sysctl -p` each time it starts or reloads (`root`: `/`), after the
+/// sysctl.d files, which it says it overrides: IPT_SYSCTL in /etc/default/ufw, where
+/// /etc/ufw/ufw.conf has ufw enabled. As shipped it sets `log_martians` to 0, so neither a line
+/// in 90-hardening.conf nor `sysctl --system` keeps it at 1 past ufw's next start.
+fn ufw_sysctl_file(root: &Path) -> Option<PathBuf> {
+    let enabled = shell_setting(&root.join("etc/ufw/ufw.conf"), "ENABLED")?;
+    if enabled != "yes" && enabled != "YES" {
+        return None;
+    }
+    let file = shell_setting(&root.join("etc/default/ufw"), "IPT_SYSCTL")?;
+    (!file.is_empty()).then(|| root.join(file.trim_start_matches('/')))
+}
+
+/// apport starts at the next boot (`root`: `/`). Ubuntu 22.04's is an init.d script, started by
+/// an `S??apport` link in /etc/rc?.d unless /etc/default/apport says otherwise; a native unit
+/// (newer releases) by a link in a `.wants` directory, and it doesn't read that file.
+/// `kernel.core_pattern` can't tell: `systemctl disable --now` doesn't stop an init.d service,
+/// so it goes on naming a disabled apport, and an apport stopped but enabled comes back.
+fn apport_starts_at_boot(root: &Path) -> bool {
+    if !root.join("usr/share/apport/apport").is_file() {
+        return false; // removed: its init script and links stay until a purge
+    }
+    let units = root.join("etc/systemd/system");
+    let unit = units.join("apport.service");
+    if std::fs::read_link(&unit).is_ok_and(|target| target == Path::new("/dev/null")) {
+        return false; // masked
+    }
+    if unit.is_file() || ["usr/lib/systemd/system", "lib/systemd/system"].iter().any(|d| root.join(d).join("apport.service").is_file()) {
+        let wanted = |e: &std::fs::DirEntry| {
+            e.file_name().to_string_lossy().ends_with(".wants") && std::fs::symlink_metadata(e.path().join("apport.service")).is_ok()
+        };
+        return std::fs::read_dir(&units).is_ok_and(|rd| rd.flatten().any(|e| wanted(&e)));
+    }
+    let switched_on = shell_setting(&root.join("etc/default/apport"), "enabled").is_none_or(|v| v == "1");
+    let start_link = |e: std::fs::DirEntry| {
+        let name = e.file_name().to_string_lossy().into_owned();
+        name.len() == 9 && name.starts_with('S') && name.ends_with("apport")
+    };
+    switched_on
+        && ["S", "2", "3", "4", "5"]
+            .iter()
+            .any(|level| std::fs::read_dir(root.join(format!("etc/rc{level}.d"))).is_ok_and(|rd| rd.flatten().any(start_link)))
 }
 
 fn first_int(s: &str) -> Option<i64> {
@@ -598,8 +657,9 @@ fn first_int(s: &str) -> Option<i64> {
 }
 
 /// apport's start writes 2 to fs.suid_dumpable, after systemd-sysctl, and its stop 0.
-const APPORT: &str = "apport, the crash handler in kernel.core_pattern, sets it to 2 each time it starts (after the \
-                      sysctl.d files) and to 0 when it stops: `systemctl disable --now apport` keeps it at 0";
+const APPORT: &str = "apport, the crash handler, sets it to 2 each time it starts (after the sysctl.d files) and to 0 when \
+                      it stops: `systemctl disable apport && systemctl stop apport` keeps it at 0 (`disable --now` \
+                      doesn't stop apport where it is an init.d script)";
 
 /// Judges the values read, and what the next boot sets.
 pub fn audit(values: &BTreeMap<String, String>, host: &Host, errors: Vec<String>, cfg: &SysctlCfg, now: Micros) -> SysctlReport {
@@ -633,7 +693,12 @@ pub fn audit(values: &BTreeMap<String, String>, host: &Host, errors: Vec<String>
         let at = if ok { n } else { want };
         let keep_fix = match set_bad {
             Some(s) if s.later => {
-                format!("change line {} of {} to `{k} = {at}` (that file is read after {HARDENING_CONF})", s.line, s.file)
+                let after = if s.ufw {
+                    "ufw applies that file after the sysctl.d files".to_string()
+                } else {
+                    format!("that file is read after {HARDENING_CONF}")
+                };
+                format!("change line {} of {} to `{k} = {at}` ({after})", s.line, s.file)
             }
             _ => format!("add `{k} = {at}` to {HARDENING_CONF}"),
         };
@@ -658,10 +723,17 @@ pub fn audit(values: &BTreeMap<String, String>, host: &Host, errors: Vec<String>
                     format!("{APPORT}; and {keep_fix}")
                 }
             } else if let Some(s) = set.filter(|_| kept(c)) {
-                format!(
-                    "sysctl --system ({} line {} sets {} at boot: added since the boot, or something changed the value after it)",
-                    s.file, s.line, s.value
-                )
+                if s.ufw {
+                    format!(
+                        "sysctl -w {k}={want} ({} line {} sets {} each time ufw starts: something changed the value since)",
+                        s.file, s.line, s.value
+                    )
+                } else {
+                    format!(
+                        "sysctl --system ({} line {} sets {} at boot: added since the boot, or something changed the value after it)",
+                        s.file, s.line, s.value
+                    )
+                }
             } else {
                 // the file takes `key = value`, not the command: a pasted `sysctl -w` line there is
                 // skipped at boot, and the setting is lost with the next reboot
@@ -669,8 +741,8 @@ pub fn audit(values: &BTreeMap<String, String>, host: &Host, errors: Vec<String>
             };
             issues.push(issue(c.severity, format!("{k} = {v}: {}", c.why), fix));
         } else if let Some(s) = set_bad {
-            let message =
-                format!("{k} = {v} now, but {} line {} sets {} at boot and at every `sysctl --system`: {}", s.file, s.line, s.value, c.why);
+            let when = if s.ufw { "each time ufw starts or reloads" } else { "at boot and at every `sysctl --system`" };
+            let message = format!("{k} = {v} now, but {} line {} sets {} {when}: {}", s.file, s.line, s.value, c.why);
             issues.push(issue(c.severity, message, keep_fix));
         } else if apport {
             issues.push(issue(
@@ -742,8 +814,13 @@ pub fn scan(cfg: &SysctlCfg, now: Micros) -> SysctlReport {
     let (values, errors, unreadable) = collect(cfg);
     let host = Host {
         router: router_interfaces(&cfg.net_class),
-        apport: apport_handles_cores(&cfg.proc_sys),
-        boot: read_boot(&cfg.sysctl_d, &cfg.sysctl_conf, Path::new("/run/systemd/system").is_dir()),
+        apport: apport_starts_at_boot(Path::new("/")),
+        boot: read_boot(
+            &cfg.sysctl_d,
+            &cfg.sysctl_conf,
+            Path::new("/run/systemd/system").is_dir(),
+            ufw_sysctl_file(Path::new("/")).as_deref(),
+        ),
     };
     let mut r = audit(&values, &host, errors, cfg, now);
     r.issues.extend(unreadable.into_iter().filter(|k| !cfg.ignore.iter().any(|x| x == k)).map(|k| Issue {
@@ -964,7 +1041,7 @@ mod tests {
     fn the_boot_configuration_is_read_as_systemd_sysctl_reads_it() {
         let d = tmp("boot");
         let (dirs, conf) = ubuntu(&d, true);
-        let b = read_boot(&dirs, &conf, true);
+        let b = read_boot(&dirs, &conf, true, None);
         let at = |k: &str| b.settings.get(k).map(|s| (s.value.as_str(), s.file.rsplit('/').next().unwrap(), s.line, s.later));
         assert_eq!(at("kernel.sysrq"), Some(("176", "10-magic-sysrq.conf", 3, false)), "/etc's file hides /run's");
         assert_eq!(at("kernel.kptr_restrict"), Some(("1", "10-kernel-hardening.conf", 1, false)), "kernel/kptr_restrict is the key");
@@ -985,11 +1062,11 @@ mod tests {
         // no 99-sysctl.conf (Debian 13): systemd never reads sysctl.conf, `sysctl --system` and OpenRC last
         let d2 = tmp("boot-unlinked");
         let (dirs, conf) = ubuntu(&d2, false);
-        let b = read_boot(&dirs, &conf, true);
+        let b = read_boot(&dirs, &conf, true, None);
         assert!(!b.settings.contains_key("net.ipv4.tcp_syncookies"));
         let unread: Vec<(&str, &str)> = b.unread.iter().map(|(k, s)| (*k, s.value.as_str())).collect();
         assert_eq!(unread, [("net.ipv4.tcp_syncookies", "0"), ("kernel.dmesg_restrict", "1")]);
-        let b = read_boot(&dirs, &conf, false);
+        let b = read_boot(&dirs, &conf, false, None);
         assert_eq!(b.settings.get("net.ipv4.tcp_syncookies").map(|s| (s.value.as_str(), s.later)), Some(("0", true)));
         assert!(b.unread.is_empty());
         let _ = std::fs::remove_dir_all(&d);
@@ -1029,7 +1106,7 @@ mod tests {
         let mut now = hardened();
         now.insert("kernel.perf_event_paranoid".into(), "4".into());
         now.insert("net.ipv4.conf.all.rp_filter".into(), "2".into());
-        let host = Host { router: true, apport: false, boot: read_boot(&dirs, &conf, true) };
+        let host = Host { router: true, apport: false, boot: read_boot(&dirs, &conf, true, None) };
         let r = audit(&now, &host, vec![], &cfg, T);
         let ids: Vec<&str> = r.issues.iter().map(|i| i.id.as_str()).collect();
         let pasted_id = format!("{}/90-hardening.conf", dirs[0].display());
@@ -1116,7 +1193,7 @@ mod tests {
         assert_eq!(r.issues.len(), 1, "{:?}", r.issues);
         assert_eq!(r.issues[0].severity, Severity::Warning);
         assert!(r.issues[0].message.starts_with("fs.suid_dumpable = 0 now, but apport sets it back to 2"), "{}", r.issues[0].message);
-        assert!(r.issues[0].fix.contains("`systemctl disable --now apport`"), "{}", r.issues[0].fix);
+        assert!(r.issues[0].fix.contains("`systemctl disable apport && systemctl stop apport`"), "{}", r.issues[0].fix);
         // as apport left it: the fix is apport's, and the line too
         v.insert("fs.suid_dumpable".into(), "2".into());
         let r = audit(&v, &host, vec![], &cfg, T);
@@ -1124,12 +1201,100 @@ mod tests {
         assert!(r.issues[0].fix.ends_with("; and add `fs.suid_dumpable = 0` to /etc/sysctl.d/90-hardening.conf"), "{}", r.issues[0].fix);
         assert_eq!(r.keep.get("fs.suid_dumpable").map(String::as_str), Some("0"));
         assert!(r.keep_notes.iter().any(|n| n.starts_with("fs.suid_dumpable: apport")), "{:?}", r.keep_notes);
-        // the core handler is read from kernel.core_pattern
+    }
+
+    #[test]
+    fn apport_counts_only_where_it_starts_at_boot() {
         let d = tmp("apport");
-        write(&d.join("kernel/core_pattern"), "|/usr/share/apport/apport -p%p -s%s -c%c -d%d -P%P -u%u -g%g -- %E\n");
-        assert!(apport_handles_cores(&d));
-        write(&d.join("kernel/core_pattern"), "|/usr/lib/systemd/systemd-coredump %P %u %g %s %t %c %h\n");
-        assert!(!apport_handles_cores(&d));
+        let default = d.join("etc/default/apport");
+        assert!(!apport_starts_at_boot(&d), "not installed");
+        // removed but not purged: the script and its links stay, the program is gone
+        write(&d.join("etc/rc5.d/S01apport"), "");
+        assert!(!apport_starts_at_boot(&d), "no program");
+        std::fs::remove_file(d.join("etc/rc5.d/S01apport")).unwrap();
+        write(&d.join("usr/share/apport/apport"), "#!/usr/bin/python3\n");
+        assert!(!apport_starts_at_boot(&d), "no start link");
+
+        // an init.d script, as on the VPN node: `systemctl disable` turned S links into K links,
+        // whatever kernel.core_pattern still says
+        write(&d.join("etc/rc2.d/K01apport"), "");
+        write(&d.join("etc/rc5.d/K01apport"), "");
+        assert!(!apport_starts_at_boot(&d), "disabled");
+        write(&d.join("etc/rc5.d/S01apport"), "");
+        assert!(apport_starts_at_boot(&d), "enabled");
+        write(&default, "# set this to 0 to disable apport\nenabled=1\n");
+        assert!(apport_starts_at_boot(&d));
+        write(&default, "enabled=1\nenabled=\"0\"\n");
+        assert!(!apport_starts_at_boot(&d), "the last assignment counts: the script sources the file");
+
+        // a native unit: only its .wants link starts it, and it doesn't read /etc/default/apport
+        write(&d.join("usr/lib/systemd/system/apport.service"), "[Install]\nWantedBy=multi-user.target\n");
+        write(&default, "enabled=1\n");
+        assert!(!apport_starts_at_boot(&d), "the rc links don't count for a native unit");
+        let wants = d.join("etc/systemd/system/multi-user.target.wants");
+        std::fs::create_dir_all(&wants).unwrap();
+        std::os::unix::fs::symlink("/lib/systemd/system/apport.service", wants.join("apport.service")).unwrap();
+        assert!(apport_starts_at_boot(&d), "enabled");
+        write(&default, "enabled=0\n");
+        assert!(apport_starts_at_boot(&d), "the unit doesn't read it");
+        std::os::unix::fs::symlink("/dev/null", d.join("etc/systemd/system/apport.service")).unwrap();
+        assert!(!apport_starts_at_boot(&d), "masked");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn ufws_own_file_comes_last_where_ufw_is_enabled() {
+        let d = tmp("ufw");
+        let (sysctl_d, ufw, ufw_conf, default) =
+            (d.join("etc/sysctl.d"), d.join("etc/ufw/sysctl.conf"), d.join("etc/ufw/ufw.conf"), d.join("etc/default/ufw"));
+        write(&sysctl_d.join("90-hardening.conf"), "net.ipv4.conf.all.log_martians = 1\nnet.ipv4.conf.all.accept_redirects = 1\n");
+        write(&ufw, "# Please note these settings override sysctl.d\nnet/ipv4/conf/all/accept_redirects=0\nnet/ipv4/conf/all/log_martians=0\nnot a setting\n");
+
+        // which file, and only where ufw is enabled
+        assert_eq!(ufw_sysctl_file(&d), None, "no ufw");
+        write(&default, "IPT_SYSCTL=/etc/ufw/sysctl.conf\n");
+        write(&ufw_conf, "ENABLED=no\nLOGLEVEL=low\n");
+        assert_eq!(ufw_sysctl_file(&d), None, "not enabled");
+        write(&ufw_conf, "# comment\nENABLED=yes\nLOGLEVEL=low\n");
+        assert_eq!(ufw_sysctl_file(&d).as_deref(), Some(ufw.as_path()));
+        write(&default, "IPT_SYSCTL=\n");
+        assert_eq!(ufw_sysctl_file(&d), None, "IPT_SYSCTL empty: ufw applies nothing");
+        write(&default, "IPT_SYSCTL=\"/etc/ufw/sysctl.conf\"\n");
+        assert_eq!(ufw_sysctl_file(&d).as_deref(), Some(ufw.as_path()), "the file is sourced: quotes are fine");
+
+        let boot = read_boot(std::slice::from_ref(&sysctl_d), &d.join("none"), true, Some(&ufw));
+        let s = &boot.settings["net.ipv4.conf.all.log_martians"];
+        assert_eq!((s.value.as_str(), s.line, s.later, s.ufw), ("0", 3, true, true), "over 90-hardening.conf's");
+        assert!(boot.skipped.is_empty(), "a bad line there isn't one boot skips: {:?}", boot.skipped);
+        let cfg = SysctlCfg::default();
+        let host = Host { boot, ..Host::default() };
+        let find = |r: &SysctlReport, id: &str| r.issues.iter().find(|i| i.id == id).cloned().unwrap();
+
+        // the node after a restart: not `sysctl --system`, which ufw's next start undoes
+        let mut v = hardened();
+        v.insert("net.ipv4.conf.all.log_martians".into(), "0".into());
+        let r = audit(&v, &host, vec![], &cfg, T);
+        let fix = find(&r, "net.ipv4.conf.all.log_martians").fix;
+        assert!(fix.starts_with("sysctl -w net.ipv4.conf.all.log_martians=1; to keep it after a reboot, change line 3 of "), "{fix}");
+        assert!(
+            fix.ends_with("sysctl.conf to `net.ipv4.conf.all.log_martians = 1` (ufw applies that file after the sysctl.d files)"),
+            "{fix}"
+        );
+        assert!(!r.keep.contains_key("net.ipv4.conf.all.log_martians"), "a line in 90-hardening.conf would lose");
+        assert!(r.keep_notes.iter().any(|n| n.starts_with("net.ipv4.conf.all.log_martians: change line 3 of ")), "{:?}", r.keep_notes);
+
+        // right for now, until ufw's next start
+        let r = audit(&hardened(), &host, vec![], &cfg, T);
+        let message = find(&r, "net.ipv4.conf.all.log_martians").message;
+        assert!(message.starts_with("net.ipv4.conf.all.log_martians = 1 now, but "), "{message}");
+        assert!(message.contains("line 3 sets 0 each time ufw starts or reloads: "), "{message}");
+
+        // a value only ufw's file keeps: `sysctl --system` doesn't read it
+        let mut v = hardened();
+        v.insert("net.ipv4.conf.all.accept_redirects".into(), "1".into());
+        let fix = find(&audit(&v, &host, vec![], &cfg, T), "net.ipv4.conf.all.accept_redirects").fix;
+        assert!(fix.starts_with("sysctl -w net.ipv4.conf.all.accept_redirects=0 ("), "{fix}");
+        assert!(fix.contains("line 2 sets 0 each time ufw starts"), "{fix}");
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -1137,7 +1302,7 @@ mod tests {
     fn sysctl_conf_unread_at_boot_is_told_for_what_nothing_else_keeps() {
         let d = tmp("trixie");
         let (dirs, conf) = ubuntu(&d, false);
-        let host = Host { router: true, apport: false, boot: read_boot(&dirs, &conf, true) };
+        let host = Host { router: true, apport: false, boot: read_boot(&dirs, &conf, true, None) };
         let r = audit(&hardened(), &host, vec![], &SysctlCfg::default(), T);
         let unread = r.issues.iter().find(|i| i.id.ends_with("/etc/sysctl.conf")).expect("told");
         // tcp_syncookies = 0 there isn't hardening: only dmesg_restrict = 1 is lost
@@ -1156,7 +1321,7 @@ mod tests {
     fn a_fix_the_files_keep_is_told_as_fixed_alone() {
         let d = tmp("kept");
         write(&d.join("90-hardening.conf"), "fs.protected_symlinks = 1\n");
-        let host = Host { boot: read_boot(std::slice::from_ref(&d), &d.join("none"), true), ..Host::default() };
+        let host = Host { boot: read_boot(std::slice::from_ref(&d), &d.join("none"), true, None), ..Host::default() };
         let cfg = SysctlCfg::default();
         let mut weak = hardened();
         weak.insert("fs.protected_symlinks".into(), "0".into());

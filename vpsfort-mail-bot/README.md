@@ -137,9 +137,9 @@ Instead of `deploy.sh` (below), without a Rust toolchain: every version tag `vps
 
 ```bash
 arch=x86_64-linux-musl     # the server's: aarch64-linux-musl (arm64), armv7-linux-musleabihf (32-bit ARM)
-gh release download vpsfort-mail-bot-v0.5.1 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
+gh release download vpsfort-mail-bot-v0.5.2 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
 sha256sum -c vpsfort-mail-bot-*-$arch.zip.sha256              # the download is intact (macOS: shasum -a 256 -c)
-gh attestation verify vpsfort-mail-bot-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-mail-bot-v0.5.1
+gh attestation verify vpsfort-mail-bot-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-mail-bot-v0.5.2
 ```
 
 `gh attestation verify` (after `gh auth login`) checks the signed build provenance: that this repository's CI built exactly this zip from that tag. With `--bundle vpsfort-mail-bot-*-$arch.zip.sigstore.json` it checks the attestation attached to the Release instead of fetching it from GitHub. Only a public repository's releases have one (GitHub offers attestations for private repositories only with Enterprise Cloud).
@@ -160,7 +160,7 @@ The first install, as with `deploy.sh`, doesn't start the bot until `config.env`
 The same release has a package per architecture, for the distribution's package manager instead of `install.sh`: `vpsfort-mail-bot_<version>-1_<arch>.deb` (`amd64`, `arm64`, `armhf`; Debian, Ubuntu and their derivatives) `vpsfort-mail-bot-<version>-1.<arch>.rpm` (`x86_64`, `aarch64`, `armv7hl`; Fedora, RHEL and its rebuilds) and `vpsfort-mail-bot-<version>-r0.<arch>.apk` (`x86_64`, `aarch64`, `armv7`; Alpine, with OpenRC: below), each with its `.sha256` and `.sigstore.json`, downloaded and verified as the bundle above (`--pattern "*.deb*"`, `"*.rpm*"` or `"*.apk*"`). CI keeps them for every commit as workflow artifacts, and `scripts/package.sh` builds them locally (`cargo install cargo-deb cargo-generate-rpm --locked` once, and python3 for the `.apk`, which `scripts/apk.py` at the repository's root writes; none needs dpkg, rpm or apk-tools, so it runs on macOS too; `--target aarch64-unknown-linux-musl` or `armv7-unknown-linux-musleabihf` for the ARM ones). Or from the signed apt and dnf repository on GitHub Pages, once it is set up (the repository README, "Deployment"), where `apt upgrade` and `dnf upgrade` then bring new versions.
 
 ```bash
-sudo apt install ./vpsfort-mail-bot_0.5.1-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-mail-bot-0.5.1-1.x86_64.rpm
+sudo apt install ./vpsfort-mail-bot_0.5.2-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-mail-bot-0.5.2-1.x86_64.rpm
 sudoedit /opt/vpsfort-mail-bot/config.env                 # the first install put the template there
 sudo systemctl enable --now vpsfort-mail-bot
 ```

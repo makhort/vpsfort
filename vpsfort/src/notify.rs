@@ -859,7 +859,7 @@ fn deliver_except(cfg: &NotifyCfg, bot: Option<&mut BotBox>, copies: &mut [CopyB
 
 /// Takes back what the bot hasn't sent in time and sends it the usual way; warns the admins
 /// about other files the bot has been sitting on.
-fn sweep(cfg: &NotifyCfg, bot: &mut BotBox, copies: &mut [CopyBot], node: &OnceLock<String>) {
+fn sweep(cfg: &NotifyCfg, bot: &mut BotBox, copies: &mut [CopyBot], node: &OnceLock<String>, problems: &Mutex<Vec<(String, String)>>) {
     if !bot.ready() {
         return;
     }
@@ -867,6 +867,22 @@ fn sweep(cfg: &NotifyCfg, bot: &mut BotBox, copies: &mut [CopyBot], node: &OnceL
         Ok(f) => f,
         Err(e) => return eprintln!("vpsfort: admin bot outbox {}: {e}", bot.dir.display()),
     };
+    // a file under vpsfort's names that vpsfort didn't write: deleted; the daemon raises it as
+    // a high system alert (once an hour per outbox, however many files)
+    for name in &found.forged {
+        let key = format!("outbox:forged:{}", bot.dir.display());
+        let message = format!(
+            "a file under one of vpsfort's names in the admin bot's outbox {} was not written by vpsfort (no valid signature) and was deleted, not sent: {name}. \
+             The bot's user ({}) may be compromised, or something else writes there",
+            bot.dir.display(),
+            cfg.bot_user
+        );
+        if let Ok(mut p) = problems.lock() {
+            if !p.iter().any(|(k, _)| *k == key) {
+                p.push((key, message));
+            }
+        }
+    }
     for f in found.fallback {
         // The bot's user writes to the outbox too: whatever a file says, only admins get one.
         if !cfg.admins.contains(&f.notice.to) {
@@ -989,7 +1005,9 @@ pub struct Notifier {
 }
 
 impl Notifier {
-    pub fn new(cfg: &NotifyCfg, mode: Mode) -> Self {
+    /// `key_file`: the admin bot's message key (`botbox::key_path`), root's; `None` makes
+    /// one for this run.
+    pub fn new(cfg: &NotifyCfg, mode: Mode, key_file: Option<PathBuf>) -> Self {
         let node = Arc::new(OnceLock::new());
         let problems = Arc::new(Mutex::new(Vec::new()));
         let tx = cfg.enabled.then(|| {
@@ -997,13 +1015,15 @@ impl Notifier {
             let cfg = cfg.clone();
             let node = node.clone();
             let problems = problems.clone();
+            let key_file = key_file.clone();
             thread::spawn(move || {
                 let mut bot = cfg.bot_outbox.clone().map(|dir| {
                     let owner = std::fs::read_to_string("/etc/passwd").ok().and_then(|p| crate::botbox::user_ids(&p, &cfg.bot_user));
                     if owner.is_none() {
                         eprintln!("vpsfort: no user {} for the admin bot's files; the bot won't be able to take them", cfg.bot_user);
                     }
-                    BotBox::new(dir, owner, Duration::from_secs(cfg.bot_grace.0), Duration::from_secs(cfg.bot_stuck_after.0))
+                    let key = key_file.as_deref().map_or_else(crate::botbox::Key::random, crate::botbox::Key::load_or_make);
+                    BotBox::new(dir, owner, Duration::from_secs(cfg.bot_grace.0), Duration::from_secs(cfg.bot_stuck_after.0)).with_key(key)
                 });
                 let stuck_after = Duration::from_secs(cfg.bot_stuck_after.0);
                 let mut copies: Vec<CopyBot> =
@@ -1017,7 +1037,7 @@ impl Notifier {
                     }
                     if last_sweep.is_none_or(|t| t.elapsed() >= SWEEP_EVERY) {
                         if let Some(bot) = bot.as_mut() {
-                            sweep(&cfg, bot, &mut copies, &node);
+                            sweep(&cfg, bot, &mut copies, &node, &problems);
                         }
                         for i in 0..copies.len() {
                             sweep_copy(&cfg, &mut copies, i, bot.as_mut(), &node, &problems);
@@ -1266,9 +1286,19 @@ mod tests {
         file(".alert-1.msg.rejected", "admin@example.org");
         file(".alert-2.msg.rejected", "someone@elsewhere.example");
         let mut bot = BotBox::new(outbox.clone(), None, Duration::from_secs(120), Duration::from_secs(3600));
-        sweep(&ncfg, &mut bot, &mut [], &OnceLock::new());
+        let problems = Mutex::new(vec![]);
+        sweep(&ncfg, &mut bot, &mut [], &OnceLock::new(), &problems);
         assert_eq!(std::fs::read_to_string(dir.join("sent")).unwrap(), "admin@example.org\n");
         assert_eq!(std::fs::read_dir(&outbox).unwrap().count(), 0, "both taken out");
+        assert!(problems.lock().unwrap().is_empty(), "unsigned names from before this version: no complaint");
+        // a file the bot's user put there later, under a name of vpsfort's: deleted and reported
+        file(".alert-3.msg.rejected", "admin@example.org");
+        sweep(&ncfg, &mut bot, &mut [], &OnceLock::new(), &problems);
+        assert_eq!(std::fs::read_to_string(dir.join("sent")).unwrap(), "admin@example.org\n", "not sent");
+        assert_eq!(std::fs::read_dir(&outbox).unwrap().count(), 0, "deleted");
+        let p = problems.lock().unwrap();
+        assert_eq!(p.len(), 1, "{p:?}");
+        assert!(p[0].0.starts_with("outbox:forged:") && p[0].1.contains("alert-3.msg") && p[0].1.contains("may be compromised"), "{p:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

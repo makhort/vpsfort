@@ -102,7 +102,7 @@ They share one directory, `/opt/vpsfort-matrix-bot/outbox` (root:vpsfort-matrix-
 sticky), in vpsfort-xmpp-bot's file format (`src/outbox.rs`, vpsfort's `src/botbox.rs`):
 
 1. vpsfort writes a copy of each message to the first of `[notify] admins` (every admin
-   message when `admins` is empty or `xmpp = false`) as `alert-<time>-<n>.msg`, gives the
+   message when `admins` is empty or `xmpp = false`) as `alert-<time>-<n>-<signature>.msg` (the signature is for vpsfort's own check, not the bot's), gives the
    file to `matrix_user`, and renames it into place.
 2. The bot looks every 5 seconds, claims a message by renaming it to `.<name>.sending`, sends
    it and deletes it. If sending fails it renames it back and tries again (after the
@@ -127,7 +127,7 @@ continue with step 3 below.
 The same release has a package per architecture, for the distribution's package manager instead of `install.sh`: `vpsfort-matrix-bot_<version>-1_<arch>.deb` (`amd64`, `arm64`, `armhf`; Debian, Ubuntu and their derivatives) `vpsfort-matrix-bot-<version>-1.<arch>.rpm` (`x86_64`, `aarch64`, `armv7hl`; Fedora, RHEL and its rebuilds) and `vpsfort-matrix-bot-<version>-r0.<arch>.apk` (`x86_64`, `aarch64`, `armv7`; Alpine, with OpenRC: below), each with its `.sha256` and `.sigstore.json`, downloaded and verified as the bundle above (`--pattern "*.deb*"`, `"*.rpm*"` or `"*.apk*"`). CI keeps them for every commit as workflow artifacts, and `scripts/package.sh` builds them locally (`cargo install cargo-deb cargo-generate-rpm --locked` once, and python3 for the `.apk`, which `scripts/apk.py` at the repository's root writes; none needs dpkg, rpm or apk-tools, so it runs on macOS too; `--target aarch64-unknown-linux-musl` or `armv7-unknown-linux-musleabihf` for the ARM ones). Or from the signed apt and dnf repository on GitHub Pages, once it is set up (the repository README, "Deployment"), where `apt upgrade` and `dnf upgrade` then bring new versions.
 
 ```bash
-sudo apt install ./vpsfort-matrix-bot_0.3.1-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-matrix-bot-0.3.1-1.x86_64.rpm
+sudo apt install ./vpsfort-matrix-bot_0.3.2-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-matrix-bot-0.3.2-1.x86_64.rpm
 sudoedit /opt/vpsfort-matrix-bot/config.env                 # the first install put the template there
 sudo systemctl enable --now vpsfort-matrix-bot
 ```

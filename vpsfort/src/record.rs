@@ -103,7 +103,9 @@ fn classify(ident: &str, unit: &str, msg: &str) -> Option<Source> {
         Some(Source::Ufw)
     } else if ident == "kernel" && crate::parse::kernel::is_oom(msg) {
         Some(Source::Kernel)
-    } else if ident == "systemd" && crate::parse::systemd::parse(msg).is_some() {
+    } else if (ident == "systemd" && crate::parse::systemd::parse(msg).is_some())
+        || (ident == "systemd-journald" && crate::parse::systemd::suppressed(msg).is_some())
+    {
         Some(Source::Systemd)
     } else if ident == "su" || ident == "sudo" {
         Some(Source::Privilege)

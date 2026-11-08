@@ -3,6 +3,13 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.7.1 - 2026-11-08
+
+Installer hardening, after vpsfort's audit of 2026-11-07.
+
+- `install.sh` and the package's post-install step change the owner and mode of the bot's files (the state, the OMEMO store, `bot.log`, the trust list, the avatar, the OpenPGP key; the instances' too) only when they are regular files with one name. The directory is the bot's user's to write in, so a link planted under one of those names made root change the owner and mode of whatever it pointed at (found by vpsfort's audit of 2026-11-07). The other mode's files waiting in the outbox are given to the bot only when they have one name (`find -links 1`, `chown -h`), and the copy of `state.json` an upgrade keeps is made under a random name (`mktemp`), never through a link planted under the name made of the time.
+- vpsfort's next release names its messages `alert-<time>-<n>-<signature>.msg`; the bot's matching (`alert-*.msg`) is unchanged.
+
 ## 0.7.0 - 2026-11-07
 
 Several domains on one ejabberd.

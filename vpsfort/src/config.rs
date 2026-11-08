@@ -336,6 +336,20 @@ pub struct PortsCfg {
     /// line: a Telnet login, an HTTP request), waited for up to 3 seconds, shown in the
     /// evidence and the abuse report. 0 closes at once, without reading. At most 4096.
     pub honeypot_capture: usize,
+    /// Honeypot ports that show a server's fixed prompts and read the reply to each, so
+    /// clients that wait for the server (Telnet bots, FTP and mail scanners) hand over the
+    /// login they try: `{ "2323/tcp" = "telnet", "21/tcp" = "ftp", "25/tcp" = "smtp" }`
+    /// (also `pop3`, `imap`, and `ssh`: the identification line alone, which brings out the
+    /// client's). Nothing the client sends is parsed or answered. Off by
+    /// default: for dedicated honeypot nodes.
+    pub honeypot_prompts: BTreeMap<String, crate::honeypot::Prompts>,
+    /// The greeting each prompted protocol opens with, by default a real server's as its
+    /// Debian package writes it (vsftpd, Postfix, Dovecot, OpenSSH; Debian's issue line
+    /// for Telnet): `{ ssh = "SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.11", ftp = "220 ProFTPD
+    /// Server (Debian)" }` names others, for the software and version the port is to pass
+    /// for. Set `ssh` to what the sshd on this host's real port sends (`nc -w 2 host port`),
+    /// so a scanner meets one sshd, not two.
+    pub honeypot_banners: BTreeMap<crate::honeypot::Prompts, String>,
 }
 
 /// Commonly attacked services neither server runs: remote access (FTP, Telnet, Windows RPC/SMB/
@@ -387,6 +401,8 @@ impl Default for PortsCfg {
             kernel_tripwire_rate: "60/minute".into(),
             honeypot: vec![],
             honeypot_capture: 512,
+            honeypot_prompts: BTreeMap::new(),
+            honeypot_banners: BTreeMap::new(),
         }
     }
 }
@@ -394,6 +410,47 @@ impl Default for PortsCfg {
 impl PortsCfg {
     pub fn whitelisted(&self, port: Option<u16>, proto: Proto) -> bool {
         port.is_some_and(|p| self.whitelist.iter().any(|w| w.matches(p, proto)))
+    }
+
+    /// The prompts of each honeypot port that has them, by port number, and the greetings
+    /// (validated).
+    pub fn prompting(&self) -> crate::honeypot::Prompting {
+        crate::honeypot::Prompting {
+            by_port: self.honeypot_prompts.iter().filter_map(|(k, p)| k.parse::<PortSpec>().ok().map(|s| (s.port, *p))).collect(),
+            banners: self.honeypot_banners.clone(),
+        }
+    }
+
+    fn validate_prompts(&self) -> Result<()> {
+        for (p, banner) in &self.honeypot_banners {
+            if !p.valid_banner(banner) {
+                bail!(
+                    "[ports] honeypot_banners {} = '{banner}': a {} greeting is one line of printable ASCII, at most 253 characters, \
+                     starting as the protocol has it (e.g. \"{}\")",
+                    p.name(),
+                    p.name(),
+                    p.default_banner()
+                );
+            }
+        }
+        for (key, p) in &self.honeypot_prompts {
+            let spec: PortSpec = key
+                .parse()
+                .map_err(|e| anyhow::anyhow!("[ports] honeypot_prompts: '{key}' is not a port (write it as in `honeypot`): {e}"))?;
+            if spec.proto == Some(Proto::Udp) {
+                bail!("[ports] honeypot_prompts: {spec}: TCP only, as honeypots are");
+            }
+            if !self.honeypot.iter().any(|h| h.port == spec.port) {
+                bail!(
+                    "[ports] honeypot_prompts: {spec} is not in `honeypot`: the {} prompts need a honeypot port to show them on",
+                    p.name()
+                );
+            }
+        }
+        if !self.honeypot_prompts.is_empty() && self.honeypot_capture == 0 {
+            bail!("[ports] honeypot_prompts needs honeypot_capture > 0: the replies to the prompts are what it keeps");
+        }
+        Ok(())
     }
 
     pub fn tripwired(&self, port: Option<u16>, proto: Proto) -> bool {
@@ -608,6 +665,10 @@ pub struct AllowCfg {
     /// other services and peers' reports, and is never shared.
     pub trust_authenticated: bool,
     pub trust_ttl: Dur,
+    /// A login excuses only so much: a recently authenticated address is banned anyway once
+    /// its score reaches this many ban thresholds (0: never). An account on a service is no
+    /// licence to guess the others' passwords from the same address.
+    pub trust_limit: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -722,6 +783,10 @@ pub struct EnforceCfg {
     pub iptables_chain: String,
     pub firewall_cmd: PathBuf,
     pub ipset: PathBuf,
+    /// conntrack-tools' `conntrack`: with firewalld and ufw, whose own rules accept
+    /// established traffic before vpsfort's, a ban also ends the address's open connections
+    /// with it (see the README, "Firewall backends"). Empty: never.
+    pub conntrack: PathBuf,
 }
 
 impl Default for Config {
@@ -790,7 +855,7 @@ impl Default for JournalCfg {
 impl Default for AllowCfg {
     fn default() -> Self {
         let nets = ["127.0.0.0/8", "::1"].iter().map(|s| s.parse().expect("valid default")).collect();
-        AllowCfg { nets, hosts: vec![], trust_authenticated: true, trust_ttl: Dur(86_400) }
+        AllowCfg { nets, hosts: vec![], trust_authenticated: true, trust_ttl: Dur(86_400), trust_limit: 4.0 }
     }
 }
 
@@ -907,6 +972,7 @@ impl Default for EnforceCfg {
             iptables_chain: "vpsfort".into(),
             firewall_cmd: "/usr/bin/firewall-cmd".into(),
             ipset: "/usr/sbin/ipset".into(),
+            conntrack: "/usr/sbin/conntrack".into(),
         }
     }
 }
@@ -977,6 +1043,8 @@ impl Config {
         if self.sources.audit && self.sources.audit_log.as_os_str().is_empty() {
             m.push("_TRANSPORT=audit".into());
         }
+        // journald's own word when it dropped a unit's lines for its rate limit
+        m.push("SYSLOG_IDENTIFIER=systemd-journald".into());
         for p in self.all_patterns() {
             if let Some(j) = p.journal_match() {
                 if !m.contains(&j) {
@@ -1082,6 +1150,9 @@ impl Config {
         if self.subnets.wide_max_step_v6 == 0 {
             bail!("subnets.wide_max_step_v6 must be at least 1");
         }
+        if self.allowlist.trust_limit.is_nan() || self.allowlist.trust_limit < 0.0 {
+            bail!("allowlist.trust_limit must be 0 or more");
+        }
         if let Some(h) = self.allowlist.hosts.iter().find(|h| !crate::net::valid_host_name(h)) {
             bail!("[allowlist] hosts: '{h}' is not a host name (no port, no address)");
         }
@@ -1105,6 +1176,7 @@ impl Config {
         if self.ports.honeypot_capture > crate::honeypot::MAX_CAPTURE {
             bail!("[ports] honeypot_capture = {}: at most {} bytes", self.ports.honeypot_capture, crate::honeypot::MAX_CAPTURE);
         }
+        self.ports.validate_prompts()?;
         if self.feeds.enabled && !self.feeds.asn_urls.is_empty() && (!self.geo.enabled || self.geo.asn_url.is_empty()) {
             bail!("[feeds] asn_urls needs the network database: [geo] enabled = true with an asn_url");
         }
@@ -1243,7 +1315,8 @@ mod tests {
                 "SYSLOG_IDENTIFIER=sudo",
                 "SYSLOG_FACILITY=4",
                 "SYSLOG_FACILITY=10",
-                "_TRANSPORT=audit"
+                "_TRANSPORT=audit",
+                "SYSLOG_IDENTIFIER=systemd-journald"
             ]
         );
         assert!(cfg.ports.whitelisted(Some(51820), Proto::Udp));
@@ -1260,11 +1333,11 @@ mod tests {
         assert!(Config::from_toml("[enforce]\niptables_chain = \"a b\"").is_err());
         assert!(Config::from_toml("[enforce]\niptables_chain = \"a-name-much-too-long-for-xt\"").is_err());
         assert!(Config::from_toml("[sources]\nejabberd = false\n[notify]\nenabled = true\nfrom = \"x.org\"").is_err());
-        assert_eq!(Config::default().journal_matches().len(), 10);
+        assert_eq!(Config::default().journal_matches().len(), 11);
         // a pattern of your own adds its unit; one already followed isn't added twice
         let p = Config::from_toml("[sources]\nprivilege = false\n[[patterns]]\nname = \"x\"\nunit = \"postfix@-.service\"\nregex = '(?P<ip>\\S+)'\n[[patterns]]\nname = \"y\"\nunit = \"postfix@-.service\"\nregex = 'a(?P<ip>\\S+)'").unwrap();
         assert_eq!(p.journal_matches().last().map(String::as_str), Some("_SYSTEMD_UNIT=postfix@-.service"));
-        assert_eq!(p.journal_matches().len(), 9);
+        assert_eq!(p.journal_matches().len(), 10);
         assert!(Config::from_toml("[[patterns]]\nname = \"x\"\nunit = \"a.service\"\nregex = '(?P<ip>\\S+)'\n[[patterns]]\nname = \"x\"\nunit = \"b.service\"\nregex = '(?P<ip>\\S+)'").is_err(), "names are unique");
         // [sources] nextcloud_aio, called nextcloud before
         assert!(Config::from_toml("[sources]\nnextcloud = true").unwrap().sources.nextcloud_aio);
@@ -1300,6 +1373,32 @@ mod tests {
         assert_eq!(Config::from_toml("[ports]\nhoneypot = [2323]").unwrap().ports.honeypot_capture, 512, "a few hundred bytes");
         assert_eq!(Config::from_toml("[ports]\nhoneypot_capture = 0").unwrap().ports.honeypot_capture, 0, "closed at once");
         assert!(Config::from_toml("[ports]\nhoneypot_capture = 65536").is_err());
+        // prompts: off by default, only on honeypot ports, TCP, with a capture to keep the replies
+        assert_eq!(Config::default().ports.prompting(), crate::honeypot::Prompting::default(), "no prompts, the default greetings");
+        let banner = Config::from_toml(
+            "[ports]\nhoneypot_banners = { ssh = \"SSH-2.0-OpenSSH_10.0p2 Debian-7\", ftp = \"220 ProFTPD Server (Debian)\" }",
+        )
+        .unwrap();
+        assert_eq!(banner.ports.prompting().banners[&crate::honeypot::Prompts::Ssh], "SSH-2.0-OpenSSH_10.0p2 Debian-7");
+        assert_eq!(banner.ports.prompting().banners[&crate::honeypot::Prompts::Ftp], "220 ProFTPD Server (Debian)");
+        let bad = Config::from_toml("[ports]\nhoneypot_banners = { ssh = \"OpenSSH_10.0\" }").unwrap_err().to_string();
+        assert!(bad.contains("honeypot_banners ssh") && bad.contains("SSH-2.0-OpenSSH_"), "{bad}");
+        assert!(Config::from_toml("[ports]\nhoneypot_banners = { ftp = \"+OK\" }").is_err());
+        assert!(Config::from_toml("[ports]\nhoneypot_banners = { http = \"HTTP/1.1 200 OK\" }").is_err(), "unknown protocol");
+        let prompted =
+            Config::from_toml("[ports]\nhoneypot = [2323, \"21/tcp\", 25]\nhoneypot_prompts = { \"2323/tcp\" = \"telnet\", 21 = \"ftp\" }")
+                .unwrap();
+        assert_eq!(
+            prompted.ports.prompting().by_port.into_iter().collect::<Vec<_>>(),
+            [(21, crate::honeypot::Prompts::Ftp), (2323, crate::honeypot::Prompts::Telnet)]
+        );
+        let err = |toml: &str| Config::from_toml(toml).unwrap_err().to_string();
+        assert!(err("[ports]\nhoneypot = [2323]\nhoneypot_prompts = { 23 = \"telnet\" }").contains("not in `honeypot`"));
+        assert!(err("[ports]\nhoneypot = [2323]\nhoneypot_prompts = { 2323 = \"http\" }").contains("unknown variant"));
+        assert!(err("[ports]\nhoneypot = [2323]\nhoneypot_prompts = { \"2323/udp\" = \"telnet\" }").contains("TCP only"));
+        assert!(err("[ports]\nhoneypot = [2323]\nhoneypot_prompts = { x = \"telnet\" }").contains("not a port"));
+        assert!(err("[ports]\nhoneypot = [2323]\nhoneypot_capture = 0\nhoneypot_prompts = { 2323 = \"telnet\" }")
+            .contains("honeypot_capture > 0"));
         assert!(Config::from_toml("[journal]\nsyslog_file = \"/var/log/messages\"").is_ok());
         assert!(Config::from_toml("[journal]\nsyslog_file = \"messages\"").is_err());
         assert!(Config::from_toml("[journal]\nsyslog_file = \"/var/log/messages\"\nverify_every = \"1d\"").is_err());

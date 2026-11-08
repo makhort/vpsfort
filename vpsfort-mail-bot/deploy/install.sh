@@ -63,6 +63,20 @@ setting() { # the value of $1 in config.env, quotes removed
     grep -E "^$1=" "$DIR/config.env" | tail -n 1 | cut -d= -f2- | tr -d "\"'" || true
 }
 
+# The owner and mode of one of the bot's files in a directory the bot's user writes to ($DIR,
+# its log directory): only a regular file with one name, never through a link the bot could
+# have planted there, which would make root change another file (chown -h follows no link;
+# chmod would, so it isn't run on one).
+own_file() { # owner mode file
+    [ -n "$3" ] && [ -f "$3" ] && [ ! -L "$3" ] || return 0
+    if [ "$(stat -c %h "$3" 2> /dev/null)" != 1 ]; then
+        echo "WARNING: $3 has more than one name (a hard link): left as it is"
+        return 0
+    fi
+    chown -h "$1" "$3"
+    chmod "$2" "$3"
+}
+
 # Owners and modes. The directory is sticky: the bot may delete its own files in the
 # outbox, but not root's ones here.
 #   config.env, OPENPGP_KEY, SMTP_PASSWORD_FILE, SMTP_CA_FILE   root:vpsfort-mail-bot 640 (the bot reads them)
@@ -76,8 +90,7 @@ for var in OPENPGP_KEY SMTP_PASSWORD_FILE SMTP_CA_FILE; do
     f=$(setting "$var")
     [ -n "$f" ] || continue
     if [ -f "$f" ]; then
-        chown root:"$BOT" "$f"
-        chmod 640 "$f"
+        own_file root:"$BOT" 640 "$f"
     else
         echo "WARNING: $var=$f does not exist, so the bot won't start (or comment $var out)."
     fi
@@ -85,13 +98,11 @@ done
 # SANITIZE's pseudonym key: the bot's, made by it on the first start (or by a `check` as root)
 PK=$(setting PSEUDONYM_KEY); PK=${PK:-$DIR/pseudonym.key}
 if [ -f "$PK" ]; then
-    chown "$BOT:$BOT" "$PK"
-    chmod 600 "$PK"
+    own_file "$BOT:$BOT" 600 "$PK"
 fi
 SK=$(setting SIGNING_KEY)
 if [ -n "$SK" ] && [ -f "$SK" ]; then
-    chown "$BOT:$BOT" "$SK"
-    chmod 600 "$SK"
+    own_file "$BOT:$BOT" 600 "$SK"
 elif [ -n "$SK" ]; then
     echo "WARNING: SIGNING_KEY=$SK does not exist, so the bot won't start (make it with keygen, or comment it out)."
 fi
@@ -100,8 +111,7 @@ mkdir -p "$LOGDIR"
 chown "$BOT:$BOT" "$LOGDIR"
 chmod 700 "$LOGDIR"
 if [ -f "$LOGDIR/bot.log" ]; then
-    chown "$BOT:$BOT" "$LOGDIR/bot.log"
-    chmod 600 "$LOGDIR/bot.log"
+    own_file "$BOT:$BOT" 600 "$LOGDIR/bot.log"
 fi
 
 # Outbox: vpsfort (root) writes alerts and the weekly report here and hands each file to

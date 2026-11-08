@@ -63,6 +63,20 @@ setting() { # the value of $1 in config.env, quotes removed
     grep -E "^$1=" "$DIR/config.env" | tail -n 1 | cut -d= -f2- | tr -d "\"'" || true
 }
 
+# The owner and mode of one of the bot's files in a directory the bot's user writes to ($DIR,
+# its log directory): only a regular file with one name, never through a link the bot could
+# have planted there, which would make root change another file (chown -h follows no link;
+# chmod would, so it isn't run on one).
+own_file() { # owner mode file
+    [ -n "$3" ] && [ -f "$3" ] && [ ! -L "$3" ] || return 0
+    if [ "$(stat -c %h "$3" 2> /dev/null)" != 1 ]; then
+        echo "WARNING: $3 has more than one name (a hard link): left as it is"
+        return 0
+    fi
+    chown -h "$1" "$3"
+    chmod "$2" "$3"
+}
+
 # Owners and modes. The directory is sticky: the bot may replace its own files (the state
 # is written to a temporary file and renamed), but not root's ones.
 #   config.env (the token), OPENPGP_KEY   root:vpsfort-push-bot 640  (the bot reads them)
@@ -76,16 +90,14 @@ KEY=$(setting PSEUDONYM_KEY); KEY=${KEY:-$DIR/pseudonym.key}
 # the admin's OpenPGP public key: root's, the bot only reads it
 PGPKEY=$(setting OPENPGP_KEY)
 if [ -n "$PGPKEY" ] && [ -f "$PGPKEY" ]; then
-    chown root:"$BOT" "$PGPKEY"
-    chmod 640 "$PGPKEY"
+    own_file root:"$BOT" 640 "$PGPKEY"
 elif [ -n "$PGPKEY" ]; then
     echo "WARNING: OPENPGP_KEY=$PGPKEY does not exist, so the bot won't start. Export your public"
     echo "  key from OpenKeychain or iPGMail and copy it there (root:$BOT 640), or comment OPENPGP_KEY out."
 fi
 for f in "$KEY"; do
     if [ -f "$f" ]; then
-        chown "$BOT:$BOT" "$f"
-        chmod 600 "$f"
+        own_file "$BOT:$BOT" 600 "$f"
     fi
 done
 # leftovers of an interrupted write, possibly root's: the bot could not replace them
@@ -95,8 +107,7 @@ mkdir -p "$LOGDIR"
 chown "$BOT:$BOT" "$LOGDIR"
 chmod 700 "$LOGDIR"
 if [ -f "$LOGDIR/bot.log" ]; then
-    chown "$BOT:$BOT" "$LOGDIR/bot.log"
-    chmod 600 "$LOGDIR/bot.log"
+    own_file "$BOT:$BOT" 600 "$LOGDIR/bot.log"
 fi
 
 # Outbox: vpsfort (root) writes alerts and the weekly report here and hands each file to

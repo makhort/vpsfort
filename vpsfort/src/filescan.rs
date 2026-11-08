@@ -184,6 +184,36 @@ fn clamd_config_arg(configured: &Path, exists: &dyn Fn(&Path) -> bool) -> Option
     (!default_there && exists(Path::new(FEDORA))).then(|| format!("--config-file={FEDORA}"))
 }
 
+/// The transient scan service's sandbox, as vpsfort-avscan.service's: the scanners parse
+/// hostile files as root (a file any user planted where the integrity watches look), so a
+/// hole in ClamAV's or YARA's parsers must not give more than reading. Everything is
+/// read-only but the cache directory (archives are unpacked there: `TMPDIR`), there is no
+/// network, no new privileges, and reading past file modes is the only capability kept.
+const SCAN_SANDBOX: &[&str] = &[
+    "Nice=10",
+    "IOSchedulingClass=idle",
+    "CacheDirectory=vpsfort-avscan",
+    "ProtectSystem=strict",
+    "ProtectHome=read-only",
+    "PrivateNetwork=yes",
+    "RestrictAddressFamilies=AF_UNIX",
+    "CapabilityBoundingSet=CAP_DAC_READ_SEARCH",
+    "NoNewPrivileges=yes",
+    "ProtectKernelTunables=yes",
+    "ProtectKernelModules=yes",
+    "ProtectKernelLogs=yes",
+    "ProtectControlGroups=yes",
+    "ProtectClock=yes",
+    "ProtectHostname=yes",
+    "RestrictNamespaces=yes",
+    "RestrictRealtime=yes",
+    "RestrictSUIDSGID=yes",
+    "LockPersonality=yes",
+    "SystemCallArchitectures=native",
+    "SystemCallFilter=@system-service",
+    "SystemCallErrorNumber=EPERM",
+];
+
 fn command(cfg: &ScanCfg, program: &Path, args: &[String]) -> Command {
     if cfg.systemd_run.as_os_str().is_empty() {
         let mut c = Command::new(program);
@@ -192,14 +222,11 @@ fn command(cfg: &ScanCfg, program: &Path, args: &[String]) -> Command {
     }
     let mut c = Command::new(&cfg.systemd_run);
     c.args(["--quiet", "--wait", "--pipe", "--collect", "--description=vpsfort scan of changed files"]);
-    for p in [
-        format!("MemoryMax={}", cfg.scan_memory),
-        format!("RuntimeMaxSec={}", cfg.scan_timeout.0),
-        "Nice=10".into(),
-        "IOSchedulingClass=idle".into(),
-    ] {
-        c.args(["--property", &p]);
+    let limits = [format!("MemoryMax={}", cfg.scan_memory), format!("RuntimeMaxSec={}", cfg.scan_timeout.0)];
+    for p in limits.iter().map(String::as_str).chain(SCAN_SANDBOX.iter().copied()) {
+        c.args(["--property", p]);
     }
+    c.arg("--setenv=TMPDIR=/var/cache/vpsfort-avscan");
     c.arg("--").arg(program).args(args);
     c
 }
@@ -488,6 +515,10 @@ while IFS= read -r f; do grep -q EVIL "$f" && echo "Evil_Rule $f"; done < "$last
         assert_eq!(r.infected().count(), 1);
         let run_args = std::fs::read_to_string(bin.join("run.args")).unwrap();
         assert!(run_args.contains("--property MemoryMax=2G") && run_args.contains("--property RuntimeMaxSec=1800"), "{run_args}");
+        for p in ["ProtectSystem=strict", "CapabilityBoundingSet=CAP_DAC_READ_SEARCH", "PrivateNetwork=yes", "NoNewPrivileges=yes"] {
+            assert!(run_args.contains(&format!("--property {p}")), "{p}: {run_args}");
+        }
+        assert!(run_args.contains("--setenv=TMPDIR=/var/cache/vpsfort-avscan"), "{run_args}");
         let yara_args = std::fs::read_to_string(bin.join("yara.args")).unwrap();
         assert!(yara_args.contains("--scan-list r0:") && yara_args.contains("rules/a.yar r1:"), "{yara_args}");
         assert!(!dir.join("file-scan.list").exists(), "the list is removed");

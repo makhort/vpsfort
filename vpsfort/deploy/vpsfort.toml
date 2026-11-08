@@ -28,7 +28,7 @@ services = ["vpsfort-xmpp-bot.service"]
 service_restart_grace = "2m"      # longer than the units' RestartSec
 # Built-in sources for common services (README, "Built-in sources for common services"):
 # apache, nginx, haproxy, prosody, nextcloud (without AIO), owncloud (10), mysql (MariaDB too),
-# postgresql, mongodb, redis (Valkey too), postfix, dovecot, vpsfort-web (the web console). Their logs are looked for in the usual places; [sources.app_logs] names others.
+# postgresql, mongodb, redis (Valkey too), postfix, dovecot, vpsfort-web (the web console), decoy (a catch-all web site nothing points at: one request bans). Their logs are looked for in the usual places; [sources.app_logs] names others.
 apps = []
 
 [nextcloud_aio]           # was [nextcloud]
@@ -72,6 +72,13 @@ honeypot = []
 # scanner was after (a Telnet login, an HTTP request), in the evidence and the abuse report.
 # 0 closes at once without reading; at most 4096.
 honeypot_capture = 512
+# Honeypot ports that show a server's fixed prompts (login:, 220, +OK) and keep the replies,
+# for dedicated honeypot nodes (README, "Dedicated honeypot nodes"): telnet, ftp, smtp, pop3, imap, ssh (the banner alone).
+# honeypot_prompts = { "2323/tcp" = "telnet", "21/tcp" = "ftp", "22/tcp" = "ssh", "25/tcp" = "smtp" }
+# The greeting each prompted protocol opens with, a real server's line (OpenSSH, vsftpd, Postfix,
+# Dovecot) unless set here: the software and version the port is to pass for. Set ssh to what
+# the sshd on this host's real port sends (nc -w 2 host port).
+# honeypot_banners = { ssh = "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u5", ftp = "220 (vsFTPd 3.0.3)" }
 
 [canary]
 # Account-level tripwires: names attackers guess but nobody here uses. One login attempt
@@ -223,6 +230,9 @@ ufw = "/usr/sbin/ufw"
 iptables = "/usr/sbin/iptables"
 ip6tables = "/usr/sbin/ip6tables"
 iptables_chain = "vpsfort"
+# With firewalld and ufw a ban also ends the address's open connections through conntrack-tools
+# (their own rules accept established traffic first); "" never does.
+conntrack = "/usr/sbin/conntrack"
 
 [notify]
 # XMPP warnings via `ejabberdctl send_message`. Users get messages only in enforce mode

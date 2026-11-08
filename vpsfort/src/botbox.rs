@@ -2,7 +2,8 @@
 //! with ejabberd's plain `send_message` as the fallback.
 //!
 //! The bot's outbox is a directory both sides share (root:ejabberd 1770, sticky). One file
-//! per message, `alert-<time>-<n>.msg`: `To:` and `Subject:` lines, a blank line, the body.
+//! per message, `alert-<time>-<n>-<signature>.msg`: `To:` and `Subject:` lines, a blank line,
+//! the body; the signature is the keyed hash of name and text under root's key ([`Key`]).
 //! It is written under a dot name, given to the bot's user and renamed into place. Then:
 //!
 //! - the bot claims it by renaming it to `.<name>.sending`, sends it and deletes it; if
@@ -12,7 +13,9 @@
 //!   within `grace`, one it rejected, and one stuck in `.sending` (the bot died while sending)
 //!   is claimed back by a rename to `.<name>.fallback` and sent the old way, with a line
 //!   saying why it isn't encrypted. Renames are atomic, so only one side sends a message
-//!   (unless the bot hangs mid-send for over ten minutes and then finishes).
+//!   (unless the bot hangs mid-send for over ten minutes and then finishes). Only a file whose
+//!   name carries its text's signature: the bot's user writes in the directory too, and a file
+//!   of its own under one of these names is deleted and reported instead.
 //!
 //! The same sweep notices the bot's other files (the weekly abuse report) waiting longer than
 //! `stuck_after`, and says so once per file.
@@ -28,6 +31,10 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use chacha20poly1305::aead::{KeyInit, OsRng};
+use chacha20poly1305::XChaCha20Poly1305;
+use sha2::{Digest, Sha256};
+
 use crate::notify::Notice;
 
 /// How long a `.sending` message may sit beyond `grace` before vpsfort takes it back: the
@@ -42,6 +49,87 @@ const MAX_MESSAGE: u64 = 1 << 20;
 
 pub const PREFIX: &str = "alert-";
 pub const SUFFIX: &str = ".msg";
+
+/// Length of the signature in a message's name: hex digits of the keyed hash (64 bits).
+const SIG_LEN: usize = 16;
+
+/// Signs the messages vpsfort writes, in their names. The bot's user writes in the outbox too,
+/// and could put a file of its own under one of vpsfort's names: the fallback would send it to
+/// the admins as vpsfort's word (an unencrypted alert through ejabberd's API looks like any
+/// other). So a name ends in the keyed hash (HMAC-SHA256) of the name's head and the file's
+/// text, with a key only root has (`botbox.key` next to the state file, see [`key_path`]), and
+/// the sweep checks it before any fallback: what doesn't match is deleted and reported. The
+/// bot itself checks nothing; it sends what it finds under `alert-*.msg` to its admin, as before.
+#[derive(Clone)]
+pub struct Key([u8; 32]);
+
+/// The message key's file: root's, next to the state file.
+pub fn key_path(state_file: &Path) -> PathBuf {
+    state_file.with_file_name("botbox.key")
+}
+
+impl Key {
+    /// The key in `path` (0600), made there when missing. When it can neither be read nor
+    /// written, a key for this run (said on stderr): messages from before a restart then
+    /// fail the check and are dropped, never sent plain.
+    pub fn load_or_make(path: &Path) -> Key {
+        match fs::read(path) {
+            Ok(bytes) if bytes.len() == 32 => return Key(bytes.try_into().expect("32 bytes")),
+            Ok(_) => eprintln!("vpsfort: {} is not a 32-byte key: replaced", path.display()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => eprintln!("vpsfort: cannot read {}: {e}", path.display()),
+        }
+        let key = Key::random();
+        let write = || -> io::Result<()> {
+            let _ = fs::remove_file(path);
+            let mut f = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?;
+            f.write_all(&key.0)?;
+            f.sync_all()
+        };
+        if let Err(e) = write() {
+            eprintln!("vpsfort: cannot write {}: {e}; the message key is this run's only", path.display());
+        }
+        key
+    }
+
+    pub fn random() -> Key {
+        let mut k = [0u8; 32];
+        k.copy_from_slice(&XChaCha20Poly1305::generate_key(&mut OsRng));
+        Key(k)
+    }
+
+    /// HMAC-SHA256 of `head` and `text`, cut to `SIG_LEN` hex digits.
+    fn sign(&self, head: &str, text: &str) -> String {
+        let (mut ipad, mut opad) = ([0x36u8; 64], [0x5cu8; 64]);
+        for (i, b) in self.0.iter().enumerate() {
+            ipad[i] ^= b;
+            opad[i] ^= b;
+        }
+        let inner = Sha256::new().chain_update(ipad).chain_update(head).chain_update([0u8]).chain_update(text).finalize();
+        let mac = Sha256::new().chain_update(opad).chain_update(inner).finalize();
+        mac.iter().take(SIG_LEN / 2).map(|b| format!("{b:02x}")).collect()
+    }
+}
+
+/// The messages among `names` without a signature (written by a version before 2026-11-07):
+/// those there when vpsfort starts may still go out plain; any that turn up later aren't
+/// vpsfort's.
+fn unsigned(names: impl Iterator<Item = String>) -> HashSet<String> {
+    names.filter_map(|n| split_state(&n).map(|(b, _)| b.to_string())).filter(|b| signature(b).is_none()).collect()
+}
+
+/// [`unsigned`] for the files of `dir`, if it can be read.
+fn unsigned_in(dir: &Path) -> Option<HashSet<String>> {
+    let entries = fs::read_dir(dir).ok()?;
+    Some(unsigned(entries.filter_map(|e| e.ok()?.file_name().into_string().ok())))
+}
+
+/// The head and the signature of a message name (`alert-<time>-<n>-<signature>.msg`), if it
+/// has one.
+fn signature(base: &str) -> Option<(&str, &str)> {
+    let (head, sig) = base.strip_suffix(SUFFIX)?.rsplit_once('-')?;
+    (sig.len() == SIG_LEN && sig.bytes().all(|b| b.is_ascii_hexdigit())).then_some((head, sig))
+}
 
 /// Why a message went out unencrypted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,6 +170,9 @@ pub struct Sweep {
     pub fallback: Vec<Fallback>,
     /// The bot's other files waiting longer than `stuck_after` (name, age), each named once.
     pub stuck: Vec<(String, Duration)>,
+    /// Files under vpsfort's names that vpsfort didn't write, or that were changed since:
+    /// deleted, to be reported.
+    pub forged: Vec<String>,
 }
 
 /// The file's text. Header values are kept on one line.
@@ -173,11 +264,46 @@ pub struct BotBox {
     /// Stuck files already reported, and fallbacks whose failure was already logged.
     reported: HashSet<String>,
     pub failing: HashSet<PathBuf>,
+    /// Signs the names of the messages written, and checks them before a fallback.
+    key: Key,
+    /// Messages without a signature (an older version's) in the outbox when this was made
+    /// (or at the first sweep, if it wasn't there yet): the only unsigned ones a fallback may send.
+    legacy: Option<HashSet<String>>,
 }
 
 impl BotBox {
     pub fn new(dir: PathBuf, owner: Option<(u32, u32)>, grace: Duration, stuck_after: Duration) -> Self {
-        BotBox { dir, owner, grace, stuck_after, fallback: true, seq: 0, reported: HashSet::new(), failing: HashSet::new() }
+        BotBox {
+            owner,
+            grace,
+            stuck_after,
+            fallback: true,
+            seq: 0,
+            reported: HashSet::new(),
+            failing: HashSet::new(),
+            key: Key::random(),
+            legacy: unsigned_in(&dir),
+            dir,
+        }
+    }
+
+    /// With root's persistent message key (the daemon's and `notify-test`'s) instead of one for
+    /// this run: the sweep then still knows the messages written before a restart.
+    pub fn with_key(self, key: Key) -> Self {
+        BotBox { key, ..self }
+    }
+
+    /// Whether `base` carries the signature of `text` under this key, i.e. vpsfort wrote it
+    /// and nobody changed it. A name without one (written by a version before 2026-11-07)
+    /// passes only if it was there at the first sweep.
+    fn genuine(&self, base: &str, text: &str) -> bool {
+        match signature(base) {
+            Some((head, sig)) => {
+                let want = self.key.sign(head, text);
+                want.len() == sig.len() && want.bytes().zip(sig.bytes()).fold(0, |d, (a, b)| d | (a ^ b)) == 0
+            }
+            None => self.legacy.as_ref().is_some_and(|l| l.contains(base)),
+        }
     }
 
     /// An outbox without a fallback (vpsfort-tg-bot's): messages wait there until the bot sends them,
@@ -195,13 +321,16 @@ impl BotBox {
     pub fn put(&mut self, n: &Notice, now: SystemTime) -> io::Result<PathBuf> {
         self.seq += 1;
         let t = now.duration_since(UNIX_EPOCH).unwrap_or_default();
-        // sorts in sending order: time, then the counter for messages in the same instant
-        let name = format!("{PREFIX}{:012}{:09}-{:06}{SUFFIX}", t.as_secs(), t.subsec_nanos(), self.seq % 1_000_000);
+        // sorts in sending order: time, then the counter for messages in the same instant;
+        // then the text's signature, checked before any fallback
+        let text = render(n);
+        let head = format!("{PREFIX}{:012}{:09}-{:06}", t.as_secs(), t.subsec_nanos(), self.seq % 1_000_000);
+        let name = format!("{head}-{}{SUFFIX}", self.key.sign(&head, &text));
         let tmp = self.dir.join(format!(".{name}.tmp"));
         let dest = self.dir.join(&name);
         let write = || -> io::Result<()> {
             let mut f = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
-            f.write_all(render(n).as_bytes())?;
+            f.write_all(text.as_bytes())?;
             f.sync_all()?;
             if let Some((uid, gid)) = self.owner {
                 std::os::unix::fs::fchown(&f, Some(uid), Some(gid))?;
@@ -221,6 +350,10 @@ impl BotBox {
         let mut present = HashSet::new();
         let mut entries: Vec<_> = fs::read_dir(&self.dir)?.filter_map(|e| e.ok()).collect();
         entries.sort_by_key(|e| e.file_name());
+        if self.legacy.is_none() {
+            // the outbox wasn't there when this BotBox was made
+            self.legacy = Some(unsigned(entries.iter().filter_map(|e| e.file_name().into_string().ok())));
+        }
         for entry in entries {
             let Ok(name) = entry.file_name().into_string() else { continue };
             let Ok(meta) = fs::symlink_metadata(entry.path()) else { continue };
@@ -281,7 +414,18 @@ impl BotBox {
                     Err(e) => return Err(e),
                 }
             }
-            match read_message(&claimed).as_deref().and_then(parse) {
+            let text = read_message(&claimed);
+            if text.as_deref().is_some_and(|t| !self.genuine(base, t)) {
+                eprintln!(
+                    "vpsfort: {} was not written by vpsfort (its name carries no valid signature of its text): deleted, not sent",
+                    claimed.display()
+                );
+                let _ = fs::remove_file(&claimed);
+                self.failing.remove(&claimed);
+                out.forged.push(base.to_string());
+                continue;
+            }
+            match text.as_deref().and_then(parse) {
                 Some(notice) => out.fallback.push(Fallback { path: claimed, notice, why }),
                 None => {
                     eprintln!("vpsfort: {} is not an admin message, deleted", claimed.display());
@@ -340,6 +484,49 @@ mod tests {
         assert_eq!(parse("no header"), None);
         assert_eq!(parse("From: x\n\nbody"), None);
         assert_eq!(parse("Subject: s\n\nbody"), None, "a recipient is required");
+    }
+
+    /// What the bot's user writes under vpsfort's names isn't vpsfort's word: the fallback
+    /// sends only a file whose name carries the signature of its text under root's key.
+    #[test]
+    fn forged_messages_never_go_out_plain() {
+        let d = dir("forged");
+        let grace = Duration::from_secs(120);
+        let key = Key::load_or_make(&d.join("botbox.key"));
+        assert_eq!(fs::metadata(d.join("botbox.key")).unwrap().mode() & 0o777, 0o600);
+        let now = SystemTime::now();
+        // a message an older version wrote (no signature), there when this one starts
+        let old = "alert-000000000001000000000-000001.msg";
+        fs::write(d.join(old), render(&notice())).unwrap();
+        let mut b = BotBox::new(d.clone(), None, grace, Duration::from_secs(3600)).with_key(key.clone());
+        assert_eq!(b.sweep(now).unwrap(), Sweep::default(), "within the grace time");
+        let real = b.put(&notice(), now).unwrap();
+        let name = real.file_name().unwrap().to_str().unwrap().to_string();
+        assert_eq!(name.len(), PREFIX.len() + 21 + 1 + 6 + 1 + SIG_LEN + SUFFIX.len(), "{name}");
+        // the bot's user: a file under a made-up signature, one under an old-style name that
+        // wasn't there before, and a real message's signature over a changed text
+        fs::write(d.join("alert-000000000002000000000-000002-0123456789abcdef.msg"), render(&notice())).unwrap();
+        fs::write(d.join("alert-000000000003000000000-000003.msg"), render(&notice())).unwrap();
+        let head = "alert-000000000004000000000-000004";
+        let forged = format!("{head}-{}{SUFFIX}", key.sign(head, &render(&notice())));
+        fs::write(d.join(&forged), "To: admin@example.org\nSubject: all clear\n\nnothing to see").unwrap();
+        let s = b.sweep(now + Duration::from_secs(180)).unwrap();
+        let sent: Vec<String> = s.fallback.iter().map(|f| f.path.file_name().unwrap().to_str().unwrap().to_string()).collect();
+        assert_eq!(sent, [format!(".{old}.fallback"), format!(".{name}.fallback")], "the real one and the old one");
+        let mut forged_names = s.forged.clone();
+        forged_names.sort();
+        assert_eq!(
+            forged_names,
+            ["alert-000000000002000000000-000002-0123456789abcdef.msg", "alert-000000000003000000000-000003.msg", forged.as_str()]
+        );
+        for f in &s.fallback {
+            fs::remove_file(&f.path).unwrap();
+        }
+        assert_eq!(names(&d), ["botbox.key"], "the forged ones are deleted");
+        // the key is read back, so messages written before a restart still pass
+        assert_eq!(Key::load_or_make(&d.join("botbox.key")).sign("a", "b"), key.sign("a", "b"));
+        assert_ne!(Key::random().sign("a", "b"), key.sign("a", "b"));
+        let _ = fs::remove_dir_all(&d);
     }
 
     #[test]

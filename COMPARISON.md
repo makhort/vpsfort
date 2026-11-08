@@ -3,9 +3,9 @@
 **How vpsfort compares with the open-source and commercial tools you might use instead:
 a briefing for teams thinking about adopting it.**
 
-The state is as of 2026-11-07: vpsfort 0.6.2, its web console vpsfort-web 0.5.1, the bots
-(vpsfort-xmpp-bot 0.7.0, vpsfort-tg-bot and vpsfort-mail-bot 0.5.1, vpsfort-signal-bot and
-vpsfort-matrix-bot 0.3.1, vpsfort-push-bot 0.2.1) and vpsfort-sim 0.2.0 (the commit named under [Method and
+The state is as of 2026-11-08: vpsfort 0.7.0, its web console vpsfort-web 0.5.1, the bots
+(vpsfort-xmpp-bot 0.7.1, vpsfort-tg-bot and vpsfort-mail-bot 0.5.2, vpsfort-signal-bot and
+vpsfort-matrix-bot 0.3.2, vpsfort-push-bot 0.2.2) and vpsfort-sim 0.2.0 (the commit named under [Method and
 sources](#20-method-and-sources)), compared with the releases
 and documentation of the other tools as of 2026-10-25. Feature claims about vpsfort come from its
 [README](vpsfort/README.md) and code. Claims about the other tools come from their documentation,
@@ -88,7 +88,7 @@ journal ─► vpsfort ─► nftables / firewalld / ufw / iptables / ipset  ◄
 
 **Key numbers** (measured, from the README):
 
-- **~10 MB** static binary with no runtime dependencies (the optional web console is another ~4 MB).
+- **~11 MB** static binary with no runtime dependencies (the optional web console is another ~4 MB).
 - **~10 MB RAM** for a real month of traffic (~50 MB with the offline geo database). The hard
   limit is 128 MB, and it held in a synthetic flood of 450,000 sources.
 - A real month of logs (~210,000 records) replays through the full engine in **about one
@@ -123,9 +123,10 @@ journal ─► vpsfort ─► nftables / firewalld / ufw / iptables / ipset  ◄
   enforce a WAF's decisions at the firewall (`[waf]`, with CrowdSec's formats built in), but it
   inspects no HTTP request itself and answers none: run CrowdSec AppSec, ModSecurity or Coraza
   for the detection, and a CDN or an HTTP bouncer for captchas.
-- **Other platforms:** Windows, macOS, BSD, Linux without systemd. ARM bundles (arm64 and
-  32-bit ARMv7) are built and tested in CI but haven't run on an ARM server yet. Fedora has been
-  tried on one test server; RHEL and its rebuilds not yet.
+- **Other platforms:** Windows, macOS, BSD. Alpine (OpenRC, a syslog file as the input) is
+  packaged and installed in CI but hasn't run on an Alpine host; ARM bundles (arm64 and 32-bit
+  ARMv7) are built and tested in CI but haven't run on an ARM server yet. Fedora runs in
+  production; RHEL and its rebuilds are untried (CI installs the `.rpm` on AlmaLinux 9).
 - **Organisations that need a vendor:** a support SLA, certified compliance evidence, or a
   24/7 security operations team.
 
@@ -137,7 +138,7 @@ journal ─► vpsfort ─► nftables / firewalld / ufw / iptables / ipset  ◄
 
 | tool | kind | license | language | model | state in Oct 2026 |
 |---|---|---|---|---|---|
-| **vpsfort** | ban manager and host watch | MIT | Rust | decaying scores per address across all services, own nftables table (or firewalld, ipset, ufw, iptables), peer-to-peer cluster | 0.6.0, new in Oct 2026 |
+| **vpsfort** | ban manager and host watch | MIT | Rust | decaying scores per address across all services, own nftables table (or firewalld, ipset, ufw, iptables), peer-to-peer cluster | 0.7.0, new in Oct 2026 |
 | **fail2ban** | ban manager | GPL-2.0 | Python | "jails": a regex filter and a firewall action per service | 1.1.0 is what distributions ship |
 | **sshguard** | ban manager | BSD-style | C | built-in attack parser, a score per address | 2.5.1 (2025) |
 | **reaction** | ban manager | AGPL-3.0 | – | streams, regex and actions; a smaller, newer fail2ban alternative | 2.x |
@@ -176,7 +177,7 @@ journal ─► vpsfort ─► nftables / firewalld / ufw / iptables / ipset  ◄
 | escalating ban times | ✓ 1 h to 30 d | ✓ `bantime.increment` | ✓ | ◐ profile expressions | ✓ `repeated_offenders` | ✓ `LF_PERMBLOCK` |
 | subnet bans | ✓ grow from /24 towards /16 | – | ◐ fixed prefix | ◐ range-scoped scenarios | – | ◐ `LF_NETBLOCK`, fixed |
 | port scans and tripwire ports | ✓ | ◐ own filter | – | ✓ | ◐ | ✓ |
-| honeypot listeners (handshake proves the source; what the scanner sent is evidence) | ✓ | – | – | – | – | – |
+| honeypot listeners (handshake proves the source; what the scanner sent is evidence; optional Telnet, FTP and mail prompts that bring out the login tried; a decoy web site on the real web server) | ✓ | – | – | – | – | – |
 | canary account names | ✓ | ◐ own filter | – | ◐ own scenario | ◐ own rule | – |
 | per-account alerts (distributed guessing, login after failures, new network, new SSH key) | ✓ | – | – | ◐ | ◐ success after failures | ◐ `LF_DISTATTACK` |
 | a recent login protects an address | ✓ per service | ◐ `ignorecommand` script | – | – | – | – |
@@ -191,7 +192,7 @@ journal ─► vpsfort ─► nftables / firewalld / ufw / iptables / ipset  ◄
 | **Scoring** | Two decaying scores (10 min and 12 h half-life) add up every signal from every service. A scanner that touches SSH, XMPP and closed ports a little each still reaches a ban. Weights are calibrated on a real month of logs. | One model for everything: tuning means weights and thresholds, not per-service rules. At first it is less obvious than fail2ban's "N failures in T minutes". |
 | **Escalation** | 1 h → 6 h → 1 d → 7 d → 30 d per repeat offence. Offences are shared, so a repeat attacker escalates on every node of the cluster. | fail2ban, sshguard and CSF escalate too, and CSF offers permanent bans. Only the cluster-wide counter is new here. |
 | **Subnet bans** | Starts at /24 (IPv6 /64) and grows towards /16 (/48) only as nearby bans appear, at most 2 bits a step. It never covers a protected address. With the geo database, it never grows into another provider's network. | The provider boundary needs the `[geo]` ASN database. A stricter policy, such as blocking a whole network or country now, needs feeds. CSF blocks countries out of the box. |
-| **Tripwires and honeypots** | One SYN to an unused telnet, RDP or database port bans. Kernel tripwires log these hits from vpsfort's own nftables rules, so UFW's log limit (about 3 lines a minute) doesn't hide scans. Honeypot ports complete the TCP handshake, so their evidence can't be forged, and keep the scanner's first bytes (a Telnet login, an HTTP request) for the abuse report. | A blocked SYN can carry a forged source address. vpsfort limits the damage: such evidence never bans an address that logged in recently, replies always pass, and with honeypots set it is worth half a ban. A spoofer can still get outsiders banned for an hour. |
+| **Tripwires and honeypots** | One SYN to an unused telnet, RDP or database port bans. Kernel tripwires log these hits from vpsfort's own nftables rules, so UFW's log limit (about 3 lines a minute) doesn't hide scans. Honeypot ports complete the TCP handshake, so their evidence can't be forged, and keep the scanner's first bytes (a Telnet login, an HTTP request) for the abuse report; with prompts on, a Telnet bot or FTP scanner types its login into the evidence, and a catch-all decoy site on the real web server bans web scanners on their first request. Dedicated honeypot nodes feed all of this to the cluster. | A blocked SYN can carry a forged source address. vpsfort limits the damage: such evidence never bans an address that logged in recently, replies always pass, and with honeypots set it is worth half a ban. A spoofer can still get outsiders banned for an hour. |
 | **Canary accounts** | No accounts to create. On a key-only host, `ssh = ["*"]` makes every unknown user name a ban. A successful login to a canary is a critical alert. | fail2ban, CrowdSec and Wazuh can do this with a filter of your own. vpsfort just has it built in. |
 | **Account protection** | Distributed guessing against one account from several addresses; a login right after failures (possible compromise); a login from a new network or provider for that account; a login with a never-seen SSH key. | Covers XMPP, SSH, Nextcloud, the built-in services and your patterns only. Wazuh covers far more authentication sources (PAM, Windows, cloud services). |
 | **False positives** | Shadow mode lifts its own "bans" when the address later logs in, and says so. An address that logged in recently isn't banned for that service's typos and reconnects. Private, CGNAT, loopback and link-local addresses are never banned. | Login trust is a heuristic. An attacker behind the same carrier NAT as a user gets the same excuse for that service's noise; real failures still raise an alert. |
@@ -314,7 +315,7 @@ journal ─► vpsfort ─► nftables / firewalld / ufw / iptables / ipset  ◄
 | **Exposure** | Reads the listeners from `/proc` and follows the firewall's own logic: rules in order, jumps, policies, rate limits. The TUI names the rule that lets each port in. It flags Docker-published ports, which ufw doesn't filter, and allow rules for ports nothing listens on: the kind of dead rules that were found by hand on the authors' hosts before. Under firewalld it reads the zones (services, ports, rich rules, source-bound zones), and nftables rulesets of your own as `nft` prints them (base chains in priority order, verdict maps). With `peer_probe`, the cluster's peers try the host's public ports from outside hourly: a port the firewall should block that a peer reaches is a high alert, one a provider's firewall in front blocks an info. | A view from the host, plus its peers' (your own servers, not the internet at large); an external scan remains the ground truth. |
 | **Patches** | A simulated `apt-get`, or `dnf check-update` from the cached metadata (no lock taken either way), in a unit of its own; a newer installed kernel than the running one; programs still running replaced libraries. All of it is in the daily digest. | Reports only: it doesn't apply updates (use unattended-upgrades or dnf-automatic). No CVE database. apt and dnf only. |
 | **Certificates** | Live endpoints every 6 h, XMPP STARTTLS included, plus the certificates on disk. It warns when a renewed certificate isn't served yet, explains ejabberd's ACME failures, gives the new DANE `3 1 1` value at each renewal, and compares the TLSA records published for each endpoint with the certificate served (a warning when none matches). This matters more since Let's Encrypt stopped sending expiry e-mails in June 2025. The host's own names are resolved hourly: one that no longer points here (a changed record, a hijack) is a high alert. | Checked from the host itself, so routing problems elsewhere are not seen. |
-| **Hardening** | sshd's settings as `sshd -T` applies them (Match blocks included), checked against the host's layout: a plain VPS, a hosting panel, or a key-only gateway user forced into a su/sftp wrapper. It names the file each setting comes from (cloud-init's override) and alerts when a setting weakens. The kernel's hardening sysctls the same way (forwarding, redirects, source routing, rp_filter, SYN cookies, ASLR, kptr_restrict, ptrace_scope, unprivileged BPF, protected links, ...), with the line to set. | sshd and sysctls only: no other services, no CIS benchmark or score. Run Lynis or Wazuh SCA for the rest of the host. |
+| **Hardening** | sshd's settings as `sshd -T` applies them (Match blocks included), checked against the host's layout: a plain VPS, a hosting panel, or a key-only gateway user forced into a su/sftp wrapper. It names the file each setting comes from (cloud-init's override) and alerts when a setting weakens. The kernel's hardening sysctls the same way (forwarding, redirects, source routing, rp_filter, SYN cookies, ASLR, kptr_restrict, ptrace_scope, unprivileged BPF, protected links, ...), read both as they run and as the next boot sets them (the sysctl.d files, as systemd-sysctl reads them), so a fix the next boot would undo is caught; `sysctl-audit --conf` prints the `key = value` lines that keep every fix. | sshd and sysctls only: no other services, no CIS benchmark or score. Run Lynis or Wazuh SCA for the rest of the host. |
 
 ---
 
@@ -358,7 +359,7 @@ journal ─► vpsfort ─► nftables / firewalld / ufw / iptables / ipset  ◄
 
 | feature | pros (vpsfort) | cons (vpsfort), and who does better |
 |---|---|---|
-| **Channels** | XMPP through the admin bot, OMEMO-encrypted and kept out of the server's archive, or from any host through any XMPP server with the bot's client mode (OMEMO, else OpenPGP files). Telegram, with account names pseudonymized and servers named only by node id. E-mail, OpenPGP-encrypted as a whole, subject included. Signal (through signal-cli) while the admin's safety number is the pinned one, and Matrix, Olm/Megolm-encrypted to the devices the admin verified; both send OpenPGP files instead when they can't reach that identity. ntfy, Gotify or any webhook through the push bot, sanitized as for Telegram (files only encrypted). Any mix of the six. The XMPP bot survives sleep, Wi-Fi changes and server restarts without losing a message and without getting itself banned (back about two minutes after an ejabberd restart, seen on the XMPP server). Delivered for real: the XMPP bot (OMEMO), the Matrix bot (alerts, a digest and the weekly report as an encrypted attachment, through matrix.org to Element X) and the mail bot (alerts and the weekly report, read in Proton Mail on Android). | No Slack, Teams or PagerDuty of their own (a webhook reaches them through a relay of yours). A new channel means a new bot, though the bots now share one library. The push bot is untried against a real ntfy or Gotify. The Signal bot needs signal-cli (Java on ARM) installed beside it. The Signal bot and the XMPP bot's client mode are untried against the real services. |
+| **Channels** | XMPP through the admin bot, OMEMO-encrypted and kept out of the server's archive, or from any host through any XMPP server with the bot's client mode (OMEMO, else OpenPGP files). Telegram, with account names pseudonymized and servers named only by node id. E-mail, OpenPGP-encrypted as a whole, subject included. Signal (through signal-cli) while the admin's safety number is the pinned one, and Matrix, Olm/Megolm-encrypted to the devices the admin verified; both send OpenPGP files instead when they can't reach that identity. ntfy, Gotify or any webhook through the push bot, sanitized as for Telegram (files only encrypted). Any mix of the six. An ejabberd with several domains runs one admin bot per domain, instances of the same binary (not yet on a server). The XMPP bot survives sleep, Wi-Fi changes and server restarts without losing a message and without getting itself banned (back about two minutes after an ejabberd restart, seen on the XMPP server). Delivered for real: the XMPP bot (OMEMO), the Matrix bot (alerts, a digest and the weekly report as an encrypted attachment, through matrix.org to Element X) and the mail bot (alerts and the weekly report, read in Proton Mail on Android). | No Slack, Teams or PagerDuty of their own (a webhook reaches them through a relay of yours). A new channel means a new bot, though the bots now share one library. The push bot is untried against a real ntfy or Gotify. The Signal bot needs signal-cli (Java on ARM) installed beside it. The Signal bot and the XMPP bot's client mode are untried against the real services. |
 | **Privacy** | Built for operators who take GDPR seriously: nothing about users goes to a vendor, Telegram never sees account names, and reports travel as encrypted files. | Encryption takes setup (OMEMO device trust, OpenPGP keys). If the XMPP bot doesn't take a message within 2 minutes, it goes out over plain XMPP, saying why. |
 | **Users** | Account holders learn when their account is attacked: password guessing, a possible compromise, and (opt-in) a login from a new network. No other tool here does this. XMPP accounts over XMPP, Nextcloud accounts through Nextcloud's own notifications (`occ`). | SSH and the other services' users aren't messaged. |
 | **Noise control** | One message per incident and account every 6 h, hourly caps per topic for admins, hourly budgets per local user for host changes. Alerts relayed from peers are tagged with the node's name. A bot that stops sending is itself reported over the other channels. | Fixed policies: routing is less flexible than Alertmanager's or CrowdSec's profiles. |
@@ -388,7 +389,7 @@ journal ─► vpsfort ─► nftables / firewalld / ufw / iptables / ipset  ◄
 | **TUI** | Works over SSH in an 80-column terminal. Up to 10 tabs: offenders with evidence, bans, decisions, accounts, exposure, countries with port histograms, a world map, alerts and patterns. Ban, unban and allow with a confirmation. It also reads saved decision logs of several servers offline. | One node at a time (the web console shows them all); no roles, no multi-tenant view. |
 | **Tooling** | `status` (also as JSON), `explain` for one address, `quiet` to hold the admins' messages back during an upgrade, `baseline export`/`import` so a reinstalled host skips the learning days, `replay`, `print-nft`, `notify-test` for each channel, a digest preview. `config-diff` runs after every upgrade and lists new options, changed defaults and unknown keys. The installer dry-runs the nftables ruleset against the kernel first. `vpsfort-sim` runs a simulated cluster and the real web console on a laptop from a few days of decision logs, for trying the console without servers. | No OpenTelemetry export, and no API that changes anything: the control socket is root-only, and the web console reads through a separate read-only socket. |
 | **Web console** | vpsfort-web shows every node's bans, alerts, decisions, offenders, countries and networks, peers, certificates, disks and updates on one HTTPS page, with what needs attention first (as a queue, with 7 days of history of what appeared and went), activity charts over 3 hours to 7 days, a world map (bans at their coordinates with a city-level database, else at capitals; countries `[geoblock]` blocks hatched), a page per address, the nodes' settings side by side with the differences marked, each node's digests of the last two weeks, saved views and keyboard navigation; every table exports as CSV or JSON, and the whole cluster as one JSON file for a ticket. It only reads, by design: it holds a web key of its own, never the cluster key, and reaches vpsfort through a read-only socket, so a break-in at the console or in an admin's browser gives a view, never a ban, an unban or a setting. TLS 1.3; a password and a one-time code or a passkey (WebAuthn) per admin (one or several, all equal); a proof of work before each login that grows with failed attempts; sessions in memory that an admin can list and end; failed logins are locked out and banned by vpsfort itself. About 110 Prometheus metric families, with alerting rules shipped. Asked only while someone looks (plus each node's digest once a day). | No roles: every admin sees everything. Its own history (a week of what needed attention, two weeks of digests, the marks) is kept on disk now; longer history needs Prometheus. A self-signed certificate unless you give it one. New, with two audits of its own so far; it runs on the authors' five servers, all but one through their agents. The CrowdSec Console and Wazuh's dashboard manage fleets and keep history on disk. |
-| **Docs** | One README that explains every default, often with the measurement behind it. | One long document: no website, no forum or chat. Some answers are only in the code. |
+| **Docs** | One README per crate that explains every default, often with the measurement behind it, published as a documentation site on GitHub Pages too, and a changelog per crate. | Long documents, no forum or chat. Some answers are only in the code. |
 
 ---
 
@@ -400,10 +401,10 @@ journal ─► vpsfort ─► nftables / firewalld / ufw / iptables / ipset  ◄
 
 | feature | vpsfort | fail2ban | sshguard | CrowdSec | Wazuh | CSF/LFD |
 |---|---|---|---|---|---|---|
-| runtime | static binary, ~10 MB (web console ~4 MB more) | Python 3 | C | Go: engine and bouncer | C agent; manager; OpenSearch-based indexer; dashboard | Perl |
+| runtime | static binary, ~11 MB (web console ~4 MB more) | Python 3 | C | Go: engine and bouncer | C agent; manager; OpenSearch-based indexer; dashboard | Perl |
 | memory | ~10 MB for a real month, ~50 MB with geo; capped at 128 MB | moderate | a few MB | moderate | light agent; the indexer needs ≥ 4 GB RAM (8 GB in the 5.0 beta) | moderate |
 | memory-safe language | ✓ | ✓ | – | ✓ | – C agent | ✓ |
-| platforms | Linux with systemd: x86_64, arm64, 32-bit ARMv7 | Linux, BSD | Linux, BSD, macOS | Linux, FreeBSD, Windows, containers, Kubernetes | Linux, Windows, macOS and more | Linux |
+| platforms | Linux (systemd and journald, or Alpine's OpenRC and syslog file): x86_64, arm64, 32-bit ARMv7 | Linux, BSD | Linux, BSD, macOS | Linux, FreeBSD, Windows, containers, Kubernetes | Linux, Windows, macOS and more | Linux |
 | ARM builds | ◐ arm64 and ARMv7 bundles, tested in CI only | ✓ | ✓ | ✓ | ✓ | ✓ |
 | distribution packages or apt repository | ✓ `.deb`, `.rpm` and Alpine `.apk` (OpenRC) from the releases, a signed apt and dnf repository on GitHub Pages (built by CI after each release), or a zip bundle with `install.sh` | ✓ | ✓ | ✓ vendor repositories | ✓ vendor repositories | ◐ forks |
 | signed releases | ✓ build provenance (Sigstore), `SHA256SUMS`, a CycloneDX SBOM | ✓ distribution-signed | ✓ distribution-signed | ✓ signed repositories | ✓ signed repositories | ◐ |
@@ -413,8 +414,8 @@ journal ─► vpsfort ─► nftables / firewalld / ufw / iptables / ipset  ◄
 | feature | pros (vpsfort) | cons (vpsfort), and who does better |
 |---|---|---|
 | **Footprint** | Fits a 1 GB VPS next to the services it protects. The memory limit is backed by flood tests, per-address state is capped (`max_tracked_ips`), and the apt or dnf query runs in a unit of its own, outside the limit. Country blocking costs about 1 MB while its list is computed; the list itself sits in the kernel's sets. | – |
-| **Platforms** | The static musl binary needs no matching libc: the same file runs on Debian 13, Ubuntu 22.04 and Fedora 44. Package checks with dpkg or rpm, patches with apt or dnf. Bundles for arm64 and 32-bit ARMv7 (hard-float), from the same CI. | Linux with systemd only. The ARM bundles haven't run on an ARM server yet; RHEL and its rebuilds are untried. |
-| **Supply chain** | Few dependencies, `cargo audit` and `cargo deny` (permissive licenses, crates.io only) on every CI run, and a CycloneDX SBOM attached to every release next to the build provenance attestation. No TLS library in the binary: `curl` does the downloads. The parsers, the decision-log readers and their hourly index, the console's HTTP and agent protocols and abuse reports, and the bots' inputs are fuzzed (23 cargo-fuzz targets across the crates, each with a smoke run in every `cargo test`). Log text never reaches a shell: firewall changes are built from parsed addresses and fed to `nft -f -`. That class of bug is real elsewhere: fail2ban's CVE-2021-32749 (the `mail-whois` action), Wazuh's CVE-2026-54085 (active response scripts, fixed in 4.14.7). Nine internal security reviews in October and November 2026, the later ones covering the web console, the simulator, the bots and the packages too, each finding fixed with a test. | No independent third-party audit yet, and no distribution maintainers reviewing its packages. A project this young has no CVE history to judge it by. |
+| **Platforms** | The static musl binary needs no matching libc: the same file runs on Debian 13, Ubuntu 22.04 and Fedora 44. Package checks with dpkg or rpm, patches with apt or dnf. Bundles for arm64 and 32-bit ARMv7 (hard-float), from the same CI. | Linux only. Alpine (OpenRC, `/var/log/messages` as the input) is packaged and installed in CI but untried on an Alpine host, and a syslog file records no sender, so there a line counts from whoever wrote it. The ARM bundles haven't run on an ARM server yet; RHEL and its rebuilds are untried beyond CI's install on AlmaLinux 9. |
+| **Supply chain** | Few dependencies, `cargo audit` and `cargo deny` (permissive licenses, crates.io only) on every CI run, and a CycloneDX SBOM attached to every release next to the build provenance attestation. No TLS library in the binary: `curl` does the downloads. The parsers, the decision-log readers and their hourly index, the console's HTTP and agent protocols and abuse reports, and the bots' inputs are fuzzed (26 cargo-fuzz targets across the crates, each with a smoke run in every `cargo test`). Log text never reaches a shell: firewall changes are built from parsed addresses and fed to `nft -f -`. That class of bug is real elsewhere: fail2ban's CVE-2021-32749 (the `mail-whois` action), Wazuh's CVE-2026-54085 (active response scripts, fixed in 4.14.7). Nine internal security reviews in October and November 2026, the later ones covering the web console, the simulator, the bots and the packages too, each finding fixed with a test. | No independent third-party audit yet, and no distribution maintainers reviewing its packages. A project this young has no CVE history to judge it by. |
 
 ---
 
@@ -483,8 +484,9 @@ Know these before you adopt it:
   Synapse, databases, Redis, mail, ownCloud, Forgejo, Vaultwarden, Keycloak, authentik, OpenVPN,
   FTP, Jellyfin), the latter tested against log lines but not yet on a host. Everything else
   needs regex patterns of your own.
-- **One platform family:** Linux with systemd and journald. Debian, Ubuntu and Fedora have run
-  it; ARM builds exist but haven't run on an ARM server.
+- **One platform:** Linux. Debian, Ubuntu and Fedora (systemd and journald) run it in
+  production; Alpine (OpenRC, a syslog file) is packaged but untried on a host, and the ARM
+  builds haven't run on an ARM server.
 - **No control from a browser, by design:** vpsfort-web shows the cluster to a few admins,
   with a REST API and Prometheus metrics, and changes nothing on the servers: a browser, with
   its extensions and the exploits aimed at it, is no place to hold the firewall's controls,
@@ -498,14 +500,14 @@ Know these before you adopt it:
 - **No CVE matching, hardening benchmark or compliance reports** (the hardening audit covers sshd and the kernel's sysctls only).
 - **Six alert channels:** XMPP, Telegram, e-mail, Signal, Matrix, and ntfy, Gotify or a webhook.
 - **A young package repository:** the signed apt and dnf repository on GitHub Pages is built by CI after each release (it needs a signing key in the repository's secrets); apt and dnf have installed from it, on one server each, and dnf has upgraded from it once. Without it: `.deb` and `.rpm` files from the releases, installed one by one, or a release zip with `install.sh`.
-- **Young:** version 0.6.2, running on the authors' own servers only, written by one maintainer
+- **Young:** version 0.7.0, running on the authors' own servers only, written by one maintainer
   in collaboration with an AI model (see the [README](README.md#authorship)). It has had internal
   security reviews, but no independent audit.
 - **Covered by tests, not yet run on a host:** the plain iptables backend, `sudo` and
   new-SSH-key alerts, PAM failures and audit alerts, the built-in sources for common services,
-  `[waf]` against a real CrowdSec, the Telegram relay node and the Telegram, Signal and
-  XMPP-client bots against their real services, the desktop profile, and the ARM builds
-  ([Evidence so far](#16-evidence-so-far)). Users' own warnings work in tests but have not yet
+  `[waf]` against a real CrowdSec, the Telegram relay node and the Telegram, Signal, push and
+  XMPP-client bots against their real services, the desktop profile, the Alpine package, and
+  the ARM builds ([Evidence so far](#16-evidence-so-far)). Users' own warnings work in tests but have not yet
   been confirmed reaching a user.
 - **Forged sources:** evidence that rests only on blocked packets can name a forged source.
   vpsfort limits the harm, but someone who forges packets can still get outsiders banned for
@@ -521,8 +523,8 @@ a shadow-mode period, and two more that joined in late October) and one Fedora 4
 server below, which stayed on). Seen there, with the details in the README's
 [Verified on the servers](vpsfort/README.md#verified-on-the-servers):
 
-- **Input and blocking:** live journal input, and the warning when a source goes quiet; bans in
-  nftables with kernel timeouts, placed after connection tracking, so the servers' own pings
+- **Input and blocking:** live journal input, and the warning when a source goes quiet; a failed
+  Nextcloud AIO login appearing in the TUI and the web console; bans in nftables with kernel timeouts, placed after connection tracking, so the servers' own pings
   and TCP connections to banned addresses get their replies; IPv4 and IPv6 bans, and subnet
   bans growing from a /24 to a /22; the table rebuilt within 30 s after it was deleted; kernel
   rate limits; SSH canary bans; blocklist feeds and the geo database; operator controls.
@@ -539,7 +541,13 @@ server below, which stayed on). Seen there, with the details in the README's
   17 set-uid programs) and the patch status with apt (the old kernel still running after an
   upgrade); the SSH audit (a hardened gateway found clean; on a cloud image, root's password
   login and cloud-init's override of `PasswordAuthentication` found, then logged as fixed); the
-  systemd watchdog.
+  sysctl audit (its fixes applied on all five nodes, three Debian 13, one Fedora Cloud and one
+  Ubuntu, kept in sysctl.d with `sysctl-audit --conf`, and logged as fixed at the next reading;
+  apport setting `fs.suid_dumpable` back told in the Ubuntu node's daily digest, and gone from
+  the audit once apport was disabled and stopped; no sysctl line in Debian's digest once the
+  fixes were in; a value changed after a restart told with the sysctl.d line that sets it); a
+  kernel module loaded after the baseline reported within a minute; the daemon running whole
+  under its capability bound; the installers' announced files accepted; the systemd watchdog.
 - **Channels:** the XMPP bot delivering OMEMO-encrypted, and back online about two minutes
   after an ejabberd restart; the Matrix bot delivering alerts, a digest and the weekly abuse
   report (as an encrypted attachment) end-to-end encrypted through matrix.org to Element X; the
@@ -551,8 +559,11 @@ server below, which stayed on). Seen there, with the details in the README's
   clean afterwards; the Fedora server then upgraded to the next release from the repository.
 - **The web console** showing every node, all but one through their agents.
 
-These runs found fourteen problems, all fixed the same day: two misleading SSH audit messages, an
-installer's new user raising high alerts, the web console's `check` misreading lists with
+These runs found nineteen problems, all fixed the same day: two misleading SSH audit messages, an
+installer's new user raising high alerts, the Matrix bot stopped at its start by an OpenPGP key
+file at mode 0600, a gateway user left out of the canary exceptions, which banned the admin's
+own address at the next SSH login (now `vpsfort canary-check`, run by the installers and daily
+by the daemon), the web console's `check` misreading lists with
 blanks, an empty console socket setting refused, no way to correct a country the geo
 database gets wrong (now `[geo] places`), the XMPP bot never coming back after an ejabberd
 restart (a session it could not resume), the console's filters drawn below their tables, a
@@ -560,9 +571,13 @@ package upgrade's new config template raising a high integrity alert, the reposi
 signing key saved unreadable for apt under a strict umask, the TUI's count of the running
 process's decisions labelled as if it counted everything, the packages' config question
 hidden by dnf until it timed out, the sysctl audit's advice putting the `sysctl -w`
-command in a sysctl.d file, which ignores it at boot, and the audit reading only the
+command in a sysctl.d file, which ignores it at boot, the audit reading only the
 running values, so it never told that those lines were skipped (on the VPN host,
-`kernel.sysrq` came back at the next `sysctl --system`).
+`kernel.sysrq` came back at the next `sysctl --system`), the audit still warning about
+apport after `systemctl disable --now`, which disables Ubuntu 22.04's init.d script without
+stopping it, the clock warning raised by a boot's first reading, before the first NTP
+answer, and the audit not reading ufw's own sysctl file, which sets `log_martians` back to 0
+at every start of ufw.
 
 **On the Fedora 44 server's first evening** (2026-10-25, x86_64, firewalld 2.4.4, rpm 6 and
 dnf5, real scanners and a VPN as the test client), following
@@ -587,13 +602,15 @@ all fixed the same day.
 **Not yet seen on a server** (covered by tests; the README's
 [Not yet verified](vpsfort/README.md#not-yet-verified) has the full list): the plain iptables
 backend, a change the firewall program refused being tried again, the self-audit of vpsfort's
-own files finding a problem, the
-clock warning, and the kernel module, container and WireGuard peer baselines; `sudo` and new-SSH-key alerts, PAM failures and audit alerts, an infected file's alert;
-the built-in sources for common services on a host that runs one; patterns of your own on a
-live journal; a kernel tripwire hit, and country blocking under the nftables and firewalld
-backends; `[waf]` against a real CrowdSec; users' own warnings reaching a user; the Telegram
-relay node, and the Telegram, Signal and XMPP-client bots against their real services; the
-desktop profile; the ARM builds, RHEL and SELinux in enforcing mode.
+own files finding a problem, the clock warning, the container and WireGuard peer baselines,
+what a honeypot connection sent in a real ban's evidence, the honeypot prompts against a
+real bot, and the decoy web site; `sudo` and new-SSH-key alerts, PAM failures and audit alerts, an
+infected file's alert; the built-in sources for common services on a host that runs one;
+patterns of your own on a live journal; a kernel tripwire hit, and country blocking under the
+nftables and firewalld backends; `[waf]` against a real CrowdSec; users' own warnings reaching
+a user; the Telegram relay node, and the Telegram, Signal, push and XMPP-client bots against
+their real services; the desktop profile; the Alpine package with its syslog input, the ARM
+builds, RHEL and SELinux in enforcing mode.
 
 
 **On a real month of logs** (Sep 11 to Oct 11, 2026, about 210,000 records from ejabberd, sshd
@@ -609,7 +626,7 @@ and UFW):
 
 **In tests:**
 
-- About 390 tests in vpsfort, about 220 more in the bots, 60 in the web console (an agent
+- About 460 tests in vpsfort, about 190 more in the bots and their shared library, 70 in the web console (an agent
   and a console against a stand-in vpsfort, logged into over TLS like a browser, proof of work
   included) plus the page's own JavaScript tests, and a few in the simulator. The firewalld, ipset
   and rpm code is also tested against stand-in `firewall-cmd`, `ipset`, `iptables` and `rpm`
@@ -617,7 +634,7 @@ and UFW):
 - `tests/layouts.rs` runs the real daemon in each of the 16 supported layouts of bots and peers,
   end to end.
 - The parsers, the decision-log readers and their index, the console's protocols and abuse
-  reports, and the bots' inputs are fuzzed (23 targets).
+  reports, and the bots' inputs are fuzzed (26 targets).
 - CI enforces on its runner's own kernel with the real `nft`, as root: a ban with its
   timeout, feeds, the table deleted and rebuilt with the bans still active, from the library
   and through the installed daemon.
@@ -664,7 +681,8 @@ vpsfort works well next to:
 
 ## 19. Trying it
 
-1. **Check the requirements:** Linux with systemd (x86_64; ARM builds untried on servers), and
+1. **Check the requirements:** Linux with systemd (x86_64; ARM builds untried on servers; the
+   Alpine package untried on a host), and
    one of nftables (recommended), firewalld, ufw, iptables or ipset
    ([Requirements](vpsfort/README.md#requirements)).
 2. **Download a release bundle** and verify its checksum and build provenance
@@ -691,7 +709,7 @@ vpsfort works well next to:
 
 ## 20. Method and sources
 
-The vpsfort facts and numbers come from its READMEs and code (2026-11-03); the
+The vpsfort facts and numbers come from its READMEs and code (2026-11-08); the
 measurements are the ones those READMEs report, the Fedora run included. The other tools were assessed from their
 documentation, release pages and advisories as of 2026-10-25. "✓" and "◐" mean what a tool
 offers out of the box or as a documented option, not everything a custom script could add. The

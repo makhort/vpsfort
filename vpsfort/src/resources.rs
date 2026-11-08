@@ -206,9 +206,14 @@ fn parse_memory(meminfo: &str, psi: &str) -> Memory {
 #[derive(Debug, Default)]
 pub struct Watch {
     low_memory_since: Option<Micros>,
+    unsynced_since: Option<Micros>,
 }
 
 pub type Finding = (String, Micros, Severity, String);
+
+/// A clock counts as unsynchronised once it has been for this long: the daemon's first reading
+/// after a boot comes before timesyncd's first NTP answer.
+const CLOCK_SUSTAIN: Micros = 15 * 60 * crate::time::SEC;
 
 impl Watch {
     pub fn judge(&mut self, r: &Report, cfg: &ResourcesCfg) -> Vec<Finding> {
@@ -238,7 +243,12 @@ impl Watch {
                 ),
             ));
         }
-        if r.clock_synced == Some(false) {
+        let unsynced = r.clock_synced == Some(false);
+        let since = if unsynced { *self.unsynced_since.get_or_insert(r.read) } else { r.read };
+        if !unsynced {
+            self.unsynced_since = None;
+        }
+        if unsynced && r.read - since >= CLOCK_SUSTAIN {
             out.push((
                 "clock".into(),
                 24 * 3600 * crate::time::SEC,
@@ -301,11 +311,19 @@ mod tests {
     }
 
     #[test]
-    fn unsynchronised_clock_is_a_daily_warning() {
+    fn a_clock_that_stays_unsynchronised_is_a_daily_warning() {
         let cfg = ResourcesCfg::default();
         let mut w = Watch::default();
-        let r = Report { read: 1, clock_synced: Some(false), ..Default::default() };
-        let f = w.judge(&r, &cfg);
+        let t = |min: Micros| min * 60 * crate::time::SEC;
+        let unsynced = |read| Report { read, clock_synced: Some(false), ..Default::default() };
+        // a boot's first readings come before the first NTP answer
+        assert!(w.judge(&unsynced(t(0)), &cfg).is_empty());
+        assert!(w.judge(&unsynced(t(14)), &cfg).is_empty());
+        assert!(w.judge(&Report { read: t(15), clock_synced: Some(true), ..Default::default() }, &cfg).is_empty());
+        // synchronised once: the wait starts over
+        assert!(w.judge(&unsynced(t(16)), &cfg).is_empty());
+        assert!(w.judge(&unsynced(t(30)), &cfg).is_empty());
+        let f = w.judge(&unsynced(t(31)), &cfg);
         assert_eq!(f.len(), 1);
         assert_eq!((f[0].0.as_str(), f[0].1, f[0].2), ("clock", 86_400 * crate::time::SEC, Severity::Warning));
         assert!(f[0].3.contains("not synchronised with NTP"), "{}", f[0].3);

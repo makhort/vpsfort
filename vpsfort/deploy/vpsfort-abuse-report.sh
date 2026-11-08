@@ -225,20 +225,37 @@ if [ "$ROLE" != merge ]; then
 fi
 
 # Into each outbox under a dot name first (the bots skip those), owned by the bot so it can
-# delete the file once sent (the directory is sticky), then renamed into place.
+# delete the file once sent (the directory is sticky), then renamed into place. The bot's user
+# writes in the outbox too, and could have put a link under a name root is about to use: the
+# dot file is made by mktemp (a new file under a random name, never through a link), given to
+# the bot only once it is root's own regular file (which nobody else can replace in a sticky
+# directory; chown -h follows no link either), and what waits under the final name goes first.
+# A directory there is left alone, and the report for that bot is skipped.
 deliver() { # report file, what it says about its origin
-    local dir owner name
+    local dir owner name tmp
     name="abuse-report-$(date -u +%Y-%m-%d).txt"
     for entry in ${outboxes[@]+"${outboxes[@]}"}; do
         dir=${entry%:*}
         owner=${entry##*:}
-        # Mode first, owner last: `install -o` chowns before it chmods, and a file root no longer
-        # owns can't be chmodded without CAP_FOWNER, which the unit doesn't keep (CAP_CHOWN only).
-        rm -f "${dir:?}/.$name.tmp"
-        install -m 0600 "$1" "$dir/.$name.tmp"
-        chown "$owner:" "$dir/.$name.tmp"
-        mv -f "$dir/.$name.tmp" "$dir/$name"
-        echo "report for the bot: $dir/$name ($(wc -c < "$dir/$name" | tr -d " ") bytes, $2)"
+        # leftovers of a run that died before the rename (root's: the bot can't remove them)
+        rm -f "${dir:?}"/.abuse-report-*.txt.tmp "${dir:?}"/.abuse-report-*.txt.??????
+        if ! tmp=$(mktemp "$dir/.$name.XXXXXX"); then
+            echo "WARNING: cannot write in $dir: no report for that bot" >&2
+            continue
+        fi
+        cat "$1" > "$tmp"
+        # CAP_CHOWN is all the unit keeps: the mode is mktemp's 0600 already (a file root no
+        # longer owns can't be chmodded without CAP_FOWNER)
+        chown -h "$owner:" "$tmp"
+        rm -f "$dir/$name" 2> /dev/null || true
+        if [ -d "$dir/$name" ]; then
+            # (one made right after this check only gets the bot's own file moved into it)
+            echo "WARNING: $dir/$name is a directory: no report for that bot" >&2
+            rm -f "$tmp"
+            continue
+        fi
+        mv -f "$tmp" "$dir/$name"
+        echo "report for the bot: $dir/$name ($(wc -c < "$1" | tr -d " ") bytes, $2)"
     done
 }
 

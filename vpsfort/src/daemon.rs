@@ -1250,11 +1250,13 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
     if cfg.resources.enabled {
         let (tx, rcfg, stop) = (tx.clone(), cfg.resources.clone(), Arc::clone(&stop));
         thread::spawn(move || {
-            // the clock once an hour (a D-Bus call), carried over in between
+            // the clock once an hour (a D-Bus call), carried over in between; at every scan
+            // while it isn't synchronised, so that a boot's wait for the first NTP answer ends
+            // with that answer
             let (mut clock, mut scans) = (None, 0u64);
             while !stop.load(Ordering::Relaxed) {
                 let mut r = crate::resources::scan(&rcfg, time::now());
-                if scans % 60 == 0 {
+                if scans % 60 == 0 || clock == Some(false) {
                     clock = crate::resources::clock_synced(&rcfg.timedatectl);
                 }
                 scans += 1;
@@ -1406,6 +1408,7 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
         crate::honeypot::start(
             &ports,
             cfg.ports.honeypot_capture,
+            &cfg.ports.prompting(),
             move |hit| !matches!(tx.try_send(Msg::Honeypot(hit, time::now())), Err(std::sync::mpsc::TrySendError::Disconnected(_))),
             Arc::clone(&stop),
         )
@@ -1572,7 +1575,8 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
         follow_syslog(path, tx, Arc::clone(&stop), Arc::clone(&positions));
     }
 
-    let mut sink = ActionSink::new(cfg.actions_log.as_deref(), Notifier::new(&cfg.notify, cfg.mode));
+    let mut sink =
+        ActionSink::new(cfg.actions_log.as_deref(), Notifier::new(&cfg.notify, cfg.mode, Some(crate::botbox::key_path(&cfg.state_file))));
     sink.queue_restore_failures(restore_failed);
     sink.notifier.set_node(cluster.as_ref().map_or_else(crate::cluster::hostname, |c: &crate::cluster::Cluster| c.node_id.clone()));
     // Nodes that can't deliver admin messages relay them; others too with relay_notices.
@@ -2072,7 +2076,7 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
                 let ev = crate::event::Event::new(ts, hit.ip, crate::event::Signal::TripwireConnect).port(Some(hit.port)).detail(format!(
                     "connected to honeypot TCP/{}, {}",
                     hit.port,
-                    crate::honeypot::describe(&hit.sent)
+                    crate::honeypot::describe(&hit.sent, hit.prompts)
                 ));
                 if !caught_up {
                     if deferred_events.len() < 10_000 {
@@ -2704,7 +2708,7 @@ mod tests {
         );
         let mut pipe = Pipeline::new(Arc::clone(&cfg), 0);
         let enforcer = Enforcer::shadow();
-        let mut sink = ActionSink::new(None, Notifier::new(&cfg.notify, cfg.mode));
+        let mut sink = ActionSink::new(None, Notifier::new(&cfg.notify, cfg.mode, None));
         let mut waf_nets = Vec::new();
         let now = time::now();
         let status = |error: Option<&str>| WafStatus {
@@ -2965,8 +2969,9 @@ mod tests {
         for f in ["MESSAGE", "SYSLOG_IDENTIFIER", "_SYSTEMD_UNIT", "_PID", "_EXE", "_TRANSPORT", "_UID"] {
             assert!(fields.split(',').any(|x| x == f), "{f}");
         }
-        let tail = &args[args.len() - 19..];
+        let tail = &args[args.len() - 21..];
         assert_eq!(tail[0], "_SYSTEMD_UNIT=ejabberd.service");
+        assert_eq!(tail[20], "SYSLOG_IDENTIFIER=systemd-journald", "journald's dropped-lines notices");
         assert_eq!(tail[1], "+");
         assert_eq!(tail[8], "_TRANSPORT=kernel");
         assert_eq!(tail[12], "SYSLOG_IDENTIFIER=sudo");
@@ -3034,7 +3039,7 @@ mod tests {
         let (enforcer, cfg) = failing_nft(&dir);
         let (calls, fail) = (dir.join("calls"), dir.join("fail"));
         let mut pipe = Pipeline::new(Arc::clone(&cfg), 0);
-        let mut sink = ActionSink::new(None, Notifier::new(&cfg.notify, cfg.mode));
+        let mut sink = ActionSink::new(None, Notifier::new(&cfg.notify, cfg.mode, None));
         let alerts = |pipe: &Pipeline, text: &str| {
             pipe.snapshot(10).alerts.iter().filter(|a| a.message.contains(text)).map(|a| a.severity).collect::<Vec<_>>()
         };
@@ -3101,7 +3106,7 @@ mod tests {
         assert_eq!(failed.len(), 2);
         assert!(failed[0].1.contains("resource busy"), "{failed:?}");
         let mut pipe = Pipeline::new(Arc::clone(&cfg), 0);
-        let mut sink = ActionSink::new(None, Notifier::new(&cfg.notify, cfg.mode));
+        let mut sink = ActionSink::new(None, Notifier::new(&cfg.notify, cfg.mode, None));
         sink.queue_restore_failures(failed);
         assert_eq!((sink.apply_state().waiting, sink.apply_state().failures), (2, 2));
         assert!(sink.unapplied.iter().all(|u| u.action.kind == ActionKind::Ban && u.action.until == Some(now + 600 * time::SEC)));

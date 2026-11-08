@@ -87,6 +87,33 @@ impl Pipeline {
         }
     }
 
+    /// journald dropped a unit's lines for its rate limit (`RateLimitBurst`, 10,000 per 30 s
+    /// by default): whatever they said went unseen, which a flood of connections brings
+    /// about, by chance or on purpose, to hide an attack in the gap. High for a unit vpsfort
+    /// reads, a warning for another; once per unit and 10 minutes.
+    fn dropped_alert(&mut self, n: u64, unit: &str) -> Vec<Action> {
+        use crate::engine::Severity;
+        let kernel = unit == "the kernel";
+        let read = if kernel {
+            self.cfg.sources.ufw
+        } else {
+            unit.starts_with("ssh") || unit.starts_with("ejabberd") || self.cfg.sources.services.iter().any(|s| s == unit)
+        };
+        let severity = if read { Severity::High } else { Severity::Warning };
+        let unseen = if read { ": logins and attacks in them went unseen" } else { "" };
+        let message = if kernel {
+            format!(
+                "journald missed {n} kernel messages (the ring buffer overran before it read them){unseen}. A bigger buffer keeps more: log_buf_len=8M on the kernel command line"
+            )
+        } else {
+            format!(
+                "journald dropped {n} messages from {unit} (its rate limit){unseen}. A flood of connections does this; raise the unit's limit \
+                 (systemctl edit {unit}: [Service] LogRateLimitIntervalSec=30s LogRateLimitBurst=100000) or RateLimitBurst= in journald.conf"
+            )
+        };
+        self.engine.system_alert(&format!("journald:dropped:{unit}"), 10 * 60 * crate::time::SEC, severity, message)
+    }
+
     /// Failed services the grace time has passed for, without a restart: down.
     fn services_down(&mut self, now: Micros) -> Vec<Action> {
         let grace = self.cfg.sources.service_restart_grace.micros();
@@ -103,6 +130,12 @@ impl Pipeline {
     }
 
     pub fn feed(&mut self, rec: &Record) -> Vec<Action> {
+        // journald's word that it dropped lines: about any unit, whatever `[sources]` says
+        if rec.source == crate::record::Source::Systemd {
+            if let Some((n, unit)) = crate::parse::systemd::suppressed(&rec.msg) {
+                return self.dropped_alert(n, &unit);
+            }
+        }
         if !self.cfg.sources.enabled(rec.source) {
             return Vec::new();
         }
@@ -273,6 +306,35 @@ mod tests {
     }
 
     use crate::engine::{Severity, Topic};
+
+    /// journald's word that it dropped a unit's lines (its rate limit) is an alert: whatever
+    /// they said went unseen, which a flood of connections brings about on purpose.
+    #[test]
+    fn journald_dropped_lines_are_reported() {
+        let mut p = Pipeline::new(Arc::new(Config::default()), 0);
+        let rec = |s: i64, msg: &str| Record {
+            ts: s * crate::time::SEC,
+            source: Source::Systemd,
+            pid: 1,
+            msg: msg.into(),
+            cursor: Some("c".into()),
+            sender: None,
+        };
+        let a = p.feed(&rec(10, "Suppressed 1431 messages from sshd.service"));
+        assert_eq!(a.len(), 1, "{a:?}");
+        assert_eq!(a[0].severity, Severity::High);
+        assert!(
+            a[0].message.contains("journald dropped 1431 messages from sshd.service") && a[0].message.contains("LogRateLimitBurst"),
+            "{}",
+            a[0].message
+        );
+        assert!(p.feed(&rec(20, "Suppressed 99 messages from sshd.service")).is_empty(), "once per 10 minutes");
+        let a = p.feed(&rec(30, "Suppressed 7 messages from cups.service"));
+        assert_eq!(a[0].severity, Severity::Warning, "a unit vpsfort doesn't read: {a:?}");
+        let a = p.feed(&rec(40, "Missed 12 kernel messages"));
+        assert!(a[0].message.contains("journald missed 12 kernel messages"), "{a:?}");
+        assert!(p.feed(&rec(50, "sshd.service: Failed with result 'exit-code'.")).is_empty(), "other systemd lines as before");
+    }
 
     /// PAM and the audit log: a failed console login alerts once though PAM and the audit
     /// log both report it; a brute force on an FTP server is scored like SSH's; the journal's

@@ -40,10 +40,14 @@ if [ "$BOT" = ejabberd ]; then
     for d in "$DIR"/instances/*/; do
         [ -f "${d}config.env" ] || continue
         n=$(basename "$d")
-        chown root:ejabberd "$DIR/instances" "$d" "${d}config.env"
+        chown root:ejabberd "$DIR/instances" "$d"
         chmod 750 "$DIR/instances"
         chmod 1770 "$d"
-        chmod 640 "${d}config.env"
+        # the directory is ejabberd's to write in: only a regular file, never through a link
+        if [ ! -L "${d}config.env" ] && [ "$(stat -c %h "${d}config.env" 2> /dev/null)" = 1 ]; then
+            chown -h root:ejabberd "${d}config.env"
+            chmod 640 "${d}config.env"
+        fi
         mkdir -p "/var/log/$NAME/$n"
         chown ejabberd:ejabberd "/var/log/$NAME/$n"
         chmod 750 "/var/log/$NAME/$n"

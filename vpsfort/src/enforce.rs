@@ -50,6 +50,8 @@ pub struct Enforcer {
     ip6tables: PathBuf,
     firewall_cmd: PathBuf,
     ipset: PathBuf,
+    /// conntrack-tools' conntrack: ends a banned address's open connections (firewalld, ufw).
+    conntrack: PathBuf,
     /// iptables chain names: static rules, and bans with operator allows.
     chain: String,
     table: String,
@@ -624,6 +626,7 @@ impl Enforcer {
             ip6tables: PathBuf::new(),
             firewall_cmd: PathBuf::new(),
             ipset: PathBuf::new(),
+            conntrack: PathBuf::new(),
             chain: String::new(),
             table: String::new(),
             setup: String::new(),
@@ -649,6 +652,7 @@ impl Enforcer {
             ip6tables: cfg.enforce.ip6tables.clone(),
             firewall_cmd: cfg.enforce.firewall_cmd.clone(),
             ipset: cfg.enforce.ipset.clone(),
+            conntrack: cfg.enforce.conntrack.clone(),
             chain: cfg.enforce.iptables_chain.clone(),
             table: cfg.enforce.nft_table.clone(),
             setup: String::new(),
@@ -701,6 +705,7 @@ impl Enforcer {
                         eprintln!("vpsfort: WARNING [[ratelimit]] needs nftables; not applied with firewalld");
                     }
                     e.kind = Kind::Firewalld;
+                    e.conntrack_check();
                     return e;
                 }
                 Err(err) => eprintln!("vpsfort: firewalld unavailable: {err:#}"),
@@ -732,6 +737,7 @@ impl Enforcer {
                         );
                     }
                     e.kind = Kind::Ufw;
+                    e.conntrack_check();
                     return e;
                 }
                 Err(err) => eprintln!("vpsfort: ufw unavailable: {err:#}"),
@@ -1050,6 +1056,47 @@ impl Enforcer {
     }
 
     fn add(&self, net: &Net, until: Micros, now: Micros, reason: &str) -> Result<()> {
+        let added = self.add_rule(net, until, now, reason);
+        if added.is_ok() && matches!(self.kind, Kind::Ufw | Kind::Firewalld) {
+            self.end_flows(net);
+        }
+        added
+    }
+
+    /// firewalld and ufw accept established traffic before vpsfort's rules, so a ban alone
+    /// leaves the address's open connections running: a brute force over one kept-alive HTTP
+    /// or IMAP connection would go on until it closed. So their conntrack entries are deleted,
+    /// and the next packet of each is new again, and dropped. Only the connections the
+    /// address opened (`--orig-src`): the host's own to it go on, as replies do with the other
+    /// backends. nftables and iptables need none of this: they drop before the established
+    /// rule, whatever the state.
+    fn end_flows(&self, net: &Net) {
+        if self.conntrack.as_os_str().is_empty() || !self.conntrack.exists() {
+            return;
+        }
+        let mut cmd = Command::new(&self.conntrack);
+        cmd.args(["-D", "--orig-src", &net.to_string()]);
+        if !net.is_v4() {
+            cmd.args(["-f", "ipv6"]);
+        }
+        // its exit status says whether any entry was deleted: nothing to tell
+        if let Err(e) = crate::proc::run(cmd, None, FIREWALL_TIMEOUT) {
+            eprintln!("vpsfort: conntrack -D --orig-src {net}: {e}");
+        }
+    }
+
+    /// Says at start when `end_flows` can't do its work.
+    fn conntrack_check(&self) {
+        if !self.conntrack.as_os_str().is_empty() && !self.conntrack.exists() {
+            eprintln!(
+                "vpsfort: WARNING {} is not installed: a banned address's open connections go on until they end by themselves \
+                 (install conntrack-tools, or set [enforce] conntrack)",
+                self.conntrack.display()
+            );
+        }
+    }
+
+    fn add_rule(&self, net: &Net, until: Micros, now: Micros, reason: &str) -> Result<()> {
         match self.kind {
             Kind::Shadow => Ok(()),
             Kind::Nft => self.run_nft(&nft_add_script(&self.table, net, (until - now) / SEC)),
@@ -1925,6 +1972,46 @@ mod tests {
 
     /// With ufw, an operator (or peer) allow lifts vpsfort's bans but adds no ufw rule: an
     /// `allow from` would open every port to that network.
+    /// With ufw (and firewalld), whose own rules accept established traffic first, a ban
+    /// also ends the address's open connections: their conntrack entries are deleted.
+    #[test]
+    fn ufw_bans_end_open_connections() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("lg-ufw-ct-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let calls = dir.join("calls");
+        let _ = std::fs::remove_file(&calls);
+        let script = format!("#!/bin/sh\necho \"$(basename \"$0\") $*\" >> '{}'\n", calls.display());
+        for name in ["ufw", "conntrack"] {
+            std::fs::write(dir.join(name), &script).unwrap();
+            std::fs::set_permissions(dir.join(name), std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let cfg = Config {
+            mode: Mode::Enforce,
+            enforce: crate::config::EnforceCfg {
+                backend: Backend::Ufw,
+                ufw: dir.join("ufw"),
+                conntrack: dir.join("conntrack"),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let e = Enforcer::new(&cfg, &[]);
+        assert_eq!(e.kind, Kind::Ufw);
+        for net in ["203.0.113.5", "2001:db8:1::/64"] {
+            let mut a = test_action(ActionKind::Ban, net, 3600);
+            e.apply(&mut a).unwrap();
+            assert!(a.applied);
+        }
+        let mut a = test_action(ActionKind::Unban, "203.0.113.5", 3600);
+        e.apply(&mut a).unwrap();
+        let calls = std::fs::read_to_string(&calls).unwrap();
+        let ct: Vec<&str> = calls.lines().filter(|l| l.starts_with("conntrack")).collect();
+        assert_eq!(ct, ["conntrack -D --orig-src 203.0.113.5", "conntrack -D --orig-src 2001:db8:1::/64 -f ipv6"], "{calls}");
+        assert!(calls.contains("ufw prepend deny from 203.0.113.5 comment"), "{calls}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn ufw_allow_opens_no_ports() {
         use std::os::unix::fs::PermissionsExt;

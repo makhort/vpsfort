@@ -1,6 +1,6 @@
 [package]
 name = "vpsfort-signal-bot"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 description = "Signal bot delivering vpsfort's admin alerts, digests and reports through signal-cli, else as OpenPGP files"
 license = "MIT"

@@ -70,8 +70,8 @@ scp target/bundle/vpsfort-*-<arch>.zip fedora@VPS_IP:   # <arch>: x86_64-linux-m
 (Fedora Cloud's user is `fedora`; use yours if the provider made another.)
 
 (Or the package instead of the bundle: `./scripts/package.sh` (`--target aarch64-unknown-linux-musl`
-for arm64) writes `target/package/vpsfort-0.6.2-1.<arch>.rpm`; `scp` it over and on the VPS
-`dnf install ./vpsfort-0.6.2-1.<arch>.rpm`, then `cp /usr/share/vpsfort/templates/vpsfort-standalone-dnf.toml
+for arm64) writes `target/package/vpsfort-0.7.0-1.<arch>.rpm`; `scp` it over and on the VPS
+`dnf install ./vpsfort-0.7.0-1.<arch>.rpm`, then `cp /usr/share/vpsfort/templates/vpsfort-standalone-dnf.toml
 /etc/vpsfort/vpsfort.toml` instead of `install.sh --template`, and `systemctl enable --now vpsfort
 vpsfort-abuse-report.timer` instead of the second `install.sh`. vpsfort is then `/usr/bin/vpsfort`;
 the steps below read the same otherwise.)
@@ -80,7 +80,7 @@ the steps below read the same otherwise.)
 
 ```bash
 cd ~fedora && unzip -q vpsfort-*.zip && cd vpsfort-*-linux-musl
-./install.sh --check                                  # Bundle OK: vpsfort 0.6.2 (...)
+./install.sh --check                                  # Bundle OK: vpsfort 0.7.0 (...)
 cat TARGET                                            # the architecture it was built for
 ./install.sh --template vpsfort-standalone-dnf.toml
 ```

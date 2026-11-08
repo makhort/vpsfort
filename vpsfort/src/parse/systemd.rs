@@ -54,9 +54,33 @@ pub fn parse(msg: &str) -> Option<(String, UnitEvent)> {
     Some((clean(unit), event))
 }
 
+/// journald's own word that it dropped lines: `Suppressed 1431 messages from sshd.service`
+/// (the unit logged more than its rate limit allows: `RateLimitBurst`, or the unit's own
+/// `LogRateLimitBurst=`) and `Missed 12 kernel messages` (the kernel's ring buffer overran
+/// before journald read it). The count and the unit (`the kernel` for the latter).
+pub fn suppressed(msg: &str) -> Option<(u64, String)> {
+    if let Some(rest) = msg.strip_prefix("Suppressed ") {
+        let (n, unit) = rest.split_once(" messages from ")?;
+        let unit: String = unit.trim_end_matches('.').chars().filter(|c| !c.is_control()).take(64).collect();
+        return (!unit.is_empty() && !unit.contains(char::is_whitespace)).then(|| Some((n.parse().ok()?, unit))).flatten();
+    }
+    let n = msg.strip_prefix("Missed ")?.strip_suffix(" kernel messages")?;
+    Some((n.parse().ok()?, "the kernel".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn journald_dropped_lines() {
+        assert_eq!(suppressed("Suppressed 1431 messages from sshd.service"), Some((1431, "sshd.service".into())));
+        assert_eq!(suppressed("Missed 12 kernel messages"), Some((12, "the kernel".into())));
+        assert_eq!(suppressed("Suppressed x messages from sshd.service"), None);
+        assert_eq!(suppressed("Suppressed 3 messages from two words"), None);
+        assert_eq!(suppressed("Journal started"), None);
+        assert_eq!(parse("Suppressed 1431 messages from sshd.service"), None, "not a unit event");
+    }
 
     #[test]
     fn parses_unit_messages() {

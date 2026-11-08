@@ -225,7 +225,9 @@ against an oracle as for 0.3.
 vpsfort's messages to the admin (alerts and the daily digest) come through the bot, OMEMO-
 encrypted like everything else it sends, instead of from ejabberd's `send_message` in plain
 text (which `mod_mam` would also archive). vpsfort's `[notify] bot_outbox` points at the
-bot's outbox. Each message is a file there, `alert-*.msg`. The bot looks every 5 seconds,
+bot's outbox. Each message is a file there, `alert-*.msg` (`alert-<time>-<n>-<signature>.msg`: the
+signature is vpsfort's own check, before its plain-text fallback, that the file is its own and
+unchanged; the bot doesn't check it). The bot looks every 5 seconds,
 claims a message by renaming it to `.<name>.sending`, sends it to the admin's trusted
 devices and deletes it.
 
@@ -523,9 +525,9 @@ Without a Rust toolchain: every version tag `vpsfort-xmpp-bot-v<version>` gets i
 
 ```bash
 arch=x86_64-linux-musl     # the server's: aarch64-linux-musl (arm64), armv7-linux-musleabihf (32-bit ARM)
-gh release download vpsfort-xmpp-bot-v0.7.0 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
+gh release download vpsfort-xmpp-bot-v0.7.1 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
 sha256sum -c vpsfort-xmpp-bot-*-$arch.zip.sha256              # the download is intact (macOS: shasum -a 256 -c)
-gh attestation verify vpsfort-xmpp-bot-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-xmpp-bot-v0.7.0
+gh attestation verify vpsfort-xmpp-bot-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-xmpp-bot-v0.7.1
 ```
 
 `gh attestation verify` (after `gh auth login`) checks the signed build provenance: that this repository's CI built exactly this zip from that tag. With `--bundle vpsfort-xmpp-bot-*-$arch.zip.sigstore.json` it checks the attestation attached to the Release instead of fetching it from GitHub. Only a public repository's releases have one (GitHub offers attestations for private repositories only with Enterprise Cloud).
@@ -549,7 +551,7 @@ It doesn't start the bot while `config.env` still holds `REPLACE…` placeholder
 The same release has a package per architecture, for the distribution's package manager instead of `install.sh`: `vpsfort-xmpp-bot_<version>-1_<arch>.deb` (`amd64`, `arm64`, `armhf`; Debian, Ubuntu and their derivatives) `vpsfort-xmpp-bot-<version>-1.<arch>.rpm` (`x86_64`, `aarch64`, `armv7hl`; Fedora, RHEL and its rebuilds) and `vpsfort-xmpp-bot-<version>-r0.<arch>.apk` (`x86_64`, `aarch64`, `armv7`; Alpine, with OpenRC: below), each with its `.sha256` and `.sigstore.json`, downloaded and verified as the bundle above (`--pattern "*.deb*"`, `"*.rpm*"` or `"*.apk*"`). CI keeps them for every commit as workflow artifacts, and `scripts/package.sh` builds them locally (`cargo install cargo-deb cargo-generate-rpm --locked` once, and python3 for the `.apk`, which `scripts/apk.py` at the repository's root writes; none needs dpkg, rpm or apk-tools, so it runs on macOS too; `--target aarch64-unknown-linux-musl` or `armv7-unknown-linux-musleabihf` for the ARM ones). Or from the signed apt and dnf repository on GitHub Pages, once it is set up (the repository README, "Deployment"), where `apt upgrade` and `dnf upgrade` then bring new versions.
 
 ```bash
-sudo apt install ./vpsfort-xmpp-bot_0.7.0-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-xmpp-bot-0.7.0-1.x86_64.rpm
+sudo apt install ./vpsfort-xmpp-bot_0.7.1-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-xmpp-bot-0.7.1-1.x86_64.rpm
 sudoedit /opt/vpsfort-xmpp-bot/config.env                  # the first install put the template there ("Settings")
 sudo systemctl enable --now vpsfort-xmpp-bot               # admin mode; client mode:  vpsfort-xmpp-bot-client
 ```
@@ -658,7 +660,9 @@ breaks and quotes (announcements, passwords) break commands, and replies with no
 (a Cyrillic nickname in a roster) come back empty. The bot needs the classic mode; turning
 it off doesn't affect ejabberd's socket itself, which other tools may use directly.
 
-It also sets owners and modes, so the bot can change only what it has to:
+It also sets owners and modes (of regular files with one name only: a link the bot's user
+planted under one of these names, in a directory it writes to, is left alone, as root would
+otherwise change the file it points at), so the bot can change only what it has to:
 
 | Path | Owner | Mode |
 |---|---|---|

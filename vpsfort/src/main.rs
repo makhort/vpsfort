@@ -616,7 +616,8 @@ fn real_main() -> Result<()> {
                 body: format!("{}\n\"vpsfort\" line 2 of 2: → ⚠ ✓", vpsfort::i18n::phrases(ncfg.language_for(&n_to)).test),
             };
             if bot {
-                return notify_test_bot(&ncfg, &n);
+                let key = vpsfort::botbox::Key::load_or_make(&vpsfort::botbox::key_path(&cfg.state_file));
+                return notify_test_bot(&ncfg, &n, key);
             }
             if telegram {
                 let Some(dir) = ncfg.tg_outbox.clone() else { anyhow::bail!("[notify] tg_outbox is not set") };
@@ -1620,12 +1621,13 @@ fn notify_test_copy(kind: &notify::CopyKind, dir: PathBuf, user: &str, user_key:
 }
 
 /// `notify-test --bot`: a message through the admin bot's outbox, waiting for the bot.
-fn notify_test_bot(ncfg: &notify::NotifyCfg, n: &notify::Notice) -> Result<()> {
+fn notify_test_bot(ncfg: &notify::NotifyCfg, n: &notify::Notice, key: vpsfort::botbox::Key) -> Result<()> {
     use vpsfort::botbox::{self, BotBox};
     let Some(dir) = ncfg.bot_outbox.clone() else { anyhow::bail!("[notify] bot_outbox is not set") };
     let owner = std::fs::read_to_string("/etc/passwd").ok().and_then(|p| botbox::user_ids(&p, &ncfg.bot_user));
     let grace = std::time::Duration::from_secs(ncfg.bot_grace.0);
-    let mut bot = BotBox::new(dir, owner, grace, grace);
+    // the daemon's key: a message it takes back must pass its check
+    let mut bot = BotBox::new(dir, owner, grace, grace).with_key(key);
     anyhow::ensure!(bot.ready(), "no admin bot outbox {}", bot.dir.display());
     let path = bot.put(n, std::time::SystemTime::now())?;
     let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();

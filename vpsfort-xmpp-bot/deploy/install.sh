@@ -249,6 +249,20 @@ announce_accounts() {
     /usr/local/bin/vpsfort --config /etc/vpsfort/vpsfort.toml expect-change "${files[@]}" 2> /dev/null || true
 }
 
+# The owner and mode of one of the bot's files in a directory the bot's user writes to ($DIR,
+# its log directory): only a regular file with one name, never through a link the bot could
+# have planted there, which would make root change another file (chown -h follows no link;
+# chmod would, so it isn't run on one).
+own_file() { # owner mode file
+    [ -n "$3" ] && [ -f "$3" ] && [ ! -L "$3" ] || return 0
+    if [ "$(stat -c %h "$3" 2> /dev/null)" != 1 ]; then
+        echo "WARNING: $3 has more than one name (a hard link): left as it is"
+        return 0
+    fi
+    chown -h "$1" "$3"
+    chmod "$2" "$3"
+}
+
 # Owners and modes of a bot's files: $1 its directory (with $CONF), $2 its default log
 # directory; $BOT its user. The directory is sticky: the bot may replace its own files (state
 # and OMEMO keys are written to a temporary file and renamed), but not root's ones. $BOT is
@@ -262,18 +276,15 @@ own_files() {
     local cdir=$1 f
     chown root:"$BOT" "$cdir"
     chmod 1770 "$cdir"
-    chown root:"$BOT" "$CONF"
-    chmod 640 "$CONF"
+    own_file root:"$BOT" 640 "$CONF"
     for f in "$cdir/omemo-trust.txt" "$(setting AVATAR_PATH)"; do
         if [ -n "$f" ] && [ -f "$f" ]; then
-            chown root:"$BOT" "$f"
-            chmod 640 "$f"
+            own_file root:"$BOT" 640 "$f"
         fi
     done
     for f in "$(setting BOT_STATE_PATH)" "$cdir/state.json" "$cdir/omemo.json" "$(setting OMEMO_STORE)"; do
         if [ -n "$f" ] && [ -f "$f" ]; then
-            chown "$BOT:$BOT" "$f"
-            chmod 600 "$f"
+            own_file "$BOT:$BOT" 600 "$f"
         fi
     done
     # leftovers of an interrupted write, possibly root's: the bot could not replace them
@@ -285,8 +296,7 @@ own_files() {
     # copies from the older, longer rotation (8 weeks): /privacy promises 14 days at most
     rm -f "$LOGDIR"/bot.log.[2-9]* "$LOGDIR"/bot.log.1.gz
     if [ -f "$LOGDIR/bot.log" ]; then
-        chown "$BOT:$BOT" "$LOGDIR/bot.log"
-        chmod 600 "$LOGDIR/bot.log"
+        own_file "$BOT:$BOT" 600 "$LOGDIR/bot.log"
     fi
 
     # Outbox: files for the admin (vpsfort's weekly abuse report, written by root and handed to
@@ -297,7 +307,7 @@ own_files() {
     chown root:"$BOT" "$OUTBOX"
     chmod 1770 "$OUTBOX"
     # files waiting there from the other mode's user: the bot could not delete them once sent
-    find "$OUTBOX" -maxdepth 1 -type f ! -user "$BOT" -exec chown "$BOT:$BOT" {} +
+    find "$OUTBOX" -maxdepth 1 -type f -links 1 ! -user "$BOT" -exec chown -h "$BOT:$BOT" {} +
 }
 
 # vpsfort's integrity watch covers the units, the links that enable them and the logrotate
@@ -499,8 +509,7 @@ if [ "$MODE" = client ]; then
     # the admin's OpenPGP public key: root's, the bot only reads it
     PGPKEY=$(setting OPENPGP_KEY)
     if [ -n "$PGPKEY" ] && [ -f "$PGPKEY" ]; then
-        chown root:"$BOT" "$PGPKEY"
-        chmod 640 "$PGPKEY"
+        own_file root:"$BOT" 640 "$PGPKEY"
     elif [ -n "$PGPKEY" ]; then
         echo "WARNING: OPENPGP_KEY=$PGPKEY does not exist, so the bot won't start. Export your public"
         echo "  key from OpenKeychain or iPGMail and copy it there (root:$BOT 640), or comment OPENPGP_KEY out."
@@ -541,9 +550,10 @@ if [ "$MODE" = admin ] && [ "$OUTBOX" != /opt/vpsfort-xmpp-bot/outbox ]; then
     echo "note: the outbox is $OUTBOX; set ABUSE_REPORT_OUTBOX=$OUTBOX in /etc/default/vpsfort-abuse-report"
 fi
 
-if [ "$MODE" = admin ]; then
-    cp -p "$DIR/state.json" "$DIR/state.json.bak-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
-    chown root:root "$DIR"/state.json.bak-* 2>/dev/null || true
+# A copy of the state, root's: under a random name (mktemp, never through a link the bot's
+# user could have put under a name made of the time), and read only if it is a file.
+if [ "$MODE" = admin ] && [ -f "$DIR/state.json" ] && [ ! -L "$DIR/state.json" ]; then
+    bak=$(mktemp "$DIR/state.json.bak-$(date +%Y%m%d-%H%M%S).XXXXXX") && cat "$DIR/state.json" > "$bak" || true
 fi
 # The running version becomes the rollback target, unless it is failing (restarting).
 if [ "$migrated" = yes ]; then

@@ -1015,6 +1015,34 @@ pub const APPS: &[App] = &[
             ],
         }],
     },
+    // A decoy site on the real web server (README, "Honeypot ports": a catch-all server
+    // block that answers 404 and logs to decoy.log). No name points at it, so every request
+    // in its log is a scanner's, whatever it asks for: one request bans, like a honeypot
+    // handshake, and the real server's log line is the evidence (request and user agent).
+    App {
+        name: "decoy",
+        about: "a decoy web site (every request is a scanner's)",
+        streams: &[Stream {
+            id: "decoy_access",
+            about: "access log",
+            files: &[
+                "/var/log/nginx/decoy*.log",
+                "/var/log/apache2/decoy*.log",
+                "/var/log/httpd/decoy*.log",
+                "/var/log/lighttpd/decoy*.log",
+                "/var/log/caddy/decoy*.log",
+            ],
+            units: &[],
+            prefer_journal: false,
+            rules: &[
+                // the common and combined formats (nginx, Apache, lighttpd): the address is
+                // the line's first field; the whole line is the evidence
+                rule("decoy_request", Probe, 100.0, None, concat!(access_start!(), ".*$")),
+                // Caddy's JSON: the request object starts with remote_ip, which Caddy writes
+                rule("decoy_request_json", Probe, 100.0, None, concat!(r#"^\{.*?"request":\{"remote_ip":"(?P<ip>"#, ip!(), r#")",.*$"#)),
+            ],
+        }],
+    },
 ];
 
 pub fn app(name: &str) -> Option<&'static App> {
@@ -1320,6 +1348,52 @@ mod tests {
         names.dedup();
         assert_eq!(names.len(), pats.len(), "names are unique");
         assert!(said.iter().any(|s| s == "PostgreSQL, with %h in log_line_prefix log: journal of postgresql.service"), "{said:?}");
+    }
+
+    #[test]
+    fn a_decoy_site_bans_on_any_request() {
+        // nginx's and Apache's combined format, lighttpd's common format: whatever the request
+        let nginx =
+            r#"203.0.113.5 - - [07/Nov/2026:10:00:00 +0000] "GET /.env HTTP/1.1" 404 153 "-" "Mozilla/5.0 (Nuclei - Open-source project)""#;
+        check("decoy", nginx, (P, "203.0.113.5", "decoy_request"));
+        let plain = r#"203.0.113.5 - - [07/Nov/2026:10:00:00 +0000] "GET / HTTP/1.1" 404 153 "-" "Mozilla/5.0""#;
+        check("decoy", plain, (P, "203.0.113.5", "decoy_request"));
+        let lighttpd = r#"203.0.113.5 decoy.invalid - [07/Nov/2026:10:00:00 +0000] "GET /index.html HTTP/1.1" 404 345"#;
+        check("decoy", lighttpd, (P, "203.0.113.5", "decoy_request"));
+        let vhost = r#"203.0.113.6:80 203.0.113.5 - - [07/Nov/2026:10:00:00 +0000] "GET /cgi-bin/luci HTTP/1.0" 404 196"#;
+        check("decoy", vhost, (P, "203.0.113.5", "decoy_request"));
+        // TLS sent to the plain port, and a request with no method at all, are requests too
+        let tls = r#"203.0.113.5 - - [07/Nov/2026:10:00:00 +0000] "\x16\x03\x01\x00\xA5\x01\x00\x00\xA1\x03\x03" 400 157 "-" "-""#;
+        check("decoy", tls, (P, "203.0.113.5", "decoy_request"));
+        check("decoy", r#"2001:db8::5 - - [07/Nov/2026:10:00:00 +0000] "-" 400 0 "-" "-""#, (P, "2001:db8::5", "decoy_request"));
+        // one request is a ban, and the line is the evidence
+        let e = hit("decoy", nginx).unwrap();
+        assert_eq!(e.points, Some(100.0));
+        assert!(e.detail.contains(r#""GET /.env HTTP/1.1" 404 153 "-" "Mozilla/5.0 (Nuclei"#), "{}", e.detail);
+        // an address in the path or the user agent is never the one banned
+        let forged = nginx.replace("/.env", "/198.51.100.9%20-%20-%20[07/Nov/2026:10:00:00%20+0000]");
+        check("decoy", &forged, (P, "203.0.113.5", "decoy_request"));
+        // Caddy's JSON
+        let caddy = r#"{"level":"info","ts":1762509600.1,"logger":"http.log.access.decoy","msg":"handled request","request":{"remote_ip":"203.0.113.5","remote_port":"51234","client_ip":"203.0.113.5","proto":"HTTP/1.1","method":"GET","host":"203.0.113.6","uri":"/","headers":{"User-Agent":["zgrab/0.x"]}},"bytes_read":0,"status":404}"#;
+        check("decoy", caddy, (P, "203.0.113.5", "decoy_request_json"));
+        let forged = caddy.replace(r#""User-Agent":["zgrab/0.x"]"#, r#""X":["\"remote_ip\":\"198.51.100.9\""],"User-Agent":["zgrab/0.x"]"#);
+        check("decoy", &forged, (P, "203.0.113.5", "decoy_request_json"));
+        // not a request line: nginx's error log, a line of another format
+        none(
+            "decoy",
+            r#"2026/11/07 10:00:00 [error] 1234#1234: *5 open() "/var/www/decoy/.env" failed (2: No such file or directory), client: 203.0.113.5"#,
+        );
+        none("decoy", "Nov  7 10:00:00 host sshd[1]: Invalid user admin from 203.0.113.5 port 1234");
+        // its log is apart from the real sites' (nginx's `*access.log`): decoy.log
+        let (_, said) = expand(
+            &sources("apps = [\"nginx\", \"decoy\"]"),
+            &Fake(&["/var/log/nginx/access.log", "/var/log/nginx/decoy.log", "/var/log/nginx/decoy.access.log"], &[]),
+        )
+        .unwrap();
+        assert!(said.iter().any(|s| s == "nginx access log: /var/log/nginx/access.log, /var/log/nginx/decoy.access.log"), "{said:?}");
+        assert!(said.iter().any(|s| s.ends_with("access log: /var/log/nginx/decoy.access.log, /var/log/nginx/decoy.log")), "{said:?}");
+        let (_, said) = expand(&sources("apps = [\"decoy\"]"), &Fake(&[], &[])).unwrap();
+        assert!(said[0].ends_with(": /var/log/nginx/decoy.log"), "followed once it appears: {said:?}");
     }
 
     #[test]
