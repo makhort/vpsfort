@@ -586,7 +586,7 @@ impl FactBody {
         }
     }
 
-    fn expires(&self, created: Micros, notice_ttl: i64) -> Micros {
+    pub(crate) fn expires(&self, created: Micros, notice_ttl: i64) -> Micros {
         let after = |secs: i64| created.saturating_add(secs * SEC);
         match self {
             FactBody::Ban { until, .. } => *until,

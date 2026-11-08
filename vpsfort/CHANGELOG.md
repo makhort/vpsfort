@@ -3,6 +3,12 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.7.1 - 2026-11-08
+
+A fix found on the servers during the upgrade to 0.7.0.
+
+- A node that restarts no longer delivers its peers' alerts and digests a second time. What a node has seen lived only in memory, and the peers resend what they hold at every full sync, for `notice_ttl` (a day), so an upgrade flooded the bot chat with the last day's messages (`[node1] vpsfort daily digest (relayed 14h33m late)`). The notices delivered are now kept in the state file. Those that came while the node was down are still delivered, late, as before. A new node takes the notices created since its first start, and the first start after this upgrade those since the old version last saved its state.
+
 ## 0.7.0 - 2026-11-08
 
 Honeypots that bring out the login a bot tries, a decoy web site, and the README's recipe for dedicated honeypot nodes in a cluster.

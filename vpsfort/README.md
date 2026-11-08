@@ -827,7 +827,7 @@ Every vpsfort node can exchange what it learns with the others directly over TCP
 | `unbans` | a ban lifted at the origin (e.g. a false positive: a banned address then logged in) is lifted here too |
 | `reports` | points a node scored for an address since its last sync, counted here × `report_factor` (0.5). An address that probes every server a little still adds up to a ban |
 | `trust` | operator allowlist entries (`vpsfort allow`). Login trust is no longer shared: older nodes still send it, and it is ignored |
-| `notices` | admin messages relayed to a node that delivers them (XMPP, or a copy bot). Kept for a peer that can't be reached for `[cluster] notice_ttl` (24 h; was an hour) within 2 MB in all, so a relay node down for the night still gets them, each saying how late it is |
+| `notices` | admin messages relayed to a node that delivers them (XMPP, or a copy bot). Kept for a peer that can't be reached for `[cluster] notice_ttl` (24 h; was an hour) within 2 MB in all, so a relay node down for the night still gets them, each saying how late it is. A node keeps the ones it has delivered in its state file, so a restart doesn't deliver them twice |
 | `log_digests` | once a day, from 00:05 UTC, the SHA-256 of the previous day's lines of the node's actions log, and how many there were. The receiving node keeps it (120 days per peer; the first word about a day stands, a later one can't rewrite it) as tamper evidence: a root intruder who edits the log on the node can't edit the copies the peers hold. `vpsfort log-digests [node]` on a peer prints what it holds; `vpsfort log-digest --day D` on the node hashes that day again, so the two can be compared |
 | `mirror` | every line of the node's actions log, at the next sync, to the one direct peer `[cluster] mirror_to` names (its node id), which appends them to `<mirror_dir>/<node>.jsonl` (`/var/lib/vpsfort/mirror`, 0700; rotated once at `mirror_max_mb`, 64) with a marker line where batches are missing (the mirror was unreachable for an hour, or a restart) or the origin had to drop lines (more than 1,000 or 256 KB in one sync). The hashes prove an edit; the mirror keeps the lines, so what a wiped node decided is still somewhere. `vpsfort mirror` on the peer lists what it holds, `status` shows both sides, the self-audit checks the directory |
 | `probes` | a node's request to its direct peers to try its public ports from outside, and their answers (`[exposure] peer_probe`; "Exposure watch") |
@@ -1298,9 +1298,9 @@ Without a Rust toolchain: every version tag `vpsfort-v<version>` gets its bundle
 
 ```bash
 arch=x86_64-linux-musl     # the server's: aarch64-linux-musl (arm64), armv7-linux-musleabihf (32-bit ARM)
-gh release download vpsfort-v0.7.0 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
+gh release download vpsfort-v0.7.1 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
 sha256sum -c vpsfort-*-$arch.zip.sha256              # the download is intact (macOS: shasum -a 256 -c)
-gh attestation verify vpsfort-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-v0.7.0
+gh attestation verify vpsfort-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-v0.7.1
 ```
 
 `gh attestation verify` (after `gh auth login`) checks the signed build provenance: that this repository's CI built exactly this zip from that tag. With `--bundle vpsfort-*-$arch.zip.sigstore.json` it checks the attestation attached to the Release instead of fetching it from GitHub. Only a public repository's releases have one (GitHub offers attestations for private repositories only with Enterprise Cloud).
@@ -1325,7 +1325,7 @@ sudo ./install.sh                                # installs and starts vpsfort (
 The same release has a package per architecture, for the distribution's package manager instead of `install.sh`: `vpsfort_<version>-1_<arch>.deb` (`amd64`, `arm64`, `armhf`; Debian, Ubuntu and their derivatives) `vpsfort-<version>-1.<arch>.rpm` (`x86_64`, `aarch64`, `armv7hl`; Fedora, RHEL and its rebuilds) and `vpsfort-<version>-r0.<arch>.apk` (`x86_64`, `aarch64`, `armv7`; Alpine, with OpenRC: below), each with its `.sha256` and `.sigstore.json`, downloaded and verified as the bundle above (`--pattern "*.deb*"`, `"*.rpm*"` or `"*.apk*"`). CI keeps them for every commit as workflow artifacts, and `scripts/package.sh` builds them locally (`cargo install cargo-deb cargo-generate-rpm --locked` once, and python3 for the `.apk`, which `scripts/apk.py` at the repository's root writes; none needs dpkg, rpm or apk-tools, so it runs on macOS too; `--target aarch64-unknown-linux-musl` or `armv7-unknown-linux-musleabihf` for the ARM ones). Or from the signed apt and dnf repository on GitHub Pages, once it is set up (the repository README, "Deployment"), where `apt upgrade` and `dnf upgrade` then bring new versions.
 
 ```bash
-sudo apt install ./vpsfort_0.7.0-1_amd64.deb      # Debian, Ubuntu; Fedora, RHEL:  sudo dnf install ./vpsfort-0.7.0-1.x86_64.rpm
+sudo apt install ./vpsfort_0.7.1-1_amd64.deb      # Debian, Ubuntu; Fedora, RHEL:  sudo dnf install ./vpsfort-0.7.1-1.x86_64.rpm
 sudoedit /etc/vpsfort/vpsfort.toml               # a new host: the template is in place, nothing runs yet
 sudo vpsfort -c /etc/vpsfort/vpsfort.toml print-config > /dev/null && sudo systemctl enable --now vpsfort vpsfort-abuse-report.timer
 ```
@@ -1565,6 +1565,7 @@ All fixed the same day:
 - on the VPN host, the audit went on warning that apport would set `fs.suid_dumpable` back after `systemctl disable --now apport`: apport is an init.d script on Ubuntu 22.04, so `--now` disabled it without stopping it, and `kernel.core_pattern`, which the audit read, still named it (the audit now asks whether apport starts at boot, and its advice disables and stops apport in two commands);
 - the clock warning reached the web console from a host whose timesyncd was synchronised: the daemon asked at its start and then hourly, so a boot's first answer, before the first NTP reply, could warn at once and stay for an hour (a clock must now stay unsynchronised for 15 minutes, and is asked about every minute meanwhile);
 - on a Debian 13 node, `net.ipv4.conf.all.log_martians` was back at 0 after a restart although `90-hardening.conf` set it to 1, and the audit advised `sysctl --system`: ufw applies `/etc/ufw/sysctl.conf`, which ships `log_martians=0`, at every start, after the sysctl.d files (the audit reads that file now, where ufw is enabled, and names the line to change);
+- an upgrade restart flooded the bot chat with the peers' alerts and digests of the last day (`[node1] vpsfort daily digest (relayed 14h33m late)`): a node's memory of what it had seen ended with the process, and the peers resend what they hold at every full sync (the notices delivered are kept in the state file now);
 - the packages' question whether to replace the config went to the install's output, which dnf holds back until a scriptlet ends: under dnf the install looked hung for the question's whole minute, then kept the config (the question goes to the terminal itself now, in all eight packages).
 
 ### On a Fedora test server (2026-10-25)
@@ -1600,6 +1601,7 @@ Everything here is covered by tests (the unit tests, the month replay, `tests/la
 - the cluster link's fallback to plain frames for an older node, and `forward_secrecy = "require"`;
 - the self-audit of vpsfort's own files finding a problem on a server: it ran clean on two nodes, whose files have the modes the installers and packages set;
 - the clock warning on a host whose clock stays unsynchronised;
+- a node's restart leaving out the peers' notices it has already delivered (the tests go through a saved state);
 - the container and WireGuard peer baselines on a host (the tests read Docker's files and `wg show` output as the hosts write them), and the new watched files of `[cron] files` reporting a change;
 - `[geoblock] ports`, the heartbeat, the `[dns]` names check, the DANE comparison with real TLSA records, the metrics textfile read by a node_exporter, the peers' daily log digests between real nodes, Nextcloud users' notifications through `occ`, `vpsfort quiet`, `explain` and `baseline import` on a server;
 - the exposure watch reading a host's own nftables ruleset (tested against rulesets as `nft -j` prints them), a container's outbound connections through its network namespace, a peer's view from outside (`[exposure] peer_probe`) between real nodes, and blocklist feeds and `[waf]` lists under the firewalld backend;

@@ -3,7 +3,7 @@
 **How vpsfort compares with the open-source and commercial tools you might use instead:
 a briefing for teams thinking about adopting it.**
 
-The state is as of 2026-11-08: vpsfort 0.7.0, its web console vpsfort-web 0.5.1, the bots
+The state is as of 2026-11-08: vpsfort 0.7.1, its web console vpsfort-web 0.5.1, the bots
 (vpsfort-xmpp-bot 0.7.1, vpsfort-tg-bot and vpsfort-mail-bot 0.5.2, vpsfort-signal-bot and
 vpsfort-matrix-bot 0.3.2, vpsfort-push-bot 0.2.2) and vpsfort-sim 0.2.0 (the commit named under [Method and
 sources](#20-method-and-sources)), compared with the releases
@@ -138,7 +138,7 @@ journal ─► vpsfort ─► nftables / firewalld / ufw / iptables / ipset  ◄
 
 | tool | kind | license | language | model | state in Oct 2026 |
 |---|---|---|---|---|---|
-| **vpsfort** | ban manager and host watch | MIT | Rust | decaying scores per address across all services, own nftables table (or firewalld, ipset, ufw, iptables), peer-to-peer cluster | 0.7.0, new in Oct 2026 |
+| **vpsfort** | ban manager and host watch | MIT | Rust | decaying scores per address across all services, own nftables table (or firewalld, ipset, ufw, iptables), peer-to-peer cluster | 0.7.1, new in Oct 2026 |
 | **fail2ban** | ban manager | GPL-2.0 | Python | "jails": a regex filter and a firewall action per service | 1.1.0 is what distributions ship |
 | **sshguard** | ban manager | BSD-style | C | built-in attack parser, a score per address | 2.5.1 (2025) |
 | **reaction** | ban manager | AGPL-3.0 | – | streams, regex and actions; a smaller, newer fail2ban alternative | 2.x |
@@ -500,7 +500,7 @@ Know these before you adopt it:
 - **No CVE matching, hardening benchmark or compliance reports** (the hardening audit covers sshd and the kernel's sysctls only).
 - **Six alert channels:** XMPP, Telegram, e-mail, Signal, Matrix, and ntfy, Gotify or a webhook.
 - **A young package repository:** the signed apt and dnf repository on GitHub Pages is built by CI after each release (it needs a signing key in the repository's secrets); apt and dnf have installed from it, on one server each, and dnf has upgraded from it once. Without it: `.deb` and `.rpm` files from the releases, installed one by one, or a release zip with `install.sh`.
-- **Young:** version 0.7.0, running on the authors' own servers only, written by one maintainer
+- **Young:** version 0.7.1, running on the authors' own servers only, written by one maintainer
   in collaboration with an AI model (see the [README](README.md#authorship)). It has had internal
   security reviews, but no independent audit.
 - **Covered by tests, not yet run on a host:** the plain iptables backend, `sudo` and
@@ -559,7 +559,7 @@ server below, which stayed on). Seen there, with the details in the README's
   clean afterwards; the Fedora server then upgraded to the next release from the repository.
 - **The web console** showing every node, all but one through their agents.
 
-These runs found nineteen problems, all fixed the same day: two misleading SSH audit messages, an
+These runs found twenty problems, all fixed the same day: two misleading SSH audit messages, an
 installer's new user raising high alerts, the Matrix bot stopped at its start by an OpenPGP key
 file at mode 0600, a gateway user left out of the canary exceptions, which banned the admin's
 own address at the next SSH login (now `vpsfort canary-check`, run by the installers and daily
@@ -576,8 +576,9 @@ running values, so it never told that those lines were skipped (on the VPN host,
 `kernel.sysrq` came back at the next `sysctl --system`), the audit still warning about
 apport after `systemctl disable --now`, which disables Ubuntu 22.04's init.d script without
 stopping it, the clock warning raised by a boot's first reading, before the first NTP
-answer, and the audit not reading ufw's own sysctl file, which sets `log_martians` back to 0
-at every start of ufw.
+answer, the audit not reading ufw's own sysctl file, which sets `log_martians` back to 0
+at every start of ufw, and a restarted node delivering its peers' last day of alerts and
+digests again.
 
 **On the Fedora 44 server's first evening** (2026-10-25, x86_64, firewalld 2.4.4, rpm 6 and
 dnf5, real scanners and a VPN as the test client), following

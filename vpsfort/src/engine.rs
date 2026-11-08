@@ -920,6 +920,8 @@ const COUNTRY_ISPS: usize = 50;
 const COUNTRY_PORTS: usize = 300;
 /// Busiest addresses per pattern in a snapshot.
 const PATTERN_TOP_IPS: usize = 20;
+/// The peers' notices remembered as delivered: far more than a day brings, short of a flood.
+const MAX_NOTICES_SEEN: usize = 10_000;
 
 /// Persisted across restarts.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1000,6 +1002,12 @@ pub struct PersistedState {
     /// Batches of the actions log sent to the mirror so far (the mirror marks a gap).
     #[serde(default, skip_serializing_if = "u64_is_zero")]
     pub mirror_batch: u64,
+    /// The peers' notices delivered here: (origin, seq, when the peers stop resending it).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices_seen: Vec<(String, u64, Micros)>,
+    /// Notices created before this aren't delivered (None: a state older than `notices_seen`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notices_from: Option<Micros>,
 }
 
 fn u64_is_zero(n: &u64) -> bool {
@@ -1044,6 +1052,11 @@ pub struct Engine {
     pub log_digest_day: Option<String>,
     /// Batches of the actions log sent to the mirror (`[cluster] mirror_to`) so far.
     mirror_batch: u64,
+    /// The peers' notices delivered here, and when the peers stop resending each.
+    notices_seen: HashMap<(String, u64), Micros>,
+    /// Older notices aren't delivered: a new node's first start, or for a state older than
+    /// `notices_seen`, when that version last saved it.
+    notices_from: Micros,
     /// The peers' logs mirrored here (`[cluster] mirror_dir`), since the start.
     mirrors: BTreeMap<String, crate::mirror::MirrorView>,
     /// When each address last logged in, per service: trust shields it from that service's
@@ -1164,6 +1177,8 @@ impl Engine {
             peer_log_digests: BTreeMap::new(),
             log_digest_day: None,
             mirror_batch: 0,
+            notices_seen: HashMap::new(),
+            notices_from: now,
             mirrors: BTreeMap::new(),
             trusted: HashMap::new(),
             account_nets: HashMap::new(),
@@ -2271,6 +2286,9 @@ impl Engine {
                 self.judge_probe(&mut out);
             }
             FactBody::Notice { subject, body } => {
+                if !self.notice_is_new(fact, ccfg, now) {
+                    return out;
+                }
                 // held for a peer that was down (`[cluster] notice_ttl`): say how late it is
                 let late = crate::time::now().saturating_sub(fact.created);
                 let late = if late >= 15 * crate::time::MIN {
@@ -2299,6 +2317,26 @@ impl Engine {
             }
         }
         out
+    }
+
+    /// Whether a peer's notice is to be delivered. The cluster's memory of what it has seen
+    /// ends with the process, and the peers resend all they hold at their next full sync (for
+    /// `[cluster] notice_ttl`: a day of alerts and digests), so the notices delivered are kept
+    /// in the state file. One that came while this node was down is still new.
+    fn notice_is_new(&mut self, fact: &Fact, ccfg: &ClusterCfg, now: Micros) -> bool {
+        let id = (fact.origin.clone(), fact.seq);
+        if fact.created < self.notices_from || self.notices_seen.contains_key(&id) {
+            return false;
+        }
+        if self.notices_seen.len() >= MAX_NOTICES_SEEN {
+            self.notices_seen.retain(|_, until| *until > now);
+        }
+        // (past the bound, which only a peer's flood reaches, a restart may deliver it again)
+        if self.notices_seen.len() < MAX_NOTICES_SEEN {
+            self.notices_seen.insert(id, fact.body.expires(fact.created, ccfg.notice_ttl.0 as i64));
+            self.changes += 1;
+        }
+        true
     }
 
     // ---------------------------------------------------------------- operator
@@ -3851,6 +3889,13 @@ impl Engine {
             peer_log_digests: self.peer_log_digests.clone(),
             log_digest_day: self.log_digest_day.clone(),
             mirror_batch: self.mirror_batch,
+            notices_seen: self
+                .notices_seen
+                .iter()
+                .filter(|(_, until)| **until > self.now)
+                .map(|((o, s), until)| (o.clone(), *s, *until))
+                .collect(),
+            notices_from: Some(self.notices_from),
             ssh_audit: self.ssh_audit.clone(),
             sysctl_audit: self.sysctl_audit.clone(),
             patterns: self.pattern_stats.iter().filter(|s| s.since > 0).cloned().collect(),
@@ -3909,6 +3954,10 @@ impl Engine {
         self.peer_log_digests = st.peer_log_digests;
         self.log_digest_day = st.log_digest_day;
         self.mirror_batch = st.mirror_batch;
+        // the same bound as when counting (the file may have been edited)
+        self.notices_seen = st.notices_seen.into_iter().take(MAX_NOTICES_SEEN).map(|(o, s, until)| ((o, s), until)).collect();
+        // a state older than that list: what came before that version stopped, it delivered
+        self.notices_from = st.notices_from.unwrap_or(st.saved);
         self.ssh_audit = st.ssh_audit;
         self.sysctl_audit = st.sysctl_audit;
         self.set_pattern_stats(
@@ -4602,6 +4651,74 @@ mod tests {
         let mut fresh = engine();
         let all: Vec<Action> = facts.iter().flat_map(|f| apply(&mut fresh, f)).collect();
         assert_eq!(bans(&all), ["7.7.7.1", "7.7.7.2"]);
+    }
+
+    fn notice(seq: u64, created: Micros) -> crate::cluster::Fact {
+        crate::cluster::Fact {
+            origin: "vpn".into(),
+            seq,
+            created,
+            hops: 1,
+            body: FactBody::Notice { subject: "vpsfort daily digest".into(), body: "text".into() },
+            sig: String::new(),
+        }
+    }
+
+    /// The peers resend every notice they hold at their next full sync, and a restart empties
+    /// the cluster's memory: what was delivered stays delivered, and what came while the node
+    /// was down is delivered.
+    #[test]
+    fn a_restart_does_not_deliver_the_peers_notices_again() {
+        let ccfg = ClusterCfg::default();
+        let cfg = Arc::new(Config::default());
+        let restart = |e: &Engine| {
+            let mut next = Engine::new(Arc::clone(&cfg), e.now + 3600 * SEC);
+            next.restore(decode_state(&encode_state(&e.export(None)).unwrap()).unwrap());
+            next
+        };
+        let mut e = Engine::new(Arc::clone(&cfg), 0);
+        assert_eq!(e.apply_peer_fact(&notice(1, 10 * SEC), &ccfg).len(), 1);
+        assert!(e.apply_peer_fact(&notice(1, 10 * SEC), &ccfg).is_empty(), "the same one twice");
+
+        let mut after = restart(&e);
+        assert!(after.apply_peer_fact(&notice(1, 10 * SEC), &ccfg).is_empty(), "delivered before the restart");
+        assert_eq!(after.apply_peer_fact(&notice(2, 20 * SEC), &ccfg).len(), 1, "created while it was down");
+
+        let mut again = restart(&after);
+        assert!(again.apply_peer_fact(&notice(1, 10 * SEC), &ccfg).is_empty());
+        assert!(again.apply_peer_fact(&notice(2, 20 * SEC), &ccfg).is_empty(), "remembered through a second restart");
+
+        again.now = 3 * 86_400 * SEC;
+        assert!(again.export(None).notices_seen.is_empty(), "the peers have let go of them");
+    }
+
+    /// Without a list to go by: a new node, and the first start on a state that has none.
+    #[test]
+    fn old_notices_are_left_out_without_a_list_of_the_delivered() {
+        let ccfg = ClusterCfg::default();
+        let cfg = Arc::new(Config::default());
+        let mut new_node = Engine::new(Arc::clone(&cfg), 100 * SEC);
+        assert!(new_node.apply_peer_fact(&notice(1, 50 * SEC), &ccfg).is_empty(), "from before it existed");
+        assert_eq!(new_node.apply_peer_fact(&notice(2, 150 * SEC), &ccfg).len(), 1);
+
+        let mut upgraded = Engine::new(Arc::clone(&cfg), 200 * SEC);
+        upgraded.restore(PersistedState { saved: 100 * SEC, ..Default::default() });
+        assert!(upgraded.apply_peer_fact(&notice(1, 50 * SEC), &ccfg).is_empty(), "the old version delivered it");
+        assert_eq!(upgraded.apply_peer_fact(&notice(2, 150 * SEC), &ccfg).len(), 1, "created while it was down");
+        assert_eq!(upgraded.export(None).notices_from, Some(100 * SEC), "a second restart goes by the same time");
+    }
+
+    #[test]
+    fn the_notices_remembered_are_bounded() {
+        let ccfg = ClusterCfg::default();
+        let mut e = Engine::new(Arc::new(Config::default()), 0);
+        let full = |until| (0..MAX_NOTICES_SEEN as u64).map(|s| (("old".to_string(), s), until)).collect::<HashMap<_, Micros>>();
+        e.notices_seen = full(1);
+        assert_eq!(e.apply_peer_fact(&notice(1, 10 * SEC), &ccfg).len(), 1);
+        assert_eq!(e.notices_seen.len(), 1, "expired ones make room");
+        e.notices_seen = full(Micros::MAX);
+        assert_eq!(e.apply_peer_fact(&notice(2, 20 * SEC), &ccfg).len(), 1, "delivered all the same");
+        assert_eq!(e.notices_seen.len(), MAX_NOTICES_SEEN);
     }
 
     /// Peer bans never reach wider than this node bans itself.
