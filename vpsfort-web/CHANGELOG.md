@@ -3,6 +3,12 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.6.0 - 2026-11-09
+
+A Honeypots tab.
+
+- A **Honeypots** tab: the nodes' decisions whose evidence came from a honeypot port (`[ports] honeypot`) or the decoy web site (`[sources] apps = ["decoy"]`), one row per hit with the node, the address, the port and what the scanner sent, the hits counted per port, filters for node, ports or decoy sites, and a search over what was sent. Before, each honeypot catch meant the Bans tab, the address's page and the row of its decision.
+
 ## 0.5.1 - 2026-11-06
 
 Fixes.

@@ -60,6 +60,7 @@ import {
       overview: { range: "3h" },
       alerts: { level: "all", node: "", q: "", merge: true },
       bans: { node: "", q: "", group: false },
+      honeypots: { node: "", kind: "", q: "" },
       offenders: { node: "", q: "" },
       activity: { kind: "", node: "", q: "", merge: true },
       world: { q: "", selected: "", all: false, allNets: false, allPorts: false },
@@ -368,7 +369,7 @@ import {
 
   // ------------------------------------------------------------------ shell
 
-  const TABS = [["overview", "Overview"], ["alerts", "Alerts"], ["bans", "Bans"], ["offenders", "Offenders"], ["activity", "Activity"], ["world", "World"], ["map", "Map"], ["abuse", "Abuse"]];
+  const TABS = [["overview", "Overview"], ["alerts", "Alerts"], ["bans", "Bans"], ["honeypots", "Honeypots"], ["offenders", "Offenders"], ["activity", "Activity"], ["world", "World"], ["map", "Map"], ["abuse", "Abuse"]];
   let shell = null;
 
   function buildShell() {
@@ -611,7 +612,7 @@ import {
     refresh();
   }
 
-  const VIEWS = { overview: viewOverview, alerts: viewAlerts, bans: viewBans, offenders: viewOffenders, activity: viewActivity, world: viewWorld, map: viewMap, abuse: viewAbuse, nodes: viewNode, address: viewAddress, account: viewAccount };
+  const VIEWS = { overview: viewOverview, alerts: viewAlerts, bans: viewBans, honeypots: viewHoneypots, offenders: viewOffenders, activity: viewActivity, world: viewWorld, map: viewMap, abuse: viewAbuse, nodes: viewNode, address: viewAddress, account: viewAccount };
 
   // An address page's address: a network's "/" splits the hash's path.
   const addressOf = (parts) => parts.slice(1).join("/");
@@ -1237,6 +1238,77 @@ import {
           patch(exp, tableExport("bans", cols, rows));
           patch(body, table("bans", cols, rows, { limit: 1000, empty: "No bans match." }));
         }
+      },
+    };
+  }
+
+  // ------------------------------------------------------------------ honeypots
+
+  // A honeypot's evidence line: `11-09 01:07:00 connected to honeypot TCP/445, sent an SMB2
+  // negotiate (178 bytes): "..."`, or the decoy web site's `11-09 01:23:02 decoy_request: "GET
+  // / HTTP/1.1" 404 118 "-" "zgrab/0.x"`.
+  const TRAP_LINE = /^(?:\d\d-\d\d \d\d:\d\d:\d\d )?(?:connected to honeypot (TCP\/\d+), (.*)|decoy_request(?:_json)?: (.*))$/;
+
+  // The nodes' decisions whose evidence came from a honeypot port or the decoy site, one row
+  // per evidence line, with the scanner's address, the port and what it sent, so none of
+  // them needs its address page opened. A ban a peer took over carries the same evidence:
+  // the origin's row is kept, the copies are not.
+  function trapHits(actions) {
+    const seen = new Set();
+    const out = [];
+    const sorted = [...actions].sort((a, b) => (a.origin ? 1 : 0) - (b.origin ? 1 : 0));
+    for (const a of sorted) {
+      for (const l of a.evidence || []) {
+        const m = TRAP_LINE.exec(l);
+        if (!m) continue;
+        const key = `${a.target}:${l}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ ...a, port: m[1] || "web", sent: m[2] || m[3], line: l, key: `${a.node_id}:${a.ts}:${l}` });
+      }
+    }
+    return out;
+  }
+
+  function viewHoneypots(root) {
+    const f = state.filters.honeypots;
+    const count = h("span", { class: "count" });
+    const exp = h("span", { class: "export" });
+    const nodeSel = select(nodeOptions(f.node), (v) => { f.node = v; update(); }, "Node");
+    const ports = h("div", { class: "chips" });
+    const body = h("section", { class: "card" });
+    const cols = [
+      { label: "Time", sort: (r) => r.ts, cell: (r) => timeCell(r.ts), csv: (r) => utc(r.ts) },
+      { label: "Node", sort: (r) => r.node, cell: (r) => nodeChip(r.node, r.node_id) },
+      { label: "Address", sort: (r) => r.target, cell: (r) => addrLink(r.target), csv: (r) => r.target },
+      { label: "Port", cls: "nowrap", sort: (r) => (r.port === "web" ? 0 : Number(r.port.slice(4))), cell: (r) => (r.port === "web" ? "decoy site" : r.port) },
+      { label: "What it sent", cls: "msg", cell: (r) => h("span", { class: "mono" }, r.sent), csv: (r) => r.sent },
+      { label: "Decision", cls: "nowrap", sort: (r) => r.kind, cell: (r) => (r.kind === "ban" && r.until ? `ban, ${left(r.until)} left` : r.kind), csv: (r) => r.kind },
+    ];
+    root.append(
+      h("div", { class: "page-head" }, h("h1", null, "Honeypots"), h("span", { class: "sub" }, "what connected to the honeypot ports and the decoy sites, and what it sent")),
+      filterRow(
+        select([["", "Ports and decoy sites"], ["ports", "Honeypot ports"], ["web", "Decoy sites"]].map(([v, l]) => h("option", { value: v, selected: v === f.kind }, l)), (v) => { f.kind = v; update(); }, "Kind"),
+        nodeSel,
+        search(f.q, "Search addresses, ports, what was sent", (v) => { f.q = v; update(); }),
+        columnChooser("honeypots", cols), count, exp),
+      ports);
+    root.appendChild(body);
+    return {
+      update() {
+        patch(nodeSel, nodeOptions(f.node));
+        const d = state.data;
+        if (!ready("actions")) return;
+        const all = trapHits(d.actions);
+        const rows = all.filter((r) => (!f.node || r.node_id === f.node) && (!f.kind || (f.kind === "web") === (r.port === "web")) && matches(f.q, r.target, r.port, r.sent));
+        const by = new Map();
+        for (const r of all.filter((r) => !f.node || r.node_id === f.node)) by.set(r.port, (by.get(r.port) || 0) + 1);
+        const top = [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 24);
+        patch(ports, top.map(([p, n]) => h("span", { class: "chip", title: `${num(n)} hit${n === 1 ? "" : "s"}` }, p === "web" ? "decoy site" : p, " ", h("b", null, num(n)))));
+        const fresh = newSince(rows, state.lastLook);
+        count.textContent = `${num(rows.length)} hit${rows.length === 1 ? "" : "s"}${fresh.count ? `, ${num(fresh.count)} new` : ""} among the nodes' latest decisions`;
+        patch(exp, tableExport("honeypots", cols, rows));
+        patch(body, table("honeypots", cols, rows, { key: (r) => r.key, detail: actionDetail, sort: { col: "Time", asc: false }, empty: all.length ? "Nothing matches." : "No honeypot hit among the nodes' latest decisions. Honeypot ports and the decoy site are set up per node ([ports] honeypot, [sources] apps = [\"decoy\"]).", rowClass: (r) => (fresh.isNew(r) ? "fresh" : "") }));
       },
     };
   }

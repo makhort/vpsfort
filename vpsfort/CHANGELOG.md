@@ -3,6 +3,12 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.7.3 - 2026-11-09
+
+Found on the honeypot node's first night.
+
+- A honeypot's capture is named by its protocol before the bytes, for the openings scanners send: `sent an SMB2 negotiate (178 bytes): "\x00\x00\x00\xae\xfeSMB..."`, an MS SQL pre-login, a TLS client hello, an RDP connection request, PostgreSQL, MongoDB, Redis, memcached, SOCKS, MQTT, AMQP, ADB, Modbus, LDAP, RPC, Oracle, PPTP, VNC, SIP, Java RMI, an SSH client banner. Recognised by each protocol's fixed opening bytes; nothing is answered. (Found on the honeypot node, where a night's evidence was hex to decode by hand.)
+
 ## 0.7.2 - 2026-11-09
 
 Found on the first dedicated honeypot node.

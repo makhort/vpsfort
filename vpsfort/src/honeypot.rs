@@ -341,7 +341,93 @@ pub fn describe(sent: &[u8], prompts: Option<Prompts>) -> String {
         }
         return format!("{text} ({} bytes)", sent.len());
     }
-    format!("sent {} bytes: \"{}\"", sent.len(), ascii(sent, SHOWN))
+    match protocol(sent) {
+        Some(what) => format!("sent {what} ({} bytes): \"{}\"", sent.len(), ascii(sent, SHOWN)),
+        None => format!("sent {} bytes: \"{}\"", sent.len(), ascii(sent, SHOWN)),
+    }
+}
+
+/// What the first bytes of a connection are, for the protocols scanners open with (the
+/// client speaks first in each), so the evidence says "an SMB2 negotiate" before the hex. By
+/// the fixed bytes of each protocol's opening message: a length that matches, a magic string,
+/// a version. Nothing is answered; a capture cut short still names its protocol.
+fn protocol(s: &[u8]) -> Option<&'static str> {
+    let n = s.len();
+    let at = |i: usize| s.get(i).copied();
+    let be16 = |i: usize| Some(u16::from_be_bytes([at(i)?, at(i + 1)?]) as usize);
+    let be32 = |i: usize| Some(u32::from_be_bytes([at(i)?, at(i + 1)?, at(i + 2)?, at(i + 3)?]));
+    let le32 = |i: usize| Some(u32::from_le_bytes([at(i)?, at(i + 1)?, at(i + 2)?, at(i + 3)?]));
+    let has = |needle: &[u8]| s.windows(needle.len()).any(|w| w == needle);
+    // a length field that is the whole message, or more than was captured
+    let whole = |len: Option<usize>| len.is_some_and(|l| l >= n && l <= MAX_CAPTURE * 4);
+    let first_line = s.split(|&b| b == b'\n').next().unwrap_or(s);
+    Some(if s.starts_with(b"SSH-") {
+        "an SSH client banner"
+    } else if s.starts_with(b"RFB 0") {
+        "a VNC client version"
+    } else if first_line.strip_suffix(b"\r").unwrap_or(first_line).ends_with(b" SIP/2.0") {
+        "a SIP request"
+    } else if s.starts_with(b"AMQP") {
+        "an AMQP protocol header"
+    } else if s.starts_with(b"CNXN") {
+        "an ADB connect"
+    } else if s.starts_with(b"JRMI") {
+        "a Java RMI handshake"
+    } else if (s.starts_with(b"*") && has(b"\r\n$"))
+        || [&b"INFO"[..], b"PING", b"CONFIG ", b"AUTH ", b"EVAL "].iter().any(|c| s.starts_with(c))
+    {
+        "a Redis command"
+    } else if s.starts_with(b"stats") || s.starts_with(b"version\r\n") {
+        "a memcached command"
+    } else if at(0) == Some(0xff) {
+        "Telnet option negotiation"
+    } else if at(0) == Some(0x16) && at(1) == Some(0x03) && at(2).is_some_and(|v| v <= 0x03) && at(5) == Some(0x01) {
+        "a TLS client hello"
+    } else if at(0) == Some(0x12) && at(1) == Some(0x01) && whole(be16(2)) {
+        "an MS SQL (TDS) pre-login"
+    } else if at(0) == Some(0) && n >= 8 && &s[4..8] == b"\xfeSMB" {
+        if at(16) == Some(0) && at(17) == Some(0) {
+            "an SMB2 negotiate"
+        } else {
+            "an SMB2 request"
+        }
+    } else if at(0) == Some(0) && n >= 9 && &s[4..8] == b"\xffSMB" {
+        if at(8) == Some(0x72) {
+            "an SMB1 negotiate"
+        } else {
+            "an SMB1 request"
+        }
+    } else if at(0) == Some(3) && at(1) == Some(0) && whole(be16(2)) && at(5) == Some(0xe0) {
+        if has(b"mstshash") {
+            "an RDP connection request"
+        } else {
+            "a TPKT connection request (RDP or Siemens S7)"
+        }
+    } else if be32(0) == Some(8) && be32(4) == Some(80_877_103) {
+        "a PostgreSQL SSL request"
+    } else if be32(0).is_some_and(|l| (8..=10_000).contains(&l)) && n >= 8 && s[4..8] == [0, 3, 0, 0] {
+        "a PostgreSQL startup message"
+    } else if le32(0).is_some_and(|l| l >= 16) && le32(12).is_some_and(|op| [2004, 2010, 2011, 2013].contains(&op)) {
+        "a MongoDB query"
+    } else if at(0) == Some(5) && n >= 3 && at(1) == Some((n - 2) as u8) {
+        "a SOCKS5 greeting"
+    } else if at(0) == Some(4) && (at(1) == Some(1) || at(1) == Some(2)) && n >= 9 {
+        "a SOCKS4 connect"
+    } else if at(0) == Some(0x10) && (has(b"\x00\x04MQTT") || has(b"\x00\x06MQIsdp")) {
+        "an MQTT connect"
+    } else if n >= 8 && s[2..4] == [0, 0] && be16(4) == Some(n - 6) && (1..=0x7f).contains(&s[7]) {
+        "a Modbus request"
+    } else if at(0) == Some(0x30) && n >= 7 && s[2..7].windows(3).any(|w| w[0] == 0x02 && w[1] == 0x01) && s[..12.min(n)].contains(&0x60) {
+        "an LDAP bind request"
+    } else if n >= 16 && at(0).is_some_and(|b| b & 0x80 != 0) && s[8..12] == [0, 0, 0, 0] && s[12..16] == [0, 0, 0, 2] {
+        "an RPC call (rpcbind or NFS)"
+    } else if at(4) == Some(1) && whole(be16(0)) && has(b"CONNECT_DATA") {
+        "an Oracle TNS connect"
+    } else if be16(2) == Some(1) && be32(4) == Some(0x1a2b_3c4d) {
+        "a PPTP control connection request"
+    } else {
+        return None;
+    })
 }
 
 /// Binds `port` on every address: IPv6 with IPv4 mapped where the system allows, else IPv4,
@@ -629,8 +715,77 @@ mod tests {
         // not HTTP: a lower-case method, a Telnet login, a TLS hello, binary
         assert_eq!(describe(b"get / HTTP/1.1\r\n", None), "sent 16 bytes: \"get / HTTP/1.1\\r\\n\"");
         assert_eq!(describe(b"root\r\n1234\r\n", None), "sent 12 bytes: \"root\\r\\n1234\\r\\n\"");
-        assert!(describe(b"\x16\x03\x01\x00\xa5\x01\x00", None).starts_with("sent 7 bytes: \"\\x16\\x03\\x01"));
+        assert!(describe(b"\x16\x03\x01\x00\xa5\x01\x00", None).starts_with("sent a TLS client hello (7 bytes): \"\\x16\\x03\\x01"));
         assert_eq!(describe(b"GET HTTP/1.1\r\n", None), "sent 14 bytes: \"GET HTTP/1.1\\r\\n\"", "no target");
+    }
+
+    #[test]
+    fn the_protocols_scanners_open_with_are_named() {
+        // the description up to its " (N bytes)"
+        let name = |b: &[u8]| {
+            let d = describe(b, None);
+            let cut = d.match_indices(" (").find(|(i, _)| d[i + 2..].starts_with(|c: char| c.is_ascii_digit())).map_or(d.len(), |(i, _)| i);
+            d[..cut].to_string()
+        };
+        // the three seen on the honeypot node on its first night
+        let tds = b"\x12\x01\x00\x29\x00\x00\x00\x00\x00\x00\x15\x00\x06\x01\x00\x1b\x00\x01\x02\x00\x1c\x00\x01\x03\x00\x1d\x00\x04\xff\x0c\x00\x10\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+        assert_eq!(tds.len(), 41);
+        assert_eq!(name(tds), "sent an MS SQL (TDS) pre-login");
+        assert!(
+            describe(tds, None).starts_with("sent an MS SQL (TDS) pre-login (41 bytes): \"\\x12\\x01\\x00)"),
+            "{}",
+            describe(tds, None)
+        );
+        let mut smb2 =
+            b"\x00\x00\x00\xae\xfeSMB@\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1f\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".to_vec();
+        smb2.resize(178, 0);
+        assert_eq!(name(&smb2), "sent an SMB2 negotiate");
+        let mut smb2_other = smb2.clone();
+        smb2_other[16] = 0x05;
+        assert_eq!(name(&smb2_other), "sent an SMB2 request");
+        assert_eq!(name(b"SSH-2.0-Go\r\n"), "sent an SSH client banner");
+        // the rest, by their opening bytes
+        assert_eq!(name(b"\x00\x00\x00\x2f\xffSMBr\x00\x00\x00\x00\x18\x01\x28\x00"), "sent an SMB1 negotiate");
+        assert_eq!(name(b"\x16\x03\x01\x02\x00\x01\x00\x01\xfc\x03\x03"), "sent a TLS client hello");
+        assert_eq!(
+            name(b"\x03\x00\x00\x2b\x26\xe0\x00\x00\x00\x00\x00Cookie: mstshash=admin\r\n\x01\x00\x08\x00\x03\x00\x00\x00"),
+            "sent an RDP connection request"
+        );
+        assert_eq!(
+            name(b"\x03\x00\x00\x16\x11\xe0\x00\x00\x00\x01\x00\xc1\x02\x01\x00\xc2\x02\x01\x02\xc0\x01\x0a"),
+            "sent a TPKT connection request (RDP or Siemens S7)"
+        );
+        assert_eq!(name(b"\x00\x00\x00\x08\x04\xd2\x16\x2f"), "sent a PostgreSQL SSL request");
+        assert_eq!(
+            name(b"\x00\x00\x00\x21\x00\x03\x00\x00user\x00postgres\x00database\x00postgres\x00\x00"),
+            "sent a PostgreSQL startup message"
+        );
+        assert_eq!(name(b"\x3a\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\xd4\x07\x00\x00\x00\x00\x00\x00admin.$cmd\x00\x00\x00\x00\x00\x01\x00\x00\x00\x13\x00\x00\x00\x10isMaster\x00\x01\x00\x00\x00\x00"), "sent a MongoDB query");
+        assert_eq!(name(b"*1\r\n$4\r\nINFO\r\n"), "sent a Redis command");
+        assert_eq!(name(b"INFO\r\n"), "sent a Redis command");
+        assert_eq!(name(b"stats\r\n"), "sent a memcached command");
+        assert_eq!(name(b"\x05\x02\x00\x02"), "sent a SOCKS5 greeting");
+        assert_eq!(name(b"\x04\x01\x00\x50\xcb\x00\x71\x01\x00"), "sent a SOCKS4 connect");
+        assert_eq!(name(b"\x10\x1a\x00\x04MQTT\x04\x02\x00\x3c\x00\x0emqtt-explorer"), "sent an MQTT connect");
+        assert_eq!(name(b"AMQP\x00\x00\x09\x01"), "sent an AMQP protocol header");
+        assert_eq!(name(b"CNXN\x00\x00\x00\x01\x00\x10\x00\x00"), "sent an ADB connect");
+        assert_eq!(name(b"\x00\x01\x00\x00\x00\x06\x01\x03\x00\x00\x00\x01"), "sent a Modbus request");
+        assert_eq!(name(b"\x30\x0c\x02\x01\x01\x60\x07\x02\x01\x03\x04\x00\x80\x00"), "sent an LDAP bind request");
+        assert_eq!(
+            name(b"\x80\x00\x00\x28\x12\x34\x56\x78\x00\x00\x00\x00\x00\x00\x00\x02\x00\x01\x86\xa0\x00\x00\x00\x02\x00\x00\x00\x03"),
+            "sent an RPC call (rpcbind or NFS)"
+        );
+        assert_eq!(name(b"\x00\x3e\x00\x00\x01\x00\x00\x00\x01\x3a(CONNECT_DATA=(SERVICE_NAME=XE))"), "sent an Oracle TNS connect");
+        assert_eq!(name(b"\x00\x9c\x00\x01\x1a\x2b\x3c\x4d\x00\x01\x00\x00"), "sent a PPTP control connection request");
+        assert_eq!(name(b"RFB 003.008\n"), "sent a VNC client version");
+        assert_eq!(name(b"OPTIONS sip:100@203.0.113.9 SIP/2.0\r\nVia: SIP/2.0/TCP x\r\n"), "sent a SIP request");
+        assert_eq!(name(b"JRMI\x00\x02\x4b"), "sent a Java RMI handshake");
+        assert_eq!(name(b"\xff\xfd\x01\xff\xfb\x1f"), "sent Telnet option negotiation");
+        // not one of them: the plain form, as before
+        assert_eq!(describe(b"root\r\n1234\r\n", None), "sent 12 bytes: \"root\\r\\n1234\\r\\n\"");
+        assert_eq!(describe(b"\x01\x02\x03", None), "sent 3 bytes: \"\\x01\\x02\\x03\"");
+        // HTTP keeps its own wording
+        assert!(describe(b"GET / HTTP/1.1\r\n\r\n", None).starts_with("sent HTTP request"));
     }
 
     #[test]
