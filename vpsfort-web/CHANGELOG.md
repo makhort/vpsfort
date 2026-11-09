@@ -3,6 +3,12 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.6.5 - 2026-11-09
+
+Where the honeypots' visitors come from.
+
+- The Honeypots tab has Place and Network columns, from what each ban's message says of its target, and its search covers them: a botnet's addresses in one country on several providers show at a glance.
+
 ## 0.6.4 - 2026-11-09
 
 The Honeypots tab reads the nodes' actions logs.

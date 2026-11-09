@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   abuseRows, abuseText, abuseSubject, mailto, parseRdap, plainEmail, csv, linkify, parseHash, queryFor, applyQuery,
-  drift, niceMax, duration, mergePlaces, reportedSources, brief, browserName, groupAttention, reoffended, viewTitle, mapMarkers, trapHits,
+  drift, niceMax, duration, mergePlaces, reportedSources, brief, browserName, groupAttention, reoffended, viewTitle, mapMarkers, trapHits, banPlace,
 } from "../core.js";
 
 const T = 1793000000000000; // 2026-10-26 07:33 UTC (vpsfort's microseconds)
@@ -282,4 +282,21 @@ test("honeypot hits: one row each, under the node that caught it", () => {
   // a line from before the capture existed stops after the port
   rows = trapHits([ban("trap", "2", "192.0.2.5", ["10-30 12:47:24 connected to honeypot TCP/23"])], nodes);
   assert.deepEqual(rows.map((r) => [r.port, r.sent]), [["TCP/23", "not recorded"]]);
+});
+
+test("a ban's place and network, from its message", () => {
+  const of = (m) => { const p = banPlace(m); return [p.place, p.network]; };
+  assert.deepEqual(of("ban 192.0.2.1 [Argentina / Telecom Argentina S.A. (AS7303)] for 14d (offence #1): burst [1x tripwire_connect]"), ["Argentina", "Telecom Argentina S.A. (AS7303)"]);
+  assert.deepEqual(of("ban 192.0.2.0/24 [Germany, Berlin / Hetzner Online GmbH (AS24940)] for 7d"), ["Germany, Berlin", "Hetzner Online GmbH (AS24940)"]);
+  assert.deepEqual(of("ban 192.0.2.1 [Pakistan / Cyber Internet Services (Private) Limited (AS9541)] for 1h"), ["Pakistan", "Cyber Internet Services (Private) Limited (AS9541)"]);
+  assert.deepEqual(of("ban 192.0.2.1 [Poland] for 6h (offence #2): burst [1x fw_tripwire]"), ["Poland", ""]);
+  assert.deepEqual(of("ban 192.0.2.1 [Example Net (AS64500)] for 6h"), ["", "Example Net (AS64500)"]);
+  assert.deepEqual(of("ban 192.0.2.1 [A / B / C (AS1)] for 1h"), ["A", "B / C (AS1)"], "the first slash divides them");
+  // what the source did is not a place, and a peer's copy places the target as well
+  assert.deepEqual(of("ban 192.0.2.1 for 1h (offence #1): burst score [1x tripwire_connect]"), ["", ""]);
+  assert.deepEqual(of("ban 192.0.2.1 for 5d12h more: reinstated after subnet ban 192.0.2.0/24 ended"), ["", ""]);
+  assert.deepEqual(of("ban 192.0.2.1 [Chile / X (AS2)] for 14d (from peer trap): burst"), ["Chile", "X (AS2)"]);
+  assert.deepEqual(of(undefined), ["", ""]);
+  const [row] = trapHits([{ kind: "ban", ts: T, node: "trap", node_id: "2", target: "192.0.2.1", message: "ban 192.0.2.1 [Argentina / Example (AS1)] for 14d", evidence: ["11-09 01:07:00 connected to honeypot TCP/23, sent nothing"] }], []);
+  assert.deepEqual([row.place, row.network], ["Argentina", "Example (AS1)"]);
 });

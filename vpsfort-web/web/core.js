@@ -470,6 +470,19 @@ const TRAP_LINE = /^(?:\d\d-\d\d \d\d:\d\d:\d\d )?(?:([0-9A-Fa-f.:]+) )?(?:conne
 // A ban a node took over from a peer: `ban 203.0.113.9 [...] for 14d (from peer node1): ...`.
 const FROM_PEER = /\(from peer ([^)]+)\)/;
 
+// Where a ban's message places its target: `ban 203.0.113.9 [Germany, Berlin / Hetzner Online
+// GmbH (AS24940)] for 14d ...`, or only `[Germany]` or `[Hetzner Online GmbH (AS24940)]`, or
+// nothing (no geo database, an older log). Only the bracket right after the target: the later
+// `[1x tripwire_connect]` is what the source did.
+export function banPlace(message) {
+  const m = /^ban \S+ \[([^\]]*)\]/.exec(message || "");
+  if (!m) return { place: "", network: "" };
+  const inner = m[1];
+  const cut = inner.indexOf(" / ");
+  if (cut >= 0) return { place: inner.slice(0, cut), network: inner.slice(cut + 3) };
+  return inner.endsWith(")") ? { place: "", network: inner } : { place: inner, network: "" };
+}
+
 // The decisions whose evidence came from a honeypot port or the decoy site, one row per
 // evidence line, with the scanner's address, the port and what it sent. A ban the peers took
 // over carries the same evidence on each of them: one row, the deciding node's (its own row
@@ -491,7 +504,7 @@ export function trapHits(actions, nodes) {
       const key = `${node}:${addr}:${l}`;
       const have = rows.get(key);
       if (have && (!have.copy || copy)) continue;
-      rows.set(key, { ...a, node, node_id, copy, addr, port: m[2] || "web", sent: m[3] || m[4] || "not recorded", line: l, key });
+      rows.set(key, { ...a, ...banPlace(a.message), node, node_id, copy, addr, port: m[2] || "web", sent: m[3] || m[4] || "not recorded", line: l, key });
     }
   }
   return [...rows.values()];

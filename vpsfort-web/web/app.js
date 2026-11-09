@@ -1271,7 +1271,7 @@ import {
     const nodeSel = select(nodeOptions(f.node), (v) => { f.node = v; update(); }, "Node");
     const ports = h("div", { class: "chips ports" });
     const notes = h("div", { class: "trap-notes muted" });
-    const q = search(f.q, "Search addresses, ports, what was sent", (v) => { f.q = v; update(); });
+    const q = search(f.q, "Search addresses, places, networks, ports, what was sent", (v) => { f.q = v; update(); });
     const kindSel = select([["", "Ports and decoy sites"], ["ports", "Honeypot ports"], ["web", "Decoy sites"]].map(([v, l]) => h("option", { value: v, selected: v === f.kind }, l)), (v) => { f.kind = v; update(); }, "Kind");
     // a chip narrows the table to its port (the decoy sites to their kind); the same chip again widens it
     const pick = (p) => {
@@ -1290,6 +1290,8 @@ import {
       { label: "Time", sort: (r) => r.ts, cell: (r) => timeCell(r.ts), csv: (r) => utc(r.ts) },
       { label: "Node", sort: (r) => r.node, cell: (r) => nodeChip(r.node, r.node_id) },
       { label: "Address", sort: (r) => r.addr, cell: (r) => addrLink(r.addr), csv: (r) => r.addr },
+      { label: "Place", sort: (r) => r.place, cell: (r) => r.place },
+      { label: "Network", sort: (r) => r.network, cell: (r) => r.network },
       { label: "Port", cls: "nowrap", sort: (r) => (r.port === "web" ? 0 : Number(r.port.slice(4))), cell: (r) => (r.port === "web" ? "decoy site" : r.port) },
       { label: "What it sent", cls: "msg", cell: (r) => h("span", { class: "mono" }, r.sent), csv: (r) => r.sent },
       { label: "Decision", cls: "nowrap", sort: (r) => r.kind, cell: (r) => (r.kind === "ban" && r.until ? `ban, ${left(r.until)}${ended(r) ? "" : " left"}` : r.kind), csv: (r) => r.kind },
@@ -1317,7 +1319,7 @@ import {
         const all = trapHits([...((log.data && log.data.hits) || []), ...d.actions.filter((a) => a.ts >= since)], d.nodes);
         // a port typed whole ("23", "TCP/23") is that port, not every port it is a prefix of
         const portQ = /^(?:tcp\/)?(\d+)$/i.exec((f.q || "").trim());
-        const hit = (r) => (portQ ? r.port === `TCP/${portQ[1]}` : matches(f.q, r.addr, r.target, r.port, r.sent));
+        const hit = (r) => (portQ ? r.port === `TCP/${portQ[1]}` : matches(f.q, r.addr, r.target, r.port, r.place, r.network, r.sent));
         const rows = all.filter((r) => (!f.node || r.node_id === f.node) && (!f.kind || (f.kind === "web") === (r.port === "web")) && hit(r));
         const by = new Map();
         for (const r of all.filter((r) => !f.node || r.node_id === f.node)) by.set(r.port, (by.get(r.port) || 0) + 1);

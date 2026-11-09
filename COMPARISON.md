@@ -3,7 +3,7 @@
 **How vpsfort compares with the open-source and commercial tools you might use instead:
 a briefing for teams thinking about adopting it.**
 
-The state is as of 2026-11-09: vpsfort 0.7.7, its web console vpsfort-web 0.6.4, the bots
+The state is as of 2026-11-09: vpsfort 0.7.7, its web console vpsfort-web 0.6.5, the bots
 (vpsfort-xmpp-bot 0.7.1, vpsfort-tg-bot and vpsfort-mail-bot 0.5.2, vpsfort-signal-bot and
 vpsfort-matrix-bot 0.3.2, vpsfort-push-bot 0.2.2) and vpsfort-sim 0.2.0 (the commit named under [Method and
 sources](#20-method-and-sources)), compared with the releases
