@@ -96,7 +96,7 @@ mod tests {
         assert_eq!((udp[0].port, udp[0].proto), (Some(161), Proto::Udp));
         let v6 = parse("[UFW BLOCK] IN=eth0 OUT= MAC=aa SRC=2001:db8::1 DST=2001:db8::2 LEN=80 TC=0 HOPLIMIT=50 FLOWLBL=0 PROTO=TCP SPT=1 DPT=22 WINDOW=1 RES=0x00 SYN URGP=0");
         assert_eq!(v6[0].ip.to_string(), "2001:db8::1");
-        let lim = parse("[UFW LIMIT BLOCK] IN=eth0 OUT= MAC=aa SRC=1.2.3.6 DST=11.242.39.236 LEN=60 TOS=0x00 PREC=0x00 TTL=50 ID=1 DF PROTO=TCP SPT=5 DPT=9843 WINDOW=1 RES=0x00 SYN URGP=0");
+        let lim = parse("[UFW LIMIT BLOCK] IN=eth0 OUT= MAC=aa SRC=1.2.3.6 DST=11.242.39.236 LEN=60 TOS=0x00 PREC=0x00 TTL=50 ID=1 DF PROTO=TCP SPT=5 DPT=2222 WINDOW=1 RES=0x00 SYN URGP=0");
         assert_eq!(lim[0].signal, Signal::FwLimit);
         assert!(parse("[UFW AUDIT] IN=eth0 SRC=1.1.1.1 DPT=1").is_empty());
     }

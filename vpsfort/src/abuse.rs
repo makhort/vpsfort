@@ -363,6 +363,8 @@ fn inferred_categories(o: &Offender) -> BTreeSet<String> {
             "port scan"
         } else if t.contains("decoy account") {
             "canary"
+        } else if t.starts_with("decoy_request") {
+            "decoy site"
         } else if t.contains(" login") || t.starts_with("invalid user") || t.contains("authenticat") || t.starts_with("sshd ") {
             "ssh"
         } else if t.starts_with("TLS failed") || t.contains("XMPP") || t.starts_with("s2s ") || t.contains("without authentication") {
@@ -419,6 +421,7 @@ fn describe(o: &Offender) -> String {
             "xmpp" => "probing the XMPP (chat) service: failed TLS handshakes, connections without authentication, failed logins".into(),
             "web" => "web vulnerability scanning / failed Nextcloud logins".into(),
             "canary" => "login attempts with decoy credentials (password guessing)".into(),
+            "decoy site" => "requests to our decoy web site, which no name points at (the request is in the evidence)".into(),
             "distributed probing" | "subnet" => "coordinated probing from several addresses of this network".into(),
             "cluster evidence" => "activity also seen by our other servers".into(),
             "reinstated" => continue,
@@ -1043,6 +1046,14 @@ mod tests {
             &Filter { only: vec![], min_events: 1 },
         );
         assert_eq!(describe(&old_trap[0]), describe(&hit[0]), "inferred from the evidence too");
+        // the decoy web site's requests: a "custom" ban (a built-in pattern's), told by its evidence
+        let site = r#"decoy_request: "GET /.env HTTP/1.1" 404 153 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64)""#;
+        let web = collect(
+            &[ban("2026-10-11 16:00:00", "203.0.113.9", "custom", &[&format!("10-11 16:00:00 {site}")])],
+            &Filter { only: vec![], min_events: 1 },
+        );
+        assert_eq!(describe(&web[0]), "requests to our decoy web site, which no name points at (the request is in the evidence)");
+        assert_eq!(plain(site), site, "shown as it is");
 
         // a ban without a usable category is described from its evidence
         let old = collect(

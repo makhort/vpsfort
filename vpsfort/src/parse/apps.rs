@@ -1037,9 +1037,22 @@ pub const APPS: &[App] = &[
             rules: &[
                 // the common and combined formats (nginx, Apache, lighttpd): the address is
                 // the line's first field; the whole line is the evidence
-                rule("decoy_request", Probe, 100.0, None, concat!(access_start!(), ".*$")),
+                rule(
+                    "decoy_request",
+                    Probe,
+                    100.0,
+                    None,
+                    // access_start!() up to the request's opening quote, which the evidence keeps
+                    concat!(r"^(?:\S+:\d+ )?(?P<ip>", ip!(), r") \S+ .*?\[\d\d/\w{3}/\d{4}:[^\]]+\] ", r#"(?P<show>".*)$"#),
+                ),
                 // Caddy's JSON: the request object starts with remote_ip, which Caddy writes
-                rule("decoy_request_json", Probe, 100.0, None, concat!(r#"^\{.*?"request":\{"remote_ip":"(?P<ip>"#, ip!(), r#")",.*$"#)),
+                rule(
+                    "decoy_request_json",
+                    Probe,
+                    100.0,
+                    None,
+                    concat!(r#"^\{.*?"request":\{"remote_ip":"(?P<ip>"#, ip!(), r#")",.*?(?P<show>"method":.*)$"#),
+                ),
             ],
         }],
     },
@@ -1370,12 +1383,23 @@ mod tests {
         let e = hit("decoy", nginx).unwrap();
         assert_eq!(e.points, Some(100.0));
         assert!(e.detail.contains(r#""GET /.env HTTP/1.1" 404 153 "-" "Mozilla/5.0 (Nuclei"#), "{}", e.detail);
+        // the evidence starts at the request: the address and time are the ban's own, and the
+        // 120 characters are for the request and the user agent
+        assert!(e.detail.starts_with(r#"decoy_request: "GET /.env HTTP/1.1" 404"#), "{}", e.detail);
+        assert!(!e.detail.contains("07/Nov/2026"), "{}", e.detail);
         // an address in the path or the user agent is never the one banned
         let forged = nginx.replace("/.env", "/198.51.100.9%20-%20-%20[07/Nov/2026:10:00:00%20+0000]");
         check("decoy", &forged, (P, "203.0.113.5", "decoy_request"));
         // Caddy's JSON
         let caddy = r#"{"level":"info","ts":1762509600.1,"logger":"http.log.access.decoy","msg":"handled request","request":{"remote_ip":"203.0.113.5","remote_port":"51234","client_ip":"203.0.113.5","proto":"HTTP/1.1","method":"GET","host":"203.0.113.6","uri":"/","headers":{"User-Agent":["zgrab/0.x"]}},"bytes_read":0,"status":404}"#;
         check("decoy", caddy, (P, "203.0.113.5", "decoy_request_json"));
+        let e = hit("decoy", caddy).unwrap();
+        assert!(
+            e.detail
+                .starts_with(r#"decoy_request_json: "method":"GET","host":"203.0.113.6","uri":"/","headers":{"User-Agent":["zgrab/0.x"]}"#),
+            "{}",
+            e.detail
+        );
         let forged = caddy.replace(r#""User-Agent":["zgrab/0.x"]"#, r#""X":["\"remote_ip\":\"198.51.100.9\""],"User-Agent":["zgrab/0.x"]"#);
         check("decoy", &forged, (P, "203.0.113.5", "decoy_request_json"));
         // not a request line: nginx's error log, a line of another format

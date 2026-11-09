@@ -7,6 +7,7 @@
 #   ./deploy/deploy.sh                                   # XMPP server, deploy/vpsfort.toml
 #   ./deploy/deploy.sh vpn deploy/vpsfort-standalone.toml      # wg-easy host (ssh alias "vpn")
 #   ./deploy/deploy.sh tg deploy/vpsfort-tg.toml        # Telegram relay node (ssh alias "tg")
+#   ./deploy/deploy.sh hp deploy/vpsfort-honeypot.toml  # dedicated honeypot node (ssh alias "hp")
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

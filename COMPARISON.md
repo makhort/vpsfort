@@ -3,7 +3,7 @@
 **How vpsfort compares with the open-source and commercial tools you might use instead:
 a briefing for teams thinking about adopting it.**
 
-The state is as of 2026-11-08: vpsfort 0.7.1, its web console vpsfort-web 0.5.1, the bots
+The state is as of 2026-11-09: vpsfort 0.7.2, its web console vpsfort-web 0.5.1, the bots
 (vpsfort-xmpp-bot 0.7.1, vpsfort-tg-bot and vpsfort-mail-bot 0.5.2, vpsfort-signal-bot and
 vpsfort-matrix-bot 0.3.2, vpsfort-push-bot 0.2.2) and vpsfort-sim 0.2.0 (the commit named under [Method and
 sources](#20-method-and-sources)), compared with the releases
@@ -138,7 +138,7 @@ journal ─► vpsfort ─► nftables / firewalld / ufw / iptables / ipset  ◄
 
 | tool | kind | license | language | model | state in Oct 2026 |
 |---|---|---|---|---|---|
-| **vpsfort** | ban manager and host watch | MIT | Rust | decaying scores per address across all services, own nftables table (or firewalld, ipset, ufw, iptables), peer-to-peer cluster | 0.7.1, new in Oct 2026 |
+| **vpsfort** | ban manager and host watch | MIT | Rust | decaying scores per address across all services, own nftables table (or firewalld, ipset, ufw, iptables), peer-to-peer cluster | 0.7.2, new in Oct 2026 |
 | **fail2ban** | ban manager | GPL-2.0 | Python | "jails": a regex filter and a firewall action per service | 1.1.0 is what distributions ship |
 | **sshguard** | ban manager | BSD-style | C | built-in attack parser, a score per address | 2.5.1 (2025) |
 | **reaction** | ban manager | AGPL-3.0 | – | streams, regex and actions; a smaller, newer fail2ban alternative | 2.x |
@@ -500,7 +500,7 @@ Know these before you adopt it:
 - **No CVE matching, hardening benchmark or compliance reports** (the hardening audit covers sshd and the kernel's sysctls only).
 - **Six alert channels:** XMPP, Telegram, e-mail, Signal, Matrix, and ntfy, Gotify or a webhook.
 - **A young package repository:** the signed apt and dnf repository on GitHub Pages is built by CI after each release (it needs a signing key in the repository's secrets); apt and dnf have installed from it, on one server each, and dnf has upgraded from it once. Without it: `.deb` and `.rpm` files from the releases, installed one by one, or a release zip with `install.sh`.
-- **Young:** version 0.7.1, running on the authors' own servers only, written by one maintainer
+- **Young:** version 0.7.2, running on the authors' own servers only, written by one maintainer
   in collaboration with an AI model (see the [README](README.md#authorship)). It has had internal
   security reviews, but no independent audit.
 - **Covered by tests, not yet run on a host:** the plain iptables backend, `sudo` and
@@ -689,8 +689,9 @@ vpsfort works well next to:
 2. **Download a release bundle** and verify its checksum and build provenance
    ([Install from a release bundle](vpsfort/README.md#install-from-a-release-bundle)).
 3. **Install with a template:** `vpsfort.toml` for an XMPP server, `vpsfort-standalone.toml` for a
-   host with SSH and UFW only, `vpsfort-tg.toml` for a Telegram relay node; each has a `-dnf`
-   variant for Fedora and RHEL.
+   host with SSH and UFW only, `vpsfort-tg.toml` for a Telegram relay node,
+   `vpsfort-honeypot.toml` for a dedicated honeypot node; each has a `-dnf` variant for
+   Fedora and RHEL.
 4. **Run in shadow mode** (the default) for one to two weeks: it decides, but bans nothing. Watch
    `vpsfort tui`, and look for "likely false positive" alerts. You can replay a week of your
    journal first:

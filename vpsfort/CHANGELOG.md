@@ -3,6 +3,15 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.7.2 - 2026-11-09
+
+Found on the first dedicated honeypot node.
+
+- The exposure watch reads ufw rules that name several ports (`ufw allow 21,22,23/tcp`, ranges inside a list too), and rules whose target is wider than `ufw status`'s column, where one space is left before the action. Each port of such a rule is a rule of its own in the Exposure tab, named with its list (`ALLOW 2323/tcp (of 21,22,23,25,110,143,2222,2323/tcp)`), and a dead one is named the same way. Before, every honeypot opened with one such rule showed as "blocked by ufw", and `ALLOW OUT` rules passed for incoming ones.
+- The README's nginx decoy recipe removes Debian's default site (a second `default_server` on port 80 fails `nginx -t`), makes the certificate's directory, and reloads nginx, which creates `decoy.log` at once.
+- A config template for a dedicated honeypot node, `vpsfort-honeypot.toml` (`install.sh --template honeypot`; a `-dnf` variant too): 55 honeypot ports with their prompts and the ufw rules that open them, the decoy site's log, enforce mode from the start, a `7d`/`30d` ban ladder, the blocklist feeds and country blocking off (a honeypot wants the bad networks to connect), and the `peer_accept` line for the other nodes.
+- The decoy site's evidence starts at the request (`decoy_request: "GET / HTTP/1.1" 404 181 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ..."`): the address and time, which the ban has anyway, no longer use up the 120 characters before the user agent. Any `[[patterns]]` regex can do the same with a group named `show`. The abuse report describes such bans as requests to our decoy web site.
+
 ## 0.7.1 - 2026-11-08
 
 A fix found on the servers during the upgrade to 0.7.0.

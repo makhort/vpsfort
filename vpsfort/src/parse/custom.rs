@@ -61,7 +61,8 @@ pub struct PatternCfg {
     /// More files of the same kind (the built-in sources' logs, `parse::apps`).
     #[serde(skip)]
     pub extra_files: Vec<PathBuf>,
-    /// Must have a group `ip` (the client address); `user` (the account) is optional.
+    /// Must have a group `ip` (the client address); `user` (the account) is optional, and so
+    /// is `show`: the part of the match kept as evidence (without it, the whole match).
     pub regex: String,
     #[serde(default = "default_kind")]
     pub kind: PatternKind,
@@ -188,8 +189,9 @@ impl PatternCfg {
 pub struct Found {
     pub ip: std::net::IpAddr,
     pub user: Option<String>,
-    /// The matched text, cut to `EVIDENCE_LEN`, with the account (group `user`) left out: it
-    /// is evidence, which abuse reports for other networks quote.
+    /// The matched text (group `show` of it, if the pattern has one), cut to `EVIDENCE_LEN`,
+    /// with the account (group `user`) left out: it is evidence, which abuse reports for
+    /// other networks quote.
     pub text: String,
 }
 
@@ -205,8 +207,13 @@ impl Compiled {
         let caps = self.re.captures(line)?;
         let ip = caps.name("ip").and_then(|m| parse_ip(m.as_str()));
         let user = caps.name("user").filter(|u| !u.as_str().is_empty());
-        let text = match (caps.get(0), user) {
-            (Some(all), Some(u)) => format!("{}[account]{}", &line[all.start()..u.start()], &line[u.end()..all.end()]),
+        // the evidence: group `show` where the pattern has one (the decoy site's rules keep
+        // the request and user agent, not the address and time), else the whole match
+        let shown = caps.name("show").or_else(|| caps.get(0));
+        let text = match (shown, user) {
+            (Some(all), Some(u)) if u.start() >= all.start() && u.end() <= all.end() => {
+                format!("{}[account]{}", &line[all.start()..u.start()], &line[u.end()..all.end()])
+            }
             (all, _) => all.map_or("", |m| m.as_str()).to_string(),
         };
         let text = crate::event::clean(&text, EVIDENCE_LEN);
@@ -543,6 +550,24 @@ mod tests {
         assert!(format!("{broken:#}").contains("regex"), "{broken:#}");
         cfg("name = \"x\"\nidentifier = \"dovecot\"\nuid = 0\nregex = '(?P<ip>\\S+)'").validate().unwrap();
         assert_eq!(cfg(POSTFIX).journal_match().as_deref(), Some("_SYSTEMD_UNIT=postfix@-.service"));
+    }
+
+    #[test]
+    fn group_show_picks_the_evidence() {
+        let p = cfg("name = \"x\"\nunit = \"x.service\"\nregex = '^(?P<ip>\\S+) - - \\[[^\\]]*\\] (?P<show>\"[A-Z]+ [^\"]*\".*)$'");
+        let c = Compiled { re: p.compile().unwrap(), cfg: p };
+        let line = r#"203.0.113.5 - - [09/Nov/2026:02:55:46 +0300] "GET / HTTP/1.1" 404 181 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36""#;
+        let f = c.find(line).unwrap().unwrap();
+        assert_eq!(f.ip.to_string(), "203.0.113.5");
+        assert_eq!(f.text, r#""GET / HTTP/1.1" 404 181 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36""#);
+        // the account is still left out when it sits inside the shown part
+        let p = cfg("name = \"x\"\nunit = \"x.service\"\nregex = '^(?P<ip>\\S+) (?P<show>login (?P<user>\\S+) failed)'");
+        let c = Compiled { re: p.compile().unwrap(), cfg: p };
+        assert_eq!(c.find("203.0.113.5 login alice failed").unwrap().unwrap().text, "login [account] failed");
+        // and kept whole when `show` doesn't cover it: nothing to cut out of the shown part
+        let p = cfg("name = \"x\"\nunit = \"x.service\"\nregex = '^(?P<ip>\\S+) (?P<user>\\S+) (?P<show>failed)'");
+        let c = Compiled { re: p.compile().unwrap(), cfg: p };
+        assert_eq!(c.find("203.0.113.5 alice failed").unwrap().unwrap().text, "failed");
     }
 
     #[test]

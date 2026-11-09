@@ -1,0 +1,262 @@
+# The variant of vpsfort-honeypot.toml for Fedora and RHEL (dnf), written from it by
+# scripts/template-variants.sh: edit that file, then run the script.
+# vpsfort for a dedicated honeypot node (README, "Honeypot ports" and "Dedicated honeypot nodes"):
+# a cheap server that serves nothing and listens to everything, whose bans the cluster shares.
+# Debian 13 (Ubuntu alike) with ufw in front for the allows and vpsfort's own nftables table for
+# the bans. On the host: sshd on a port of its own (never one below), nginx with the README's
+# decoy site as its only site, and every honeypot port and the decoy's ports opened in ufw.
+# `vpsfort -c /etc/vpsfort/vpsfort.toml print-config` shows every effective setting.
+#
+# Nothing legitimate ever connects here, so this template enforces from the start, bans long,
+# and keeps the blocklist feeds off: a honeypot wants the bad networks to connect.
+mode = "enforce"
+# "apt": dpkg and apt (Debian, Ubuntu); "dnf": rpm and dnf (Fedora, RHEL)
+package_manager = "dnf"
+state_file = "/var/lib/vpsfort/state.json"
+socket = "/run/vpsfort/vpsfort.sock"
+actions_log = "/var/log/vpsfort/actions.jsonl"
+
+[sources]
+ejabberd = false
+ssh = true
+ufw = true
+oom = true                # alert when the kernel kills a process for lack of memory ("system" topic)
+privilege = true          # su and sudo: failures (someone has an account and tries for root) as alerts
+pam = true                # PAM and account tools: console/polkit login failures, lockouts, passwords, new accounts and admins
+audit = true              # the audit log: the same as the kernel records them, auditd stopped or switched off
+audit_keys = []
+services = []
+# The decoy web site's log (README, "A decoy web site"): a catch-all nginx site that nothing
+# points at, logging to /var/log/nginx/decoy.log. Every request there is a scanner's: one
+# request bans, with the request line and user agent as evidence. Add "vpsfort-web" when the
+# console's agent runs here.
+apps = ["decoy"]
+
+[ports]
+whitelist = []
+# Nothing is left for blocked-SYN tripwires: every port below has a listener, whose completed
+# handshake can't be forged. (Kernel tripwires then have nothing to log.)
+tripwire = []
+names = {}
+kernel_tripwires = true
+kernel_tripwire_rate = "60/minute"
+# Every port a scanner tries on a server that serves none of them. A completed handshake bans
+# for certain (tripwire_connect); what the client sends first is the evidence. The web ports
+# (80, 443, 8000, 8080, 8081, 8443, 8888) are nginx's decoy site, not listed here. Open all of
+# these in ufw, in groups of at most 15 ports a rule:
+#   ufw allow 21,22,23,25,110,143,2222,2323/tcp comment 'honeypot'
+#   ufw allow 135,139,389,445,465,587,993,995,1433,1521,1723,2375,2376,3306,3389/tcp comment 'honeypot'
+#   ufw allow 5432,5900,5901,5985,5986,6379,7547,8291,9200,11211,27017/tcp comment 'honeypot'
+#   ufw allow 102,111,502,1080,1883,2049,2082,2083,3000,3128,5555,5601,5672,6443,8006/tcp comment 'honeypot'
+#   ufw allow 8086,9000,9090,10000,10250,15672/tcp comment 'honeypot'
+#   ufw allow 80,443,8000,8080,8081,8443,8888/tcp comment 'HTTP(S) honeypot'
+honeypot = [
+    "21/tcp", "22/tcp", "2222/tcp", "23/tcp", "2323/tcp",             # FTP, SSH, Telnet: with prompts
+    "25/tcp", "110/tcp", "143/tcp",                                   # SMTP, POP3, IMAP: with prompts
+    "465/tcp", "587/tcp", "993/tcp", "995/tcp",                       # SMTPS, submission, IMAPS, POP3S
+    "135/tcp", "139/tcp", "445/tcp", "3389/tcp", "5985/tcp", "5986/tcp", # Windows RPC, NetBIOS, SMB, RDP, WinRM
+    "5900/tcp", "5901/tcp", "1723/tcp", "7547/tcp", "8291/tcp",       # VNC, PPTP, TR-069, MikroTik Winbox
+    "389/tcp", "2375/tcp", "2376/tcp",                                # LDAP, Docker API
+    "1433/tcp", "1521/tcp", "3306/tcp", "5432/tcp", "27017/tcp",      # MS SQL, Oracle, MySQL, PostgreSQL, MongoDB
+    "6379/tcp", "9200/tcp", "11211/tcp",                              # Redis, Elasticsearch, Memcached
+    "1080/tcp", "3128/tcp",                                           # SOCKS, proxy
+    "5555/tcp", "1883/tcp", "5672/tcp", "111/tcp", "2049/tcp",        # ADB, MQTT, AMQP, rpcbind, NFS
+    "6443/tcp", "10250/tcp", "9000/tcp", "10000/tcp", "8006/tcp", "2082/tcp", "2083/tcp", # Kubernetes, Portainer, Webmin, Proxmox, cPanel
+    "3000/tcp", "5601/tcp", "9090/tcp", "8086/tcp", "15672/tcp",      # Grafana, Kibana, Prometheus, InfluxDB, RabbitMQ
+    "502/tcp", "102/tcp",                                             # Modbus, Siemens S7
+]
+# Bytes read from each honeypot connection (up to 3 seconds) before it is closed; at most 4096.
+honeypot_capture = 512
+# The ports whose clients wait for the server to speak first show a real server's lines and
+# keep the replies (a Telnet or FTP login, an SMTP AUTH, an SSH client's own banner).
+honeypot_prompts = { "23/tcp" = "telnet", "2323/tcp" = "telnet", "21/tcp" = "ftp", "22/tcp" = "ssh", "2222/tcp" = "ssh", "25/tcp" = "smtp", "110/tcp" = "pop3", "143/tcp" = "imap" }
+# The greetings are real Debian packages' lines unless set here (the software and version each
+# port is to pass for). Set ssh to what the sshd on this host's real port sends, so a scanner
+# meets one sshd, not two: `nc -w 2 <this host> <ssh port>` prints it.
+honeypot_banners = { ssh = "SSH-2.0-OpenSSH_10.0p2 Debian-7+deb13u4" }
+
+[canary]
+# The node has no users, so every SSH name but the one you log in with is a probe: list that
+# name in `except` and keep "*", or name the probes and leave `except` empty.
+ssh = ["admin", "test", "user", "oracle", "postgres", "git", "pi", "ftpuser", "guest",
+       "support", "deploy", "docker", "mysql", "ubnt", "debian", "centos", "ubuntu", "root"]
+except = []
+
+[silence]                 # warn when UFW or sshd logging goes quiet ("0s" = never)
+ufw = "6h"                # the honeypots take the connections that used to be blocked SYNs
+ssh = "0s"                # sshd on its own port hears nothing for days at a time
+
+# Kernel rate limits on new connections per source address (enforce mode, nftables only):
+# only for the real sshd; the honeypots want every connection.
+# [[ratelimit]]
+# ports = ["2222/tcp"]     # your sshd's port
+# rate = "6/minute"
+# burst = 6
+
+[allowlist]
+# Never banned, and the subnets containing them are never banned either: your own addresses,
+# and anything that monitors this host by address (it would be banned at the decoy site).
+nets = [
+  "127.0.0.0/8",
+  "::1",
+  # "198.51.100.7",
+]
+hosts = []
+trust_authenticated = true
+trust_ttl = "24h"
+
+[bans]
+# Nothing legitimate ever connects: start long. The peers keep a ban for the origin's duration
+# up to their own max_remote_ban (the templates' 30d).
+ladder = ["7d", "30d"]
+forgive_after = "90d"
+
+[enforce]
+backend = "auto"          # nftables: vpsfort's own table before ufw's rules; falling back to firewalld, ufw, then iptables
+
+[notify]
+enabled = false           # no XMPP server here: alerts and the digest travel through the cluster to a node that delivers them
+
+[cluster]
+# This node's whole purpose: its bans reach every peer as `bans` facts (applied there even to
+# addresses that logged in, since a handshake can't be forged), its points as `reports`. On the
+# OTHER nodes, limit what this node's connection may deliver, since it is the most exposed one:
+#   peer_accept = { "<this node>:7946" = ["bans", "reports"] }
+# so that, broken into, it still can't unban or allowlist anything there.
+# Off in this template: turn it on once node_id and peers are your cluster's. The peers here
+# are examples in a documentation range; the installers open no firewall rule for those.
+enabled = false
+node_id = "honeypot"
+listen = "0.0.0.0:7946"            # install.sh opens it in ufw for the peers below only
+peers = ["203.0.113.1:7946"]       # the other nodes; peers are never banned here
+key_file = "/etc/vpsfort/cluster.key"
+rotate_after = "180d"
+sync_interval = "10s"
+full_sync_every = "10m"
+share = ["bans", "unbans", "reports", "notices", "log_digests", "probes", "mirror"]   # no "trust": nobody logs in here worth trusting elsewhere
+accept = ["bans", "unbans", "reports", "trust", "notices", "log_digests", "probes", "mirror"]
+# Node identities (README, "Node identities"): with them this node can speak for itself only.
+#identity_file = "/etc/vpsfort/node.key"
+#nodes = { honeypot = "<public key>", node1 = "<public key>" }
+#require_signatures = true
+max_remote_ban = "30d"
+report_factor = 0.5
+min_report_points = 10
+max_hops = 3
+max_clock_skew = "5m"
+forward_secrecy = "prefer"
+notice_ttl = "24h"
+mirror_to = ""
+mirror_dir = "/var/lib/vpsfort/mirror"
+mirror_max_mb = 64
+inbox = "/var/lib/vpsfort/inbox"
+
+[exposure]
+# The Exposure tab lists every honeypot (magenta; red when ufw blocks one: it catches nothing
+# then) and the decoy site's ports as nginx's.
+enabled = true
+interval = "60s"
+ufw = "/usr/sbin/ufw"
+ignore = []
+startup_grace = "15m"
+new_after_scans = 2
+gone_after_scans = 5
+peer_probe = false
+
+[feeds]
+# Off on purpose: a blocklist in front of a honeypot keeps the worst networks from connecting,
+# and their handshakes are the bans the cluster wants. The other nodes run the feeds.
+enabled = false
+urls = []
+refresh = "24h"
+cache_dir = "/var/lib/vpsfort/feeds"
+asn_urls = []
+
+[console]
+# The read-only socket for vpsfort-web's agent, when the console watches this node too.
+socket = ""                # "/run/vpsfort-console/console.sock" with vpsfort-web installed
+group = "vpsfort-web"
+
+[digest]
+# Delivered through the cluster by a node with a bot, prefixed with this node's name.
+enabled = true
+at = "07:10"
+certs = []
+cert_warn_days = 21
+check_certs_every = "6h"
+openssl = "/usr/bin/openssl"
+
+[geo]
+# Readable places ("Germany / Hetzner Online GmbH (AS24940)") in bans, the TUI, `status` and the
+# digest: DB-IP's free lite databases, CC BY 4.0 - credit "IP locations: DB-IP.com".
+enabled = true
+country_url = "https://download.db-ip.com/free/dbip-country-lite-{month}.csv.gz"
+asn_url = "https://download.db-ip.com/free/dbip-asn-lite-{month}.csv.gz"
+dir = "/var/lib/vpsfort/geo"
+refresh = "7d"
+
+[geoblock]
+enabled = false           # as the feeds: let them come
+
+[cron]
+enabled = true
+interval = "1m"
+learn = "1d"
+scripts = true
+rpm = "/usr/bin/rpm"            # asked which package owns a changed file (rpm -qf)
+
+[antivirus]
+enabled = false           # nothing is served or uploaded here; apt install clamav, then true, if you want the scans anyway
+log = "/var/log/vpsfort/avscan.log"
+stale_after = "36h"
+scan_changed = "none"
+
+[journal]
+journalctl = "/usr/bin/journalctl"
+initial_lookback = "1h"
+verify_every = "0s"
+
+[resources]
+enabled = true
+interval = "60s"
+disks = ["/", "/tmp"]
+disk_warn_percent = 10
+disk_high_percent = 5
+mem_warn_percent = 10
+mem_sustain = "15m"
+psi_full_percent = 10
+
+[patches]
+enabled = true
+interval = "6h"
+apt = true                 # here: dnf (package_manager)
+
+[verify]
+enabled = true
+interval = "7d"
+dirs = ["/usr/bin", "/usr/sbin", "/usr/lib", "/usr/libexec"]
+exclude = ["/usr/lib/firmware"]
+max_rate_mb = 20
+
+[procwatch]
+# nginx and vpsfort are the only programs that should ever talk to the internet from here.
+enabled = true
+interval = "60s"
+learn = "3d"
+ignore_processes = []
+ignore_ports = []
+
+[ssh_audit]
+enabled = true
+interval = "1h"
+profile = "auto"
+gateway_users = []
+su_group = "gw-su"
+ignore = []
+remind = "7d"
+
+[sysctl_audit]
+enabled = true
+interval = "1h"
+ignore = []
+remind = "7d"

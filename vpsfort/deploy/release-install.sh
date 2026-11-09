@@ -6,6 +6,7 @@
 #   ./install.sh --template NAME       the template a new server starts from: one of configs/
 #                                      (vpsfort.toml: XMPP server, the default; vpsfort-standalone.toml:
 #                                      SSH and UFW only; vpsfort-tg.toml: Telegram relay node;
+#                                      vpsfort-honeypot.toml: a dedicated honeypot node;
 #                                      vpsfort-desktop.toml: a Linux desktop or laptop;
 #                                      each with a -dnf variant for Fedora and RHEL, the default
 #                                      on a host with dnf and no apt)

@@ -136,7 +136,7 @@ pub struct Listener {
     #[serde(default)]
     pub dynamic: bool,
     /// The firewall rule letting it in from anywhere, the first that matches as the firewall
-    /// applies them: `LIMIT 9843/tcp` (ufw), `ACCEPT 80,443/tcp`, `policy ACCEPT` (iptables).
+    /// applies them: `LIMIT 2222/tcp` (ufw), `ACCEPT 80,443/tcp`, `policy ACCEPT` (iptables).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule: Option<String>,
     /// That rule, or one before it, only rate-limits: ufw's `LIMIT`, iptables' `limit`,
@@ -363,31 +363,49 @@ pub fn parse_ufw_status(text: &str) -> (bool, Vec<UfwRule>) {
             continue;
         }
         let body = line.split(" # ").next().unwrap_or(line);
-        let cols: Vec<&str> = body.split("  ").map(str::trim).filter(|c| !c.is_empty()).collect();
-        if cols.len() < 3 {
+        // The columns are padded with spaces, but a long target (`21,22,23,25,110,143/tcp`)
+        // overflows its column and leaves one space before the action: go by the words, the
+        // action (ALLOW, LIMIT, DENY, REJECT; `ALLOW IN` when verbose) divides them.
+        let words: Vec<&str> = body.split_whitespace().collect();
+        let Some(at) = words.iter().position(|w| ["ALLOW", "LIMIT", "DENY", "REJECT"].contains(w)) else { continue };
+        if at == 0 || at + 1 >= words.len() {
             continue;
         }
-        let (to, action, from) = (cols[0], cols[1], cols[2]);
-        if !(action.starts_with("ALLOW") || action.starts_with("LIMIT")) {
+        let action = words[at];
+        if !(action == "ALLOW" || action == "LIMIT") {
             continue;
         }
-        let from = (!from.starts_with("Anywhere")).then(|| from.trim_end_matches(" (v6)").trim().to_string());
+        // verbose: a direction follows the action; only IN lets traffic in
+        let rest = match words[at + 1] {
+            "IN" => &words[at + 2..],
+            "OUT" | "FWD" => continue,
+            _ => &words[at + 1..],
+        };
+        let Some(&from) = rest.first() else { continue };
+        let from = (from != "Anywhere").then(|| from.to_string());
+        let to = words[..at].join(" ");
         let to = to.trim_end_matches(" (v6)").trim();
-        let (ports, proto) = match to.split_once('/') {
-            Some((p, "tcp")) => (p, Some(Proto::Tcp)),
-            Some((p, "udp")) => (p, Some(Proto::Udp)),
+        let (ports, proto, suffix) = match to.split_once('/') {
+            Some((p, "tcp")) => (p, Some(Proto::Tcp), "/tcp"),
+            Some((p, "udp")) => (p, Some(Proto::Udp), "/udp"),
             Some(_) => continue,
-            None => (to, None),
+            None => (to, None, ""),
         };
-        let (lo, hi) = match ports.split_once(':') {
-            Some((a, b)) => (a.parse().ok(), b.parse().ok()),
-            None => (ports.parse().ok(), ports.parse().ok()),
-        };
-        // App profiles ("OpenSSH") and "Anywhere" targets can't be mapped to ports.
-        let (Some(lo), Some(hi)) = (lo, hi) else { continue };
-        let rule = UfwRule { lo, hi, proto, label: to.to_string(), limit: action.starts_with("LIMIT"), from, every: false };
-        if !rules.contains(&rule) {
-            rules.push(rule);
+        // A target is a port, a range (`49152:65535`) or a list of those (`80,443,8000:8010`):
+        // one rule each, labelled with its place in the list so a dead one is named.
+        let items: Vec<&str> = ports.split(',').collect();
+        for item in &items {
+            let (lo, hi) = match item.split_once(':') {
+                Some((a, b)) => (a.parse().ok(), b.parse().ok()),
+                None => (item.parse().ok(), item.parse().ok()),
+            };
+            // App profiles ("OpenSSH") and "Anywhere" targets can't be mapped to ports.
+            let (Some(lo), Some(hi)) = (lo, hi) else { continue };
+            let label = if items.len() == 1 { to.to_string() } else { format!("{item}{suffix} (of {to})") };
+            let rule = UfwRule { lo, hi, proto, label, limit: action == "LIMIT", from: from.clone(), every: false };
+            if !rules.contains(&rule) {
+                rules.push(rule);
+            }
         }
     }
     (active, rules)
@@ -1303,6 +1321,56 @@ Anywhere                   ALLOW       13.46.43.31
         assert!(active);
         let labels: Vec<&str> = rules.iter().map(|r| r.label.as_str()).collect();
         assert_eq!(labels, vec!["53/udp", "2222/tcp", "51820/udp", "49152:65535/udp", "5349/tcp"]);
+    }
+
+    #[test]
+    fn ufw_port_lists_overflow_their_column() {
+        // a honeypot node: `ufw allow 21,22,23/tcp` prints a target wider than the column,
+        // with one space before the action; lists may hold ranges; verbose adds a direction
+        let ufw = "Status: active\n\nTo                         Action      From\n--                         ------      ----\n\
+            2222/tcp                   LIMIT       Anywhere                   # SSH\n\
+            7946/tcp                   ALLOW       203.0.113.10               # vpsfort cluster\n\
+            80,443/tcp                 ALLOW       Anywhere                   # HTTP(S) honeypot\n\
+            21,22,23,25,110,143,2323/tcp ALLOW       Anywhere                   # honeypot\n\
+            135,139,389,445,465,587,993,995,1433,1521,1723,2375,2376,3306,3389/tcp ALLOW       Anywhere                   # honeypot\n\
+            8000:8010,8443/tcp         ALLOW IN    Anywhere                   # web\n\
+            53/udp                     ALLOW OUT   Anywhere                   # not in\n\
+            2222/tcp (v6)              LIMIT       Anywhere (v6)              # SSH\n\
+            21,22,23,25,110,143,2323/tcp (v6) ALLOW       Anywhere (v6)              # honeypot\n";
+        let (active, rules) = parse_ufw_status(ufw);
+        assert!(active);
+        let open = |port| rules.iter().find(|r| r.from.is_none() && r.matches(port, Proto::Tcp)).map(|r| (r.label.clone(), r.limit));
+        assert_eq!(open(2222), Some(("2222/tcp".into(), true)));
+        assert_eq!(open(443), Some(("443/tcp (of 80,443/tcp)".into(), false)));
+        assert_eq!(open(2323), Some(("2323/tcp (of 21,22,23,25,110,143,2323/tcp)".into(), false)));
+        assert_eq!(
+            open(3389),
+            Some(("3389/tcp (of 135,139,389,445,465,587,993,995,1433,1521,1723,2375,2376,3306,3389/tcp)".into(), false))
+        );
+        assert_eq!(open(8005), Some(("8000:8010/tcp (of 8000:8010,8443/tcp)".into(), false)), "a range inside a list");
+        assert_eq!(open(8443).map(|(l, _)| l), Some("8443/tcp (of 8000:8010,8443/tcp)".into()));
+        assert_eq!(open(7946), None, "from one address only");
+        assert!(rules.iter().find(|r| r.matches(7946, Proto::Tcp)).unwrap().from.as_deref() == Some("203.0.113.10"));
+        assert!(!rules.iter().any(|r| r.matches(53, Proto::Udp)), "ALLOW OUT lets nothing in");
+        assert_eq!(rules.iter().filter(|r| r.matches(22, Proto::Tcp)).count(), 1, "the v6 row is the same rule");
+        // a honeypot behind such a rule is reachable
+        let key = |port| ListenerKey { addr: "::".parse().unwrap(), port, proto: Proto::Tcp };
+        let owners: HashMap<u64, String> = [(1, "vpsfort".to_string())].into();
+        let r = build_report(
+            0,
+            vec![(key(2323), 1), (key(3389), 1), (key(4444), 1)],
+            &owners,
+            &FirewallView { ufw: Some(ufw), ..Default::default() },
+            &[],
+        );
+        let get = |port| r.listeners.iter().find(|l| l.key.port == port).unwrap();
+        assert_eq!(get(2323).exposure, Exposure::Allowed);
+        assert_eq!(get(2323).rule.as_deref(), Some("ALLOW 2323/tcp (of 21,22,23,25,110,143,2323/tcp)"));
+        assert_eq!(get(3389).exposure, Exposure::Allowed);
+        assert_eq!(get(4444).exposure, Exposure::Firewalled);
+        // a port of a list that nothing serves is a dead rule, named with its list; one served is not
+        assert!(r.dead_rules.contains(&"443/tcp (of 80,443/tcp)".to_string()), "{:?}", r.dead_rules);
+        assert!(!r.dead_rules.iter().any(|d| d.starts_with("2323/tcp") || d.starts_with("3389/tcp")), "{:?}", r.dead_rules);
     }
 
     #[test]

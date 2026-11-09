@@ -140,7 +140,7 @@ upgrade` then bring new versions, with the same post-install steps as a single p
 **The signing key's fingerprint is** `12A75B42C4ADD340896F5E7A2F64B712E37F3CEC`; compare it with
 the downloaded key's before the first `apt update`: `gpg --show-keys /etc/apt/keyrings/vpsfort.asc`.
 
-**Releases:** a version is a tag `<crate>-v<version>` (`vpsfort-v0.7.1`,
+**Releases:** a version is a tag `<crate>-v<version>` (`vpsfort-v0.7.2`,
 `vpsfort-xmpp-bot-v0.7.1`, ...), with the version in that crate's `Cargo.toml`
 and the release notes as that version's `## <version>` section in the crate's `CHANGELOG.md`
 (`./scripts/bundle.sh --check-tag TAG` checks both). Pushing the tag runs that crate's workflow,
@@ -170,9 +170,11 @@ instead of dpkg and apt; with firewalld as the firewall. Tried on a Fedora 44 se
 builds the binary and copies everything to a host over SSH, and an `install.sh` to run there
 as root. It also holds the systemd units, logrotate files and config templates.
 `scripts/bundle.sh` builds the release bundle locally. vpsfort ships config templates for
-four roles: `vpsfort.toml` (XMPP server), `vpsfort-standalone.toml` (a host with SSH and UFW
-only, e.g. a VPN server), `vpsfort-tg.toml` (Telegram relay node) and `vpsfort-desktop.toml`
-(a Linux desktop or laptop), each also as a `-dnf` variant for Fedora and RHEL.
+five roles: `vpsfort.toml` (XMPP server), `vpsfort-standalone.toml` (a host with SSH and UFW
+only, e.g. a VPN server), `vpsfort-tg.toml` (Telegram relay node), `vpsfort-honeypot.toml`
+(a dedicated honeypot node that serves nothing and feeds its bans to the cluster) and
+`vpsfort-desktop.toml` (a Linux desktop or laptop), each also as a `-dnf` variant for Fedora
+and RHEL.
 
 The templates use placeholder names and addresses (`example.org`, documentation ranges).
 Replace them, and the allowlist entries, with your own before deploying. Start in

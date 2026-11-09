@@ -288,7 +288,7 @@ mod tests {
             "banner exchange: Connection from 9.9.9.4 port 4: invalid format",
             "error: kex_exchange_identification: Connection closed by remote host",
             "Connection closed by 12.37.48.86 port 50022",
-            "drop connection #0 from [9.9.9.5]:5 on [11.242.39.236]:9843 penalty: failed authentication",
+            "drop connection #0 from [9.9.9.5]:5 on [11.242.39.236]:2222 penalty: failed authentication",
             "srclimit_penalise: ipv4: new 9.9.9.6/32 deferred penalty of 10 seconds for reason: penalty: connections without attempting authentication",
         ]);
         let ips: Vec<_> = ev.iter().map(|e| e.ip.to_string()).collect();
