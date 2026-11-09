@@ -3,6 +3,13 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.7.4 - 2026-11-09
+
+Fixes found on the Fedora node and the honeypot node.
+
+- A reply to a honeypot's prompts that isn't text is read whole, not to a line end: a scanner that answered the FTP greeting with a TLS client hello was kept to the first 0x0a byte inside it (96 of 271 bytes). Such a reply is named like a plain capture: `answered the ftp prompts with a TLS client hello (271 bytes): "..."`.
+- A program running from a temporary or deleted file is scanned from a copy vpsfort makes of it, not from `/proc/<pid>/exe` itself. Following that link takes ptrace access to the process, which vpsfort has and the scanners' sandbox hasn't, so every such scan ended in `YARA: could not open file` (ClamAV read it through `clamd` alone, not through `clamscan`). The copy also stays when the process exits while ClamAV runs; a process gone before the scan starts reads `not scanned: the process has exited`. The scan's record counts a file no scanner could read as not scanned (`scanned 0 of 1 changed files`).
+
 ## 0.7.3 - 2026-11-09
 
 Found on the honeypot node's first night.

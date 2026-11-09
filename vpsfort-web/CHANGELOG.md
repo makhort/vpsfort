@@ -3,6 +3,12 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.6.1 - 2026-11-09
+
+A fix found on the console.
+
+- The Honeypots tab asks the console for the nodes' decisions when it opens: it showed nothing, since the page fetches only the parts its open tab names and the new tab named none.
+
 ## 0.6.0 - 2026-11-09
 
 A Honeypots tab.

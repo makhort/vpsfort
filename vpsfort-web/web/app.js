@@ -558,7 +558,7 @@ import {
   });
 
   // What each tab shows besides the header's figures: a refresh asks for that only.
-  const NEEDS = { overview: ["alerts", "history"], alerts: ["alerts"], activity: ["actions"], bans: ["bans"], offenders: ["offenders", "accounts"], world: ["world"], map: ["world"] };
+  const NEEDS = { overview: ["alerts", "history"], alerts: ["alerts"], activity: ["actions"], bans: ["bans"], honeypots: ["actions"], offenders: ["offenders", "accounts"], world: ["world"], map: ["world"] };
   const ready = (...parts) => Boolean(state.data) && parts.every((p) => p in state.data);
 
   async function refresh() {

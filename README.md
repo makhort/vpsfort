@@ -140,7 +140,7 @@ upgrade` then bring new versions, with the same post-install steps as a single p
 **The signing key's fingerprint is** `12A75B42C4ADD340896F5E7A2F64B712E37F3CEC`; compare it with
 the downloaded key's before the first `apt update`: `gpg --show-keys /etc/apt/keyrings/vpsfort.asc`.
 
-**Releases:** a version is a tag `<crate>-v<version>` (`vpsfort-v0.7.3`,
+**Releases:** a version is a tag `<crate>-v<version>` (`vpsfort-v0.7.4`,
 `vpsfort-xmpp-bot-v0.7.1`, ...), with the version in that crate's `Cargo.toml`
 and the release notes as that version's `## <version>` section in the crate's `CHANGELOG.md`
 (`./scripts/bundle.sh --check-tag TAG` checks both). Pushing the tag runs that crate's workflow,

@@ -232,7 +232,14 @@ fn read_line(s: &mut TcpStream, deadline: Instant, capture: usize, out: &mut Vec
         if room == 0 {
             return false;
         }
-        let line_end = pending.iter().position(|&b| b == b'\n').map(|i| i + 1);
+        // a line ends at its `\n` when it is text; a binary reply (a TLS client hello after an
+        // FTP greeting, with a 0x0a byte somewhere inside) is read whole, to the capture or
+        // the deadline
+        let line_end = pending
+            .iter()
+            .position(|&b| b == b'\n')
+            .filter(|&i| pending[..i].iter().all(|&b| matches!(b, b'\r' | b'\t' | 0x20..=0x7e | 0x80..)))
+            .map(|i| i + 1);
         let take = line_end.unwrap_or(pending.len()).min(room);
         out.extend(pending.drain(..take));
         if line_end == Some(take) {
@@ -325,7 +332,13 @@ pub fn describe(sent: &[u8], prompts: Option<Prompts>) -> String {
     match (prompts, sent.is_empty()) {
         (Some(p), true) => return format!("sent nothing to the {} {}", p.name(), p.what()),
         (Some(p), false) => {
-            return format!("answered the {} {} with {} bytes: \"{}\"", p.name(), p.what(), sent.len(), ascii(sent, SHOWN));
+            // a reply that is another protocol's opening (TLS tried after the greeting) is
+            // named too; not what the prompt asks for (a client's banner after SSH's, Telnet's
+            // own negotiation), which would say nothing
+            let name = protocol(sent)
+                .filter(|&n| !matches!((p, n), (Prompts::Ssh, "an SSH client banner") | (Prompts::Telnet, "Telnet option negotiation")));
+            let what = name.map_or_else(|| format!("{} bytes", sent.len()), |name| format!("{name} ({} bytes)", sent.len()));
+            return format!("answered the {} {} with {what}: \"{}\"", p.name(), p.what(), ascii(sent, SHOWN));
         }
         (None, true) => return "sent nothing".to_string(),
         (None, false) => {}
@@ -830,6 +843,38 @@ mod tests {
         let pop = own.script(110).unwrap();
         assert_eq!((pop.0, pop.1.as_slice()), (Prompts::Pop3, &b"+OK Dovecot (Debian) ready.\r\n"[..]), "the others keep their defaults");
         assert_eq!(own.script(22), None, "no prompts on this port");
+    }
+
+    /// Needs to bind 127.0.0.1 too.
+    #[test]
+    fn a_binary_reply_to_a_prompt_is_read_whole_and_named() {
+        let port = free_port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        assert!(
+            start(&[port], 512, &prompting(port, Prompts::Ftp), move |h| tx.send(h).is_ok(), Arc::new(AtomicBool::new(false))).is_empty()
+        );
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let mut buf = [0u8; 64];
+        let n = s.read(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"220 (vsFTPd 3.0.3)\r\n");
+        // a TLS client hello, 0x0a bytes inside it, as a scanner sends after the greeting
+        let mut hello = b"\x16\x03\x01\x01\x0a\x01\x00\x01\x06\x03\x03".to_vec();
+        hello.extend((0..260).map(|i| (i % 23) as u8));
+        s.write_all(&hello).unwrap();
+        drop(s);
+        let hit = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(hit.sent, hello, "not cut at the first 0x0a");
+        assert!(
+            describe(&hit.sent, hit.prompts).starts_with("answered the ftp prompts with a TLS client hello (271 bytes): \"\\x16\\x03\\x01"),
+            "{}",
+            describe(&hit.sent, hit.prompts)
+        );
+        // text still ends at its line, with Telnet's negotiation bytes before it allowed
+        assert_eq!(
+            describe(b"\xff\xfc\x01root\r\n", Some(Prompts::Telnet)),
+            "answered the telnet prompts with 9 bytes: \"\\xff\\xfc\\x01root\\r\\n\""
+        );
     }
 
     /// Needs to bind 127.0.0.1 too.

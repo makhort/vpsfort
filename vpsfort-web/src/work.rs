@@ -209,7 +209,15 @@ mod tests {
         let w = Work::new(8);
         let c = w.issue(8, IP, "admin");
         let nonce = solve(&c.salt, 8);
-        assert_eq!(w.verify(&answer(&c, "0"), 8, IP, "admin"), Err("the proof of work is wrong"), "unless the nonce happens to solve it");
+        // a nonce that doesn't solve it: picked by checking, since one in 256 would by chance
+        let solves = |n: &str| {
+            let mut h = Sha256::new();
+            h.update(c.salt.as_bytes());
+            h.update(n.as_bytes());
+            leading_zero_bits(&h.finalize(), 8)
+        };
+        let wrong = (0u32..).map(|n| format!("x{n}")).find(|n| !solves(n)).unwrap();
+        assert_eq!(w.verify(&answer(&c, &wrong), 8, IP, "admin"), Err("the proof of work is wrong"));
         assert_eq!(w.verify(&answer(&c, &nonce), 8, IP, "admin"), Ok(()));
         assert_eq!(w.verify(&answer(&c, &nonce), 8, IP, "admin"), Err("the proof of work was used already: try again"));
         // forged, expired, too easy, another console's

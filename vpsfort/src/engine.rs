@@ -2824,7 +2824,8 @@ impl Engine {
         }
         let infected = r.infected().count();
         let skipped = r.files.iter().filter(|f| f.hits.is_empty() && f.note.is_some()).count();
-        let scanned = r.files.len() - r.files.iter().filter(|f| f.note.as_deref().is_some_and(|n| n.starts_with("not scanned"))).count();
+        // a file a scanner could not read counts as not scanned, like one skipped
+        let scanned = r.files.iter().filter(|f| !f.hits.is_empty() || f.note.is_none()).count();
         let with = if r.scanners.is_empty() { String::new() } else { format!(" with {}", r.scanners) };
         let result = match (infected, skipped) {
             (0, 0) => "nothing found".to_string(),

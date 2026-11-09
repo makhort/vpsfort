@@ -13,6 +13,9 @@
 //! `/dev/zero` would never end), and results are matched back to the names vpsfort asked
 //! about, never read from the scanners' output alone.
 
+use std::collections::BTreeMap;
+use std::io::Read;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -138,11 +141,40 @@ fn unscannable(path: &str, max_bytes: u64) -> Option<String> {
         return Some("not scanned: control characters in its name".into());
     }
     match std::fs::metadata(path) {
+        Err(_) if running_program(path).is_some() => Some(GONE.into()),
         Err(_) => Some("not scanned: no longer there".into()),
         Ok(m) if !m.is_file() => Some("not scanned: not a regular file".into()),
         Ok(m) if m.len() > max_bytes => Some(format!("not scanned: larger than {} MB", max_bytes >> 20)),
         Ok(_) => None,
     }
+}
+
+const GONE: &str = "not scanned: the process has exited";
+
+/// `/proc/<pid>/exe`, a program as it runs (the process watch names them): its pid.
+fn running_program(path: &str) -> Option<u32> {
+    path.strip_prefix("/proc/")?.strip_suffix("/exe")?.parse().ok()
+}
+
+/// Copies the program `path` (`/proc/<pid>/exe`) runs into `work`, for the scanners to read:
+/// following that link takes ptrace access to the process, which vpsfort has (`CAP_SYS_PTRACE`)
+/// and the scan sandbox hasn't (`CAP_DAC_READ_SEARCH` alone: yara's `could not open file`),
+/// and the process may be gone by the time ClamAV is done. The copy's path, or why there is none.
+fn snapshot(path: &str, pid: u32, work: &Path, max: u64) -> Result<String, String> {
+    let copy = work.join(format!("file-scan-{pid}.bin"));
+    let _ = std::fs::remove_file(&copy);
+    let src = std::fs::File::open(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => GONE.to_string(),
+        _ => format!("not scanned: cannot read the running program: {e}"),
+    })?;
+    let cannot = |e: std::io::Error| format!("not scanned: cannot copy the running program to {}: {e}", copy.display());
+    let mut dst = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&copy).map_err(cannot)?;
+    let n = std::io::copy(&mut src.take(max + 1), &mut dst).map_err(cannot)?;
+    if n > max {
+        let _ = std::fs::remove_file(&copy);
+        return Err(format!("not scanned: larger than {} MB", max >> 20));
+    }
+    Ok(copy.display().to_string())
 }
 
 /// The rule files of `yara_rules`: files as they are, directories' `.yar`/`.yara` files.
@@ -275,14 +307,24 @@ fn read_yara(stdout: &str, stderr: &str, names: &[String]) -> (Said, Said) {
     (hits, notes)
 }
 
+/// The scanners' names for the files, where they aren't the files' own: a running
+/// program's copy (`snapshot`) by the `/proc/<pid>/exe` it stands for.
+type Copies = BTreeMap<String, String>;
+
+/// The report's entry for the file a scanner's line names.
+fn file_of<'a>(report: &'a mut ScanReport, copies: &Copies, name: &str) -> Option<&'a mut FileResult> {
+    let own = copies.get(name).map_or(name, String::as_str);
+    report.files.iter_mut().find(|f| f.path == own)
+}
+
 /// Checks the files again right before a scanner reads them, and writes its list of the
 /// ones still scannable. A file swapped meanwhile for a link to a device or a pipe (whose
 /// reads never end) gets the reason it isn't scanned instead. False: nothing to scan.
-fn ready(report: &mut ScanReport, names: &mut Vec<String>, max: u64, list: &Path) -> bool {
+fn ready(report: &mut ScanReport, copies: &Copies, names: &mut Vec<String>, max: u64, list: &Path) -> bool {
     names.retain(|n| match unscannable(n, max) {
         None => true,
         Some(note) => {
-            if let Some(f) = report.files.iter_mut().find(|f| f.path == *n) {
+            if let Some(f) = file_of(report, copies, n) {
                 f.note = Some(note);
             }
             false
@@ -304,35 +346,47 @@ pub fn scan(cfg: &ScanCfg, jobs: Vec<Job>, work: &Path, now: &dyn Fn() -> Micros
     let mut report = ScanReport { started: now(), ..Default::default() };
     let max = cfg.scan_max_mb.saturating_mul(1 << 20);
     let mut names = Vec::new();
+    let mut copies = Copies::new();
     for j in jobs {
-        let note = if is_rule_file(&j.path, &cfg.yara_rules) {
+        if report.files.iter().any(|f| f.path == j.path) {
+            continue;
+        }
+        let mut note = if is_rule_file(&j.path, &cfg.yara_rules) {
             Some("not scanned: a YARA rule file (malware patterns by design)".into())
         } else {
             unscannable(&j.path, max)
         };
-        if note.is_none() && !names.contains(&j.path) {
-            names.push(j.path.clone());
+        let mut name = j.path.clone();
+        if let Some(pid) = running_program(&j.path).filter(|_| note.is_none()) {
+            match snapshot(&j.path, pid, work, max) {
+                Ok(copy) => {
+                    copies.insert(copy.clone(), j.path.clone());
+                    name = copy;
+                }
+                Err(why) => note = Some(why),
+            }
         }
-        if !report.files.iter().any(|f| f.path == j.path) {
-            report.files.push(FileResult { path: j.path, why: j.why, hits: vec![], note, owner: j.owner });
+        if note.is_none() {
+            names.push(name);
         }
+        report.files.push(FileResult { path: j.path, why: j.why, hits: vec![], note, owner: j.owner });
     }
     let list = work.join("file-scan.list");
     let limit = Duration::from_secs(cfg.scan_timeout.0 + 60);
     let mut used = Vec::new();
     let record = |report: &mut ScanReport, scanner: &str, hits: Said, notes: Said| {
         for (path, what) in hits {
-            if let Some(f) = report.files.iter_mut().find(|f| f.path == path) {
+            if let Some(f) = file_of(report, &copies, &path) {
                 f.hits.push(format!("{scanner}: {what}"));
             }
         }
         for (path, what) in notes {
-            if let Some(f) = report.files.iter_mut().find(|f| f.path == path) {
+            if let Some(f) = file_of(report, &copies, &path) {
                 f.note.get_or_insert(format!("{scanner}: {what}"));
             }
         }
     };
-    if scanners.clamav() && ready(&mut report, &mut names, max, &list) {
+    if scanners.clamav() && ready(&mut report, &copies, &mut names, max, &list) {
         let list_arg = format!("--file-list={}", list.display());
         let (what, cmd) = if cfg.clamd_socket.exists() {
             // clamd reads the files vpsfort opens for it: it runs as its own user
@@ -362,7 +416,7 @@ pub fn scan(cfg: &ScanCfg, jobs: Vec<Job>, work: &Path, now: &dyn Fn() -> Micros
         }
     }
     // ClamAV may have taken minutes: what YARA reads is checked again
-    if scanners.yara() && ready(&mut report, &mut names, max, &list) {
+    if scanners.yara() && ready(&mut report, &copies, &mut names, max, &list) {
         match rule_files(&cfg.yara_rules) {
             Err(e) => report.errors.push(e),
             Ok(rules) => {
@@ -393,6 +447,9 @@ pub fn scan(cfg: &ScanCfg, jobs: Vec<Job>, work: &Path, now: &dyn Fn() -> Micros
         }
     }
     let _ = std::fs::remove_file(&list);
+    for copy in copies.keys() {
+        let _ = std::fs::remove_file(copy);
+    }
     report.scanners = used.join(" and ");
     report.finished = now();
     report
@@ -449,6 +506,69 @@ mod tests {
         assert!(unscannable(dir.to_str().unwrap(), 4 << 20).unwrap().contains("not a regular file"));
         assert!(unscannable("/srv/a\nb", 4 << 20).unwrap().contains("control characters"));
         assert!(unscannable("/nonexistent/x", 4 << 20).unwrap().contains("no longer there"));
+        assert_eq!(unscannable("/proc/4000001/exe", 4 << 20).as_deref(), Some(GONE), "a pid that is no more");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A program as it runs is read by vpsfort and copied for the scanners, which can't follow
+    /// `/proc/<pid>/exe` from their sandbox (no ptrace access), and whose turn may come after
+    /// the process is gone.
+    #[test]
+    fn running_programs_are_copied_for_the_scanners() {
+        assert_eq!(running_program("/proc/24869/exe"), Some(24869));
+        assert_eq!(running_program("/proc/self/exe"), None, "the pid is what names a process");
+        assert_eq!(running_program("/proc/1/exe/x"), None);
+        assert_eq!(running_program("/tmp/proc/1/exe"), None);
+        let dir = std::env::temp_dir().join(format!("vpsfort-scan4-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let program = dir.join("program");
+        std::fs::write(&program, "ELF program").unwrap();
+        let copy = snapshot(program.to_str().unwrap(), 7, &dir, 1 << 20).unwrap();
+        assert_eq!(copy, dir.join("file-scan-7.bin").display().to_string());
+        assert_eq!(std::fs::read_to_string(&copy).unwrap(), "ELF program");
+        assert_eq!(std::fs::metadata(&copy).unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(snapshot(program.to_str().unwrap(), 7, &dir, 4).unwrap_err().contains("larger than 0 MB"));
+        assert!(!Path::new(&copy).exists(), "an oversized copy is removed");
+        assert_eq!(snapshot(dir.join("gone").to_str().unwrap(), 7, &dir, 1 << 20).unwrap_err(), GONE);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// This test's own program through the whole scan: the scanners' list names the copy,
+    /// the report names `/proc/<pid>/exe`, and the copy is gone afterwards.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_running_program_is_scanned_from_its_copy() {
+        let dir = std::env::temp_dir().join(format!("vpsfort-scan5-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let clamscan = script(
+            &dir,
+            "clamscan",
+            r#"for a; do case $a in --file-list=*) list=${a#--file-list=};; esac; done
+cp "$list" "$(dirname "$0")/clamscan.list"
+while IFS= read -r f; do head -c 4 "$f" | grep -q ELF && echo "$f: Unix.Self FOUND"; done < "$list"; exit 1"#,
+        );
+        let cfg = ScanCfg {
+            scan_changed: Scanners::Clamav,
+            clamscan,
+            clamd_socket: dir.join("no-clamd"),
+            systemd_run: PathBuf::new(),
+            // this program is the test binary, which carries its debug information on Linux:
+            // well over the 100 MB a scan takes by default
+            scan_max_mb: 4096,
+            ..Default::default()
+        };
+        let me = format!("/proc/{}/exe", std::process::id());
+        let job = |p: &str| Job { path: p.into(), why: "procwatch".into(), owner: None };
+        let r = scan(&cfg, vec![job(&me), job("/proc/4000001/exe")], &dir, &|| 7);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert_eq!(r.files[0].note, None, "the program was copied and scanned");
+        let copy = dir.join(format!("file-scan-{}.bin", std::process::id()));
+        assert_eq!(std::fs::read_to_string(dir.join("clamscan.list")).unwrap(), format!("{}\n", copy.display()));
+        assert_eq!((r.files[0].path.as_str(), &r.files[0].hits[..]), (me.as_str(), &["ClamAV: Unix.Self".to_string()][..]));
+        assert_eq!((r.files[1].path.as_str(), r.files[1].note.as_deref()), ("/proc/4000001/exe", Some(GONE)));
+        assert!(!copy.exists(), "the copy is removed after the scan");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
