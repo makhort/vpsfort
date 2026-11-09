@@ -3,7 +3,7 @@ name: vpsfort-web
 # Two kinds of push run this:
 #   - a branch push that changes these paths: the tests, then the bundles and the .deb, .rpm and .apk
 #     packages as workflow artifacts
-#   - a push of this crate's version tag, e.g. vpsfort-web-v0.6.2 (the version must be
+#   - a push of this crate's version tag, e.g. vpsfort-web-v0.6.3 (the version must be
 #     Cargo.toml's): the same, then the release job attaches them to the GitHub Release
 #     of that tag. GitHub doesn't evaluate paths for tag pushes; other crates' tags don't match.
 on:

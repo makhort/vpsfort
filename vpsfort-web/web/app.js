@@ -1283,7 +1283,21 @@ import {
     const count = h("span", { class: "count" });
     const exp = h("span", { class: "export" });
     const nodeSel = select(nodeOptions(f.node), (v) => { f.node = v; update(); }, "Node");
-    const ports = h("div", { class: "chips" });
+    const ports = h("div", { class: "chips ports" });
+    const q = search(f.q, "Search addresses, ports, what was sent", (v) => { f.q = v; update(); });
+    const kindSel = select([["", "Ports and decoy sites"], ["ports", "Honeypot ports"], ["web", "Decoy sites"]].map(([v, l]) => h("option", { value: v, selected: v === f.kind }, l)), (v) => { f.kind = v; update(); }, "Kind");
+    // a chip narrows the table to its port (the decoy sites to their kind); the same chip again widens it
+    const pick = (p) => {
+      if (p === "web") {
+        f.kind = f.kind === "web" ? "" : "web";
+        kindSel.value = f.kind;
+      } else {
+        f.q = f.q.trim() === p ? "" : p;
+        q.value = f.q;
+      }
+      update();
+    };
+    const picked = (p) => (p === "web" ? f.kind === "web" : f.q.trim() === p);
     const body = h("section", { class: "card" });
     const cols = [
       { label: "Time", sort: (r) => r.ts, cell: (r) => timeCell(r.ts), csv: (r) => utc(r.ts) },
@@ -1296,9 +1310,9 @@ import {
     root.append(
       h("div", { class: "page-head" }, h("h1", null, "Honeypots"), h("span", { class: "sub" }, "what connected to the honeypot ports and the decoy sites, and what it sent")),
       filterRow(
-        select([["", "Ports and decoy sites"], ["ports", "Honeypot ports"], ["web", "Decoy sites"]].map(([v, l]) => h("option", { value: v, selected: v === f.kind }, l)), (v) => { f.kind = v; update(); }, "Kind"),
+        kindSel,
         nodeSel,
-        search(f.q, "Search addresses, ports, what was sent", (v) => { f.q = v; update(); }),
+        q,
         columnChooser("honeypots", cols), count, exp),
       ports);
     root.appendChild(body);
@@ -1308,11 +1322,14 @@ import {
         const d = state.data;
         if (!ready("actions")) return;
         const all = trapHits(d.actions, d.nodes);
-        const rows = all.filter((r) => (!f.node || r.node_id === f.node) && (!f.kind || (f.kind === "web") === (r.port === "web")) && matches(f.q, r.target, r.port, r.sent));
+        // a port typed whole ("23", "TCP/23") is that port, not every port it is a prefix of
+        const portQ = /^(?:tcp\/)?(\d+)$/i.exec((f.q || "").trim());
+        const hit = (r) => (portQ ? r.port === `TCP/${portQ[1]}` : matches(f.q, r.target, r.port, r.sent));
+        const rows = all.filter((r) => (!f.node || r.node_id === f.node) && (!f.kind || (f.kind === "web") === (r.port === "web")) && hit(r));
         const by = new Map();
         for (const r of all.filter((r) => !f.node || r.node_id === f.node)) by.set(r.port, (by.get(r.port) || 0) + 1);
         const top = [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 24);
-        patch(ports, top.map(([p, n]) => h("span", { class: "chip", title: `${num(n)} hit${n === 1 ? "" : "s"}` }, p === "web" ? "decoy site" : p, " ", h("b", null, num(n)))));
+        patch(ports, top.map(([p, n]) => h("button", { type: "button", class: `chip${picked(p) ? " on" : ""}`, "data-k": p, title: `${num(n)} hit${n === 1 ? "" : "s"}: click to show only these`, "aria-pressed": picked(p) ? "true" : "false", onclick: () => pick(p) }, p === "web" ? "decoy site" : p, " ", h("b", null, num(n)))));
         const fresh = newSince(rows, state.lastLook);
         count.textContent = `${num(rows.length)} hit${rows.length === 1 ? "" : "s"}${fresh.count ? `, ${num(fresh.count)} new` : ""} among the nodes' latest decisions`;
         patch(exp, tableExport("honeypots", cols, rows));

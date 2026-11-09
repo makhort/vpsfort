@@ -590,3 +590,9 @@ kbd { font-family: var(--mono); font-size: 11.5px; padding: 1px 5px; border: 1px
   .node-legend { padding: 6px 16px 0; }
   .views { display: none; }
 }
+
+/* the Honeypots tab: a chip per port, a button that narrows the table to it */
+button.chip { font: inherit; font-size: 12px; cursor: pointer; }
+button.chip:hover { border-color: var(--accent); }
+.chip.on { background: var(--accent-wash); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); color: var(--ink); }
+.chips.ports { margin: 2px 0 12px; }

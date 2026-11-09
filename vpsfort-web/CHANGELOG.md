@@ -3,6 +3,13 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.6.3 - 2026-11-09
+
+The Honeypots tab's chips and search.
+
+- The Honeypots tab's search takes a port typed whole (`23`, `TCP/23`) as that port, not as every port it is a prefix of (2375, 2376).
+- A click on one of the tab's port chips narrows the table to that port (the decoy sites' chip to the decoy sites), and a second click widens it again; the chip shows which is on.
+
 ## 0.6.2 - 2026-11-09
 
 A fix checked in the simulator against the honeypot node's export.

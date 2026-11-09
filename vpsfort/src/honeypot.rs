@@ -106,11 +106,12 @@ impl Prompts {
         token_ok && banner.len() <= 253 && banner.bytes().all(|b| (0x20..=0x7e).contains(&b))
     }
 
-    /// The bytes the greeting goes out as: with its line end, and for Telnet the way a login
-    /// shows an issue line, blank lines around it and the prompt after it.
+    /// The bytes the greeting goes out as: with its line end, and for Telnet the way a
+    /// telnetd shows it: its option negotiation first ([`TELNET_OPTIONS`]), then the issue
+    /// line with blank lines around it and the prompt after it.
     fn first_line(self, banner: &str) -> Vec<u8> {
         match self {
-            Prompts::Telnet => format!("\r\n{banner}\r\n\r\nlogin: ").into_bytes(),
+            Prompts::Telnet => [TELNET_OPTIONS, format!("\r\n{banner}\r\n\r\nlogin: ").as_bytes()].concat(),
             _ => format!("{banner}\r\n").into_bytes(),
         }
     }
@@ -207,14 +208,62 @@ fn read_first(mut s: TcpStream, capture: usize) -> Vec<u8> {
     out
 }
 
+/// What BusyBox's telnetd sends before any text, and what a Telnet bot waits for before it
+/// reads for a prompt: `IAC DO ECHO`, `IAC DO NAWS`, `IAC WILL ECHO`, `IAC WILL SGA`. Nine
+/// of the first ten Telnet connections to a honeypot node sat silent at a greeting without it.
+const TELNET_OPTIONS: &[u8] = b"\xff\xfd\x01\xff\xfd\x1f\xff\xfb\x01\xff\xfb\x03";
+
+/// Removes the Telnet option negotiation a client sends back (`IAC WONT ECHO`, a window
+/// size `IAC SB NAWS ... IAC SE`) from `buf`, leaving the text; a sequence cut short at the
+/// end, still arriving, is left for the next read. `IAC IAC` is a literal 0xff.
+fn strip_telnet_options(buf: &mut Vec<u8>) -> usize {
+    let mut out = Vec::with_capacity(buf.len());
+    let mut i = 0;
+    while i < buf.len() {
+        if buf[i] != 0xff {
+            out.push(buf[i]);
+            i += 1;
+            continue;
+        }
+        match buf.get(i + 1) {
+            None => break, // an IAC alone: the rest comes with the next read
+            Some(0xff) => {
+                out.push(0xff);
+                i += 2;
+            }
+            // subnegotiation, up to IAC SE
+            Some(0xfa) => match buf[i + 2..].windows(2).position(|w| w == [0xff, 0xf0]) {
+                Some(end) => i += 2 + end + 2,
+                None => break,
+            },
+            // WILL, WONT, DO, DONT: one option byte
+            Some(0xfb..=0xfe) => {
+                if i + 2 >= buf.len() {
+                    break;
+                }
+                i += 3;
+            }
+            // the other commands (NOP, GA, ...): the two bytes
+            Some(_) => i += 2,
+        }
+    }
+    let tail = buf.split_off(i);
+    *buf = out;
+    buf.extend(&tail);
+    tail.len()
+}
+
 /// Appends the sender's next line (up to and including its `\n`, or whatever arrives before
 /// the deadline or the capture is full) to `out`, first from `pending`: what the last read
 /// brought beyond its line (a bot sends its login and password in one packet, before the
-/// password prompt). False when the connection is over or silent: no further prompt then.
-fn read_line(s: &mut TcpStream, deadline: Instant, capture: usize, out: &mut Vec<u8>, pending: &mut Vec<u8>) -> bool {
+/// password prompt). With `telnet`, the client's option negotiation is dropped on the way.
+/// False when the connection is over or silent: no further prompt then.
+fn read_line(s: &mut TcpStream, deadline: Instant, capture: usize, out: &mut Vec<u8>, pending: &mut Vec<u8>, telnet: bool) -> bool {
     let mut buf = [0u8; 256];
+    // bytes at pending's end that are a Telnet sequence cut short: they wait for the next read
+    let mut hold = if telnet { strip_telnet_options(pending) } else { 0 };
     loop {
-        if pending.is_empty() {
+        if pending.len() <= hold {
             if out.len() >= capture {
                 // the capture is full: what the sender wrote is kept, but no further prompt is worth it
                 return false;
@@ -227,6 +276,10 @@ fn read_line(s: &mut TcpStream, deadline: Instant, capture: usize, out: &mut Vec
                 Ok(0) | Err(_) => return false,
                 Ok(k) => pending.extend_from_slice(&buf[..k]),
             }
+            if telnet {
+                hold = strip_telnet_options(pending);
+            }
+            continue; // negotiation alone so far: the text is still to come
         }
         let room = capture - out.len();
         if room == 0 {
@@ -235,12 +288,13 @@ fn read_line(s: &mut TcpStream, deadline: Instant, capture: usize, out: &mut Vec
         // a line ends at its `\n` when it is text; a binary reply (a TLS client hello after an
         // FTP greeting, with a 0x0a byte somewhere inside) is read whole, to the capture or
         // the deadline
-        let line_end = pending
+        let text = &pending[..pending.len() - hold];
+        let line_end = text
             .iter()
             .position(|&b| b == b'\n')
-            .filter(|&i| pending[..i].iter().all(|&b| matches!(b, b'\r' | b'\t' | 0x20..=0x7e | 0x80..)))
+            .filter(|&i| text[..i].iter().all(|&b| matches!(b, b'\r' | b'\t' | 0x20..=0x7e | 0x80..)))
             .map(|i| i + 1);
-        let take = line_end.unwrap_or(pending.len()).min(room);
+        let take = line_end.unwrap_or(text.len()).min(room);
         out.extend(pending.drain(..take));
         if line_end == Some(take) {
             return true;
@@ -258,7 +312,7 @@ fn converse(mut s: TcpStream, capture: usize, prompts: Prompts, first: &[u8]) ->
         if left.is_zero() || s.set_write_timeout(Some(left)).is_err() || s.write_all(line).is_err() || s.flush().is_err() {
             break;
         }
-        if !read_line(&mut s, deadline, capture, &mut out, &mut pending) {
+        if !read_line(&mut s, deadline, capture, &mut out, &mut pending, prompts == Prompts::Telnet) {
             break;
         }
     }
@@ -609,19 +663,45 @@ mod tests {
         s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
         let mut buf = [0u8; 64];
         let n = s.read(&mut buf).unwrap();
-        assert_eq!(&buf[..n], b"\r\nDebian GNU/Linux 12\r\n\r\nlogin: ");
+        assert_eq!(
+            &buf[..n],
+            b"\xff\xfd\x01\xff\xfd\x1f\xff\xfb\x01\xff\xfb\x03\r\nDebian GNU/Linux 12\r\n\r\nlogin: ",
+            "telnetd's negotiation, then the issue line"
+        );
+        // the bot answers the negotiation (WONT ECHO, its window size), then types; the
+        // negotiation is left out of what is kept
+        s.write_all(b"\xff\xfc\x01\xff\xfa\x1f\x00\x50\x00\x18\xff\xf0").unwrap();
+        thread::sleep(Duration::from_millis(50));
         s.write_all(b"root\r\n").unwrap();
         let n = s.read(&mut buf).unwrap();
         assert_eq!(&buf[..n], b"Password: ");
-        // the password comes in two pieces: read up to the line end
-        s.write_all(b"xc35").unwrap();
+        // the password comes in two pieces, a negotiation command cut between them too
+        s.write_all(b"xc35\xff").unwrap();
         thread::sleep(Duration::from_millis(50));
-        s.write_all(b"11\r\n").unwrap();
+        s.write_all(b"\xfe\x0111\r\n").unwrap();
         assert_eq!(s.read(&mut buf).unwrap_or(0), 0, "closed after the last reply");
         let hit = rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(hit.sent, b"root\r\nxc3511\r\n", "the replies, without the prompts");
+        assert_eq!(hit.sent, b"root\r\nxc3511\r\n", "the replies, without the prompts or the negotiation");
         assert_eq!(hit.prompts, Some(Prompts::Telnet));
         assert_eq!(describe(&hit.sent, hit.prompts), "answered the telnet prompts with 14 bytes: \"root\\r\\nxc3511\\r\\n\"");
+    }
+
+    #[test]
+    fn telnet_option_negotiation_is_stripped_and_a_cut_sequence_waits() {
+        let strip = |b: &[u8]| {
+            let mut v = b.to_vec();
+            strip_telnet_options(&mut v);
+            v
+        };
+        assert_eq!(strip(b"\xff\xfc\x01root\r\n"), b"root\r\n");
+        assert_eq!(strip(b"\xff\xfa\x1f\x00\x50\x00\x18\xff\xf0admin\xff\xfd\x03\r\n"), b"admin\r\n");
+        assert_eq!(strip(b"a\xff\xffb"), b"a\xffb", "IAC IAC is a literal 0xff");
+        assert_eq!(strip(b"\xff\xf1x"), b"x", "a bare command is two bytes");
+        // cut short: the tail waits for the next read
+        assert_eq!(strip(b"root\xff"), b"root\xff");
+        assert_eq!(strip(b"root\xff\xfd"), b"root\xff\xfd");
+        assert_eq!(strip(b"\xff\xfa\x1f\x00"), b"\xff\xfa\x1f\x00");
+        assert_eq!(strip(b""), b"");
     }
 
     /// Needs to bind 127.0.0.1 too.
@@ -836,7 +916,7 @@ mod tests {
         assert!(Prompts::Telnet.valid_banner("Ubuntu 22.04.4 LTS") && Prompts::Telnet.valid_banner(""));
         // the greeting goes out with its line end; Telnet's the way a login shows it
         assert_eq!(Prompts::Ftp.first_line("220 x"), b"220 x\r\n");
-        assert_eq!(Prompts::Telnet.first_line("Ubuntu 22.04.4 LTS"), b"\r\nUbuntu 22.04.4 LTS\r\n\r\nlogin: ");
+        assert_eq!(Prompts::Telnet.first_line("Ubuntu 22.04.4 LTS"), [TELNET_OPTIONS, b"\r\nUbuntu 22.04.4 LTS\r\n\r\nlogin: "].concat());
         let own = Prompting { by_port: BTreeMap::new(), banners: [(Prompts::Ftp, "220 ProFTPD Server".to_string())].into_iter().collect() };
         let own = Prompting { by_port: [(21, Prompts::Ftp), (110, Prompts::Pop3)].into_iter().collect(), ..own };
         assert_eq!(own.script(21).map(|(p, f)| (p, f.to_vec())), Some((Prompts::Ftp, b"220 ProFTPD Server\r\n".to_vec())));

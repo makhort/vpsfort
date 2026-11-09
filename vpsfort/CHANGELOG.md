@@ -3,6 +3,12 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.7.6 - 2026-11-09
+
+What the honeypot node's first Telnet connections showed.
+
+- The Telnet greeting opens the way a telnetd does, with its option negotiation (`IAC DO ECHO`, `IAC DO NAWS`, `IAC WILL ECHO`, `IAC WILL SGA`, as BusyBox sends them) before the issue line and `login:`: nine of the first ten Telnet connections to a honeypot node sat silent at a greeting without it, since a bot waits for that exchange before it reads for a prompt. The bot's own negotiation replies are left out of the evidence, which keeps the login it types.
+
 ## 0.7.5 - 2026-11-09
 
 A fix found on the honeypot node's peers.
