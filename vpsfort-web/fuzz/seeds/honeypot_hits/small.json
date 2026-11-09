@@ -1,0 +1,1 @@
+{"from":1,"to":2,"total":1,"hits":[{"ts":2,"kind":"ban","severity":"high","target":"192.0.2.5","until":9,"applied":true,"category":"tripwire","message":"ban 192.0.2.5 for 14d","evidence":["11-09 02:33:57 connected to honeypot TCP/23, sent nothing"]}]}

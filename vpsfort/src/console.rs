@@ -2,9 +2,9 @@
 //!
 //! The control socket (`socket`) is root's: it bans, unbans and allows. vpsfort-web runs as
 //! a user of its own and must never be able to do that, so it gets a socket of its own that
-//! only answers [`COMMANDS`]: the dashboard's snapshot, today's digest so far and the abuse
-//! report of the last day or week (built from the actions log, without RDAP lookups). Anything
-//! else is refused before it reaches the daemon's main loop.
+//! only answers [`COMMANDS`]: the dashboard's snapshot, today's digest so far, and the abuse
+//! report and the honeypot hits of the last day or week (built from the actions log, without
+//! RDAP lookups). Anything else is refused before it reaches the daemon's main loop.
 //!
 //! ```toml
 //! [console]
@@ -39,9 +39,9 @@ impl Default for ConsoleCfg {
 }
 
 /// What the console socket answers: the snapshot (also for an empty request), today's digest
-/// so far and the abuse report of the last 24 hours or 7 days (`abuse` alone: 7 days). All
-/// only read.
-pub const COMMANDS: &[&str] = &["snapshot", "digest", "abuse 24h", "abuse 7d"];
+/// so far, the abuse report of the last 24 hours or 7 days (`abuse` alone: 7 days) and the
+/// honeypot hits of those. All only read.
+pub const COMMANDS: &[&str] = &["snapshot", "digest", "abuse 24h", "abuse 7d", "honeypots 24h", "honeypots 7d"];
 
 /// The command a request on the console socket stands for, or None when it may not be asked
 /// there.
@@ -59,6 +59,15 @@ pub fn abuse_window(cmd: &str) -> Option<crate::time::Dur> {
     match cmd {
         "abuse 24h" => Some(crate::time::Dur(86_400)),
         "abuse 7d" => Some(crate::time::Dur(7 * 86_400)),
+        _ => None,
+    }
+}
+
+/// The window of a honeypot hits command from [`read_only`].
+pub fn honeypots_window(cmd: &str) -> Option<crate::time::Dur> {
+    match cmd {
+        "honeypots 24h" => Some(crate::time::Dur(86_400)),
+        "honeypots 7d" => Some(crate::time::Dur(7 * 86_400)),
         _ => None,
     }
 }
@@ -147,7 +156,14 @@ mod tests {
         assert_eq!(read_only("abuse 7d"), Some("abuse 7d"));
         assert_eq!(abuse_window("abuse 24h").map(|d| d.0), Some(86_400));
         assert_eq!(abuse_window("digest").map(|d| d.0), None);
+        assert_eq!(read_only(" honeypots  7d\n"), Some("honeypots 7d"));
+        assert_eq!(honeypots_window("honeypots 24h").map(|d| d.0), Some(86_400));
+        assert_eq!(honeypots_window("honeypots 7d").map(|d| d.0), Some(7 * 86_400));
+        assert_eq!(honeypots_window("abuse 7d").map(|d| d.0), None);
         for cmd in [
+            "honeypots",
+            "honeypots 30d",
+            "honeypots 7d x",
             "abuse 30d",
             "abuse 7d x",
             "abuse --contacts",

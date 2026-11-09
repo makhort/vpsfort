@@ -150,6 +150,7 @@ fn answer(shared: &Shared, mut s: TcpStream, _ip: IpAddr) -> Result<()> {
         snapshot: None,
         digest: None,
         abuse: None,
+        honeypots: None,
         can: Want::ALL.iter().map(|w| w.name().to_string()).collect(),
     };
     match shared.local.get(asked.req.want) {
@@ -158,6 +159,10 @@ fn answer(shared: &Shared, mut s: TcpStream, _ip: IpAddr) -> Result<()> {
         Ok(Answer::Abuse(json)) => match RawValue::from_string(json) {
             Ok(raw) => reply.abuse = Some(raw),
             Err(e) => reply.error = Some(format!("vpsfort's abuse report is not JSON: {e}")),
+        },
+        Ok(Answer::Honeypots(json)) => match RawValue::from_string(json) {
+            Ok(raw) => reply.honeypots = Some(raw),
+            Err(e) => reply.error = Some(format!("vpsfort's honeypot hits are not JSON: {e}")),
         },
         Err(e) => reply.error = Some(format!("{e:#}")),
     }

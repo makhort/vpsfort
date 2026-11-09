@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::abuse::{self, Parsed};
+use crate::honeypots;
 use crate::local::Local;
 use crate::snapshot::{self, Snapshot};
 use crate::time::{self, Micros};
@@ -52,6 +53,8 @@ pub struct Node {
     pub version: Option<String>,
     /// Whether its agent answers abuse reports; None until it answered.
     pub can_abuse: Option<bool>,
+    /// Whether its agent answers honeypot hits from the log; None until it answered.
+    pub can_honeypots: Option<bool>,
     /// Failed attempts in a row, and when to try again (sooner rounds skip it).
     pub fails: u32,
     pub retry_at: Option<Instant>,
@@ -79,6 +82,8 @@ pub struct Fleet {
     done: Condvar,
     /// Each node's latest abuse reports: (address, which) → (when, report).
     abuse: Mutex<HashMap<(String, Want), (Instant, Parsed)>>,
+    /// Each node's latest honeypot hits: (address, which) → (when, hits).
+    honeypots: Mutex<HashMap<(String, Want), (Instant, honeypots::Parsed)>>,
 }
 
 /// A node name as an agent may send it.
@@ -105,6 +110,7 @@ impl Fleet {
             inner: Mutex::new(Inner { nodes, round_started: None, running: false, rounds: 0 }),
             done: Condvar::new(),
             abuse: Mutex::default(),
+            honeypots: Mutex::default(),
         }
     }
 
@@ -154,6 +160,7 @@ impl Fleet {
                     match got {
                         Ok(Got { name, snapshot: Some(s), version, error: None, can, .. }) => {
                             node.can_abuse = Some(node.is_local() || can.iter().any(|c| c == Want::Abuse7d.name()));
+                            node.can_honeypots = Some(node.is_local() || can.iter().any(|c| c == Want::Honeypots7d.name()));
                             node.name = name;
                             node.snapshot = Some(s);
                             node.fetched = Some(now);
@@ -165,6 +172,7 @@ impl Fleet {
                         Ok(Got { name, error, version, can, .. }) => {
                             // the agent answered, but its vpsfort didn't
                             node.can_abuse = Some(node.is_local() || can.iter().any(|c| c == Want::Abuse7d.name()));
+                            node.can_honeypots = Some(node.is_local() || can.iter().any(|c| c == Want::Honeypots7d.name()));
                             node.name = name;
                             node.version = version;
                             node.latency_ms = Some(latency);
@@ -200,6 +208,7 @@ impl Fleet {
                 }
                 Want::Digest => Got { digest: Some(local.digest()?), ..Default::default() },
                 Want::Abuse24h | Want::Abuse7d => Got { abuse: Some(local.abuse(want)?), ..Default::default() },
+                Want::Honeypots24h | Want::Honeypots7d => Got { honeypots: Some(local.honeypots(want)?), ..Default::default() },
             });
         }
         let key = self.key.as_ref().context("no web key")?;
@@ -214,6 +223,7 @@ impl Fleet {
             snapshot,
             digest: reply.digest,
             abuse: reply.abuse.map(|r| r.get().to_string()),
+            honeypots: reply.honeypots.map(|r| r.get().to_string()),
             version: Some(reply.version.chars().take(40).collect()),
             error: reply.error,
             can: reply.can.into_iter().take(20).collect(),
@@ -283,12 +293,60 @@ impl Fleet {
     }
 }
 
+impl Fleet {
+    /// The honeypot hits `want` of every node, from their actions logs, merged.
+    pub fn honeypots(&self, want: Want) -> Result<honeypots::Report> {
+        let window = want.window().context("not honeypot hits")?;
+        let nodes: Vec<Node> = {
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            dedupe_names(inner.nodes.clone())
+        };
+        let parts = std::thread::scope(|scope| {
+            let asked: Vec<_> = nodes.iter().map(|n| scope.spawn(move || self.honeypots_of(n, want))).collect();
+            nodes
+                .iter()
+                .zip(asked)
+                .map(|(n, a)| (n.id.clone(), n.name.clone(), a.join().unwrap_or_else(|_| Err("failed".into()))))
+                .collect()
+        });
+        Ok(honeypots::merge(window, parts, time::now()))
+    }
+
+    fn honeypots_of(&self, n: &Node, want: Want) -> Result<honeypots::Parsed, String> {
+        if n.retry_at.is_some_and(|t| t > Instant::now()) {
+            return Err(format!("not answering: {}", n.error.as_deref().unwrap_or("down")));
+        }
+        match n.can_honeypots {
+            Some(true) => {}
+            Some(false) => return Err("its vpsfort-web is older: update it for the honeypot history".into()),
+            None => return Err(n.error.clone().map_or_else(|| "not asked yet".into(), |e| format!("no answer yet: {e}"))),
+        }
+        let key = (n.addr.clone(), want);
+        if let Some((at, p)) = self.honeypots.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+            if at.elapsed() < ABUSE_FRESH {
+                return Ok(p.clone());
+            }
+        }
+        let got = self.ask(&n.addr, want).map_err(|e| format!("{e:#}"))?;
+        let parsed = match (got.honeypots, got.error) {
+            (Some(text), _) => honeypots::parse(&text).map_err(|e| format!("{e:#}"))?,
+            (None, Some(e)) => return Err(e),
+            (None, None) => return Err("no honeypot hits in the answer".into()),
+        };
+        let mut cache = self.honeypots.lock().unwrap_or_else(|e| e.into_inner());
+        cache.retain(|_, (at, _)| at.elapsed() < ABUSE_FRESH);
+        cache.insert(key, (Instant::now(), parsed.clone()));
+        Ok(parsed)
+    }
+}
+
 #[derive(Default)]
 struct Got {
     name: String,
     snapshot: Option<Arc<Snapshot>>,
     digest: Option<String>,
     abuse: Option<String>,
+    honeypots: Option<String>,
     version: Option<String>,
     error: Option<String>,
     /// What the agent answers ([`Want::name`]).

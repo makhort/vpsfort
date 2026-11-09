@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   abuseRows, abuseText, abuseSubject, mailto, parseRdap, plainEmail, csv, linkify, parseHash, queryFor, applyQuery,
-  drift, niceMax, duration, mergePlaces, reportedSources, brief, browserName, groupAttention, reoffended, viewTitle, mapMarkers,
+  drift, niceMax, duration, mergePlaces, reportedSources, brief, browserName, groupAttention, reoffended, viewTitle, mapMarkers, trapHits,
 } from "../core.js";
 
 const T = 1793000000000000; // 2026-10-26 07:33 UTC (vpsfort's microseconds)
@@ -247,4 +247,39 @@ test("map markers at a spot's coordinates, the rest of the country at its capita
   const old = mapMarkers({ countries: world.countries, logged_in: world.logged_in }, capitals, "bans");
   assert.deepEqual(old.markers.map((m) => [m.key, m.value, m.logins]), [["DE", 3, 1], ["FR", 2, 0], ["AU", 0, 2]]);
   assert.equal(old.off, 2);
+});
+
+test("honeypot hits: one row each, under the node that caught it", () => {
+  const nodes = [{ name: "trap", id: "2" }, { name: "web", id: "0" }];
+  const line = "11-09 01:07:00 connected to honeypot TCP/445, sent an SMB2 negotiate (178 bytes): \"x\"";
+  const site = "11-09 01:23:02 decoy_request: \"GET / HTTP/1.1\" 404 118 \"-\" \"zgrab/0.x\"";
+  const ban = (node, node_id, target, evidence, extra = {}) => ({ kind: "ban", ts: T, node, node_id, target, message: `ban ${target} for 14d: burst`, evidence, ...extra });
+  const copy = (node, node_id, target, evidence) => ban(node, node_id, target, evidence, { message: `ban ${target} [X] for 14d (from peer trap): burst`, category: "from peers" });
+
+  // the copy listed first, as a merged list may have it, doesn't take the row
+  let rows = trapHits([copy("web", "0", "192.0.2.1", [line]), ban("trap", "2", "192.0.2.1", [line])], nodes);
+  assert.deepEqual(rows.map((r) => [r.node, r.node_id, r.copy, r.addr, r.port]), [["trap", "2", false, "192.0.2.1", "TCP/445"]]);
+  assert.match(rows[0].sent, /^sent an SMB2 negotiate/);
+
+  // only copies left: under the origin's name, with its id
+  rows = trapHits([copy("web", "0", "192.0.2.2", [line])], nodes);
+  assert.deepEqual(rows.map((r) => [r.node, r.node_id, r.copy]), [["trap", "2", true]]);
+
+  // the same hit from the log and from the latest decisions is one row
+  const log = ban("trap", "2", "192.0.2.3", [site]);
+  rows = trapHits([log, { ...log }], nodes);
+  assert.deepEqual(rows.map((r) => [r.port, r.sent]), [["web", "\"GET / HTTP/1.1\" 404 118 \"-\" \"zgrab/0.x\""]]);
+
+  // two nodes caught the same scanner in the same second: two hits
+  rows = trapHits([ban("trap", "2", "192.0.2.4", [line]), ban("web", "0", "192.0.2.4", [line])], nodes);
+  assert.equal(rows.length, 2);
+
+  // a network ban's line names the member; other evidence isn't a hit, nor text that only mentions one
+  rows = trapHits([ban("trap", "2", "192.0.2.0/24", [`11-09 01:07:00 192.0.2.9 connected to honeypot TCP/23, sent nothing`, "11-09 01:07:01 invalid user connected to honeypot TCP/1, sent nothing", "11-09 01:07:02 block TCP/3390"])], nodes);
+  assert.deepEqual(rows.map((r) => [r.addr, r.target, r.port]), [["192.0.2.9", "192.0.2.0/24", "TCP/23"]]);
+  assert.deepEqual(trapHits([{ kind: "ban", message: "x" }], nodes), []);
+
+  // a line from before the capture existed stops after the port
+  rows = trapHits([ban("trap", "2", "192.0.2.5", ["10-30 12:47:24 connected to honeypot TCP/23"])], nodes);
+  assert.deepEqual(rows.map((r) => [r.port, r.sent]), [["TCP/23", "not recorded"]]);
 });

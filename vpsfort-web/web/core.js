@@ -460,3 +460,39 @@ export function newSince(rows, since) {
   const s = since || 0;
   return { count: rows.filter((r) => (r.ts || r.since || 0) > s).length, isNew: (r) => (r.ts || r.since || 0) > s };
 }
+
+// A honeypot's evidence line: `11-09 01:07:00 connected to honeypot TCP/445, sent an SMB2
+// negotiate (178 bytes): "..."`, or the decoy web site's `11-09 01:23:02 decoy_request: "GET /
+// HTTP/1.1" 404 118 "-" "zgrab/0.x"`; a network ban's lines name the member after the time.
+// Lines written before the capture existed stop after the port.
+const TRAP_LINE = /^(?:\d\d-\d\d \d\d:\d\d:\d\d )?(?:([0-9A-Fa-f.:]+) )?(?:connected to honeypot (TCP\/\d+)(?:, (.*))?|decoy_request(?:_json)?: (.*))$/;
+
+// A ban a node took over from a peer: `ban 203.0.113.9 [...] for 14d (from peer node1): ...`.
+const FROM_PEER = /\(from peer ([^)]+)\)/;
+
+// The decisions whose evidence came from a honeypot port or the decoy site, one row per
+// evidence line, with the scanner's address, the port and what it sent. A ban the peers took
+// over carries the same evidence on each of them: one row, the deciding node's (its own row
+// when there is one, else a copy put under the origin's name), so the hits are counted and
+// filtered by the node that caught them. The same hit from the log and from the latest
+// decisions is one row too.
+export function trapHits(actions, nodes) {
+  const idOf = new Map((nodes || []).map((n) => [n.name, n.id]));
+  const rows = new Map();
+  for (const a of actions) {
+    const peer = FROM_PEER.exec(a.message || "");
+    const copy = Boolean(peer) || a.category === "from peers";
+    const node = peer ? peer[1] : a.node;
+    const node_id = peer ? (idOf.has(peer[1]) ? idOf.get(peer[1]) : peer[1]) : a.node_id;
+    for (const l of a.evidence || []) {
+      const m = TRAP_LINE.exec(l);
+      if (!m) continue;
+      const addr = m[1] || a.target;
+      const key = `${node}:${addr}:${l}`;
+      const have = rows.get(key);
+      if (have && (!have.copy || copy)) continue;
+      rows.set(key, { ...a, node, node_id, copy, addr, port: m[2] || "web", sent: m[3] || m[4] || "not recorded", line: l, key });
+    }
+  }
+  return [...rows.values()];
+}

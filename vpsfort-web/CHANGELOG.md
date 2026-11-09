@@ -3,6 +3,13 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.6.4 - 2026-11-09
+
+The Honeypots tab reads the nodes' actions logs.
+
+- The Honeypots tab shows the last 24 hours or 7 days, read from each node's actions log (`/api/v1/honeypots/{24h,7d}`, every minute), with what the latest decisions add in between. It could only see the latest decisions held in memory, of which a restart leaves 100 per node, and the console's 600 were mostly the peers' copies. A node that can't answer (its vpsfort or vpsfort-web is older) is named, and shows its latest decisions as before. Needs the vpsfort with the `honeypots` commands on each node.
+- Hit lines from before the capture existed (`connected to honeypot TCP/23` with nothing after it) are shown too, as "not recorded". A network ban's hits name the member that made them.
+
 ## 0.6.3 - 2026-11-09
 
 The Honeypots tab's chips and search.

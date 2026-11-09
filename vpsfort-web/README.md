@@ -137,7 +137,7 @@ vpsfort bans an address that sends many of those).
 sandboxed unit (`ProtectSystem=strict`, no capabilities, `MemoryDenyWriteExecute`, 128 MB at
 most), writing only its own state (`STATE_DIR`, the admins' passkeys among it). It reaches vpsfort only through vpsfort's **console socket**
 (`[console]` in vpsfort.toml): root's directory, mode 0750, group `vpsfort-web`, which answers
-`snapshot`, `digest` and `abuse 24h` / `abuse 7d` and refuses every other command before the daemon
+`snapshot`, `digest`, `abuse 24h` / `abuse 7d` and `honeypots 24h` / `honeypots 7d` and refuses every other command before the daemon
 sees it. The control socket, the cluster key and vpsfort's state stay root's.
 
 **What a break-in would give.** The console broken into: everything the page shows, read only;
@@ -292,7 +292,8 @@ before `switch` end with it (they are signed with the key).
   bans per minute over three hours, per node (also as a table); a card per node.
 - **Alerts, Activity** (every decision), **Bans** (per node, or one row per address with the
   nodes that ban it), **Honeypots** (what connected to the nodes' honeypot ports and decoy web
-  sites and what it sent, one row per hit with the port and the bytes or request in words, a
+  sites in the last 24 hours or 7 days, read from each node's actions log so a restart loses
+  nothing, and what it sent, one row per hit with the port and the bytes or request in words, a
   count per port whose chips narrow the table to that port on a click, filters for ports or
   decoy sites: the honeypot nodes' catch without opening each
   address), **Offenders** (scores, evidence, accounts with failed logins): filters,
@@ -438,6 +439,7 @@ failures since, 428 and a fresh challenge).
 | `POST /api/v1/share` | `{"net": …, "hours": 1–168}` → `{"path": "/#/share/<net>?t=<token>", "expires": …}`: a link to that address's page that needs no login (see below) |
 | `/api/v1/share` | the share links made that haven't expired (`id`, `net`, `by`, `made`, `expires`, `ended`); `POST /api/v1/share/end` with an `id` ends one early |
 | `/api/v1/address/<net>?share=<token>` | the address's data for a share link's holder: that address only, until the link expires |
+| `/api/v1/honeypots/{24h,7d}` | every node's honeypot hits from its actions log, the newest first: `total`, `hits` (the fields of a decision, with `node` and `node_id`), `nodes` (each with `total`, or `error`) |
 | `/api/v1/abuse/{24h,7d}` | every node's abuse report merged: `nodes` (each with `sources`, or `error`), `sources`, `providers` (`key`, `asn`, `name`, `countries`, `bans`, `events`, `first`, `last`, `nodes`, `sources` with `activity`, `evidence`, `omitted`, `members`) |
 | `/api/v1/nodes/<id>/abuse/{24h,7d}` | the same for one node |
 | `/api/v1/address/<address or network>` | `bans`, `actions`, `offenders`, `trusted`, `allowed` naming it or overlapping it, each with its node |
@@ -521,9 +523,9 @@ architecture (`uname -m`) and check it:
 
 ```bash
 arch=x86_64-linux-musl     # the server's: aarch64-linux-musl (arm64), armv7-linux-musleabihf (32-bit ARM)
-gh release download vpsfort-web-v0.6.3 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
+gh release download vpsfort-web-v0.6.4 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
 sha256sum -c vpsfort-web-*-$arch.zip.sha256          # the download is intact (macOS: shasum -a 256 -c)
-gh attestation verify vpsfort-web-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-web-v0.6.3
+gh attestation verify vpsfort-web-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-web-v0.6.4
 ```
 
 Then on the server:
@@ -539,7 +541,7 @@ sudo ./install.sh rollback   # back to the previous version
 The same release has a package per architecture, for the distribution's package manager instead of `install.sh`: `vpsfort-web_<version>-1_<arch>.deb` (`amd64`, `arm64`, `armhf`; Debian, Ubuntu and their derivatives) `vpsfort-web-<version>-1.<arch>.rpm` (`x86_64`, `aarch64`, `armv7hl`; Fedora, RHEL and its rebuilds) and `vpsfort-web-<version>-r0.<arch>.apk` (`x86_64`, `aarch64`, `armv7`; Alpine, with OpenRC: below), each with its `.sha256` and `.sigstore.json`, downloaded and verified as the bundle above (`--pattern "*.deb*"`, `"*.rpm*"` or `"*.apk*"`). CI keeps them for every commit as workflow artifacts, and `scripts/package.sh` builds them locally (`cargo install cargo-deb cargo-generate-rpm --locked` once, and python3 for the `.apk`, which `scripts/apk.py` at the repository's root writes; none needs dpkg, rpm or apk-tools, so it runs on macOS too; `--target aarch64-unknown-linux-musl` or `armv7-unknown-linux-musleabihf` for the ARM ones). Or from the signed apt and dnf repository on GitHub Pages, once it is set up (the repository README, "Deployment"), where `apt upgrade` and `dnf upgrade` then bring new versions.
 
 ```bash
-sudo apt install ./vpsfort-web_0.6.3-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-web-0.6.3-1.x86_64.rpm
+sudo apt install ./vpsfort-web_0.6.4-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-web-0.6.4-1.x86_64.rpm
 sudoedit /opt/vpsfort-web/config.env                 # the first install put the template there; then the keys, password, codes ("Setup")
 sudo dpkg-reconfigure vpsfort-web                    # rpm: sudo dnf reinstall ./vpsfort-web-*.rpm  (step 7: owners, modes, the certificate)
 /opt/vpsfort-web/vpsfort-web check && sudo systemctl enable --now vpsfort-web

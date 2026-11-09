@@ -409,8 +409,9 @@ fn serve_control(path: PathBuf, control: SyncSender<Control>) -> Result<()> {
     Ok(())
 }
 
-/// The console socket (`[console]`, for vpsfort-web): snapshots, the digest preview and abuse
-/// reports only. It is bound after the control socket, whose owner is this process.
+/// The console socket (`[console]`, for vpsfort-web): snapshots, the digest preview, abuse
+/// reports and honeypot hits only. It is bound after the control socket, whose owner is this
+/// process.
 fn serve_console(
     cfg: &crate::console::ConsoleCfg,
     control_socket: &Path,
@@ -425,14 +426,15 @@ fn serve_console(
     Ok(())
 }
 
-/// How long a built abuse report is handed out again (the console asks while its page is open).
+/// How long a built report is handed out again (the console asks while its page is open).
 const ABUSE_FRESH: Duration = Duration::from_secs(60);
-/// Abuse report requests in progress or waiting; more are refused.
-const ABUSE_WAITING: usize = 2;
+/// Report requests in progress or waiting (the Abuse tab asks for two at once, the Honeypots
+/// tab for one or two); more are refused.
+const ABUSE_WAITING: usize = 4;
 
-/// The console socket's abuse reports. Reading a week of the actions log takes a moment and
-/// needs nothing of the main loop's, so they are built beside it: one at a time, each kept a
-/// minute.
+/// The console socket's abuse reports and honeypot hits. Reading a week of the actions log
+/// takes a moment and needs nothing of the main loop's, so they are built beside it: one at a
+/// time, each kept a minute.
 struct AbuseReports {
     actions_log: Option<PathBuf>,
     /// The main loop's geo database, for the sources' countries and networks.
@@ -448,25 +450,33 @@ impl AbuseReports {
     }
 
     fn answer(&self, cmd: &str) -> String {
-        let Some(since) = crate::console::abuse_window(cmd) else { return format!("error: unknown command '{cmd}'") };
+        let honeypots = crate::console::honeypots_window(cmd);
+        let Some(since) = crate::console::abuse_window(cmd).or(honeypots) else { return format!("error: unknown command '{cmd}'") };
         let Some(path) = &self.actions_log else {
-            return "error: actions_log is off in vpsfort's configuration: no abuse reports".into();
+            return "error: actions_log is off in vpsfort's configuration: no reports from it".into();
         };
         let mut built = self.built.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((_, _, text)) = built.iter().find(|(c, at, _)| c == cmd && at.elapsed() < ABUSE_FRESH) {
             return text.clone();
         }
-        let addresses = crate::net::local_addresses().into_iter().filter(|a| !crate::engine::is_non_global(*a)).collect();
-        let text = match crate::abuse::live(path, since, time::now(), crate::cluster::hostname(), addresses) {
-            Ok(mut r) => {
-                // under the lock: the main loop releases the database (before a reload) only
-                // when no report is using it
-                if let Some(db) = self.geo.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
-                    crate::abuse::locate(&mut r, db);
-                }
-                serde_json::to_string(&r).unwrap_or_else(|e| format!("error: {e}"))
+        let text = if honeypots.is_some() {
+            match crate::honeypot::from_log(path, since, time::now()) {
+                Ok(hits) => serde_json::to_string(&hits).unwrap_or_else(|e| format!("error: {e}")),
+                Err(e) => format!("error: {e:#}"),
             }
-            Err(e) => format!("error: {e:#}"),
+        } else {
+            let addresses = crate::net::local_addresses().into_iter().filter(|a| !crate::engine::is_non_global(*a)).collect();
+            match crate::abuse::live(path, since, time::now(), crate::cluster::hostname(), addresses) {
+                Ok(mut r) => {
+                    // under the lock: the main loop releases the database (before a reload) only
+                    // when no report is using it
+                    if let Some(db) = self.geo.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                        crate::abuse::locate(&mut r, db);
+                    }
+                    serde_json::to_string(&r).unwrap_or_else(|e| format!("error: {e}"))
+                }
+                Err(e) => format!("error: {e:#}"),
+            }
         };
         built.retain(|(c, at, _)| c != cmd && at.elapsed() < ABUSE_FRESH);
         if !text.starts_with("error: ") {
@@ -485,7 +495,8 @@ fn console_admit(cmd: &str) -> Result<String, String> {
 
 /// Answers each connection's command (an empty one asks for the snapshot) through the main
 /// loop; `admit` turns it into the command to run, or refuses it with the reply. Abuse
-/// reports (the console socket's) are built by `reports`, beside the main loop.
+/// reports and honeypot hits (the console socket's) are built by `reports`, beside the main
+/// loop.
 fn answer(
     listener: UnixListener,
     control: SyncSender<Control>,
@@ -510,10 +521,11 @@ fn answer(
                     continue;
                 }
             };
-            if let Some(r) = reports.as_ref().filter(|_| crate::console::abuse_window(&cmd).is_some()) {
+            let from_log = crate::console::abuse_window(&cmd).is_some() || crate::console::honeypots_window(&cmd).is_some();
+            if let Some(r) = reports.as_ref().filter(|_| from_log) {
                 if r.waiting.fetch_add(1, Ordering::SeqCst) >= ABUSE_WAITING {
                     r.waiting.fetch_sub(1, Ordering::SeqCst);
-                    let _ = s.write_all(b"error: busy building abuse reports: ask again in a moment");
+                    let _ = s.write_all(b"error: busy reading the actions log: ask again in a moment");
                     continue;
                 }
                 let r = Arc::clone(r);
@@ -2908,6 +2920,10 @@ mod tests {
             assert_eq!(v["offenders"][0]["net"], "203.0.113.9", "{reply}");
             assert!(v["offenders"][0]["evidence"][0]["text"].as_str().unwrap().contains("closed port TCP/23 (Telnet)"), "{reply}");
         }
+        // and so are the honeypot hits: this ban has none
+        let reply = ask("honeypots 24h").join().unwrap();
+        let v: serde_json::Value = serde_json::from_str(&reply).unwrap_or_else(|e| panic!("{e}: {reply}"));
+        assert_eq!((v["total"].as_u64(), v["hits"].as_array().map(Vec::len)), (Some(0), Some(0)), "{reply}");
         assert!(rx.try_recv().is_err(), "abuse reports don't reach the main loop");
         let _ = fs::remove_dir_all(&dir);
     }

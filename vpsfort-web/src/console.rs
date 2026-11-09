@@ -10,6 +10,7 @@
 //! | `/api/v1/nodes`, `/api/v1/nodes/<id>`, `/api/v1/nodes/<id>/digest` | the nodes; one node's whole snapshot; its digest so far |
 //! | `/api/v1/abuse/{24h,7d}`, `/api/v1/nodes/<id>/abuse/{24h,7d}` | the abuse report of every node merged, or of one, per provider |
 //! | `/api/v1/address/<address or network>` | what every node says about it |
+//! | `/api/v1/honeypots/{24h,7d}` | every node's honeypot hits of the window, from their actions logs |
 //! | `/api/v1/rdap/<address>` | its network's abuse mailbox (RDAP); `"fallback": true` when the page should ask itself |
 //! | `/api/v1/sessions`, `POST /api/v1/sessions/end-others` | this admin's sessions; end the others |
 //! | `/metrics` | Prometheus' text format (a session, or `Authorization: Bearer` with `METRICS_TOKEN_FILE`) |
@@ -769,6 +770,13 @@ fn api(console: &Console, req: &Request, rest: &str) -> Response {
         },
         None => Response::error(404, "abuse reports are of 24h or 7d"),
     };
+    if let Some(window) = rest.strip_prefix("honeypots/") {
+        return match crate::wire::Want::honeypots(window).map(|want| console.fleet.honeypots(want)) {
+            Some(Ok(r)) => Response::json(200, &serde_json::to_value(r).unwrap_or_default()),
+            Some(Err(e)) => Response::error(404, &format!("{e:#}")),
+            None => Response::error(404, "honeypot hits are of 24h or 7d"),
+        };
+    }
     if let Some(window) = rest.strip_prefix("abuse/") {
         return abuse(crate::wire::Want::abuse(window), None);
     }

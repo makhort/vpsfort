@@ -37,7 +37,8 @@ fn snapshot(node: &str, bans: usize) -> String {
     )
 }
 
-/// vpsfort's console socket: snapshots, the digest and abuse reports; everything else refused.
+/// vpsfort's console socket: snapshots, the digest, abuse reports and honeypot hits; everything
+/// else refused.
 fn fake_vpsfort(path: &Path, snap: String) {
     let _ = std::fs::remove_file(path);
     let listener = UnixListener::bind(path).unwrap();
@@ -54,6 +55,12 @@ fn fake_vpsfort(path: &Path, snap: String) {
                     "offenders": [{ "net": "192.0.2.5", "first": 1, "last": 2, "bans": 1, "events": 1, "categories": ["ssh"],
                         "activity": "SSH probing / login attempts", "omitted": 0, "members": [],
                         "evidence": [{ "ts": 1, "text": cmd.trim() }], "asn": 64500, "org": "Example Net" }]
+                })
+                .to_string(),
+                "honeypots 24h" | "honeypots 7d" => serde_json::json!({
+                    "from": 1, "to": 2, "total": 1,
+                    "hits": [{ "ts": 2, "kind": "ban", "severity": "high", "target": "192.0.2.5", "applied": true, "category": "tripwire",
+                        "message": "ban 192.0.2.5", "evidence": [format!("11-09 02:33:57 connected to honeypot TCP/23, {}", cmd.trim())] }]
                 })
                 .to_string(),
                 _ => "error: read-only socket".into(),
@@ -298,6 +305,17 @@ fn the_console_shows_the_cluster_to_the_admin_only() {
     assert_eq!(n["snapshot"]["mode"], "enforce");
     let r = https(&s, "GET", "/api/v1/nodes/1/digest", &auth, "");
     assert!(r.body.contains("vpsfort daily digest so far"), "{}", r.body);
+
+    // honeypot hits: every node's own, from its log, marked with the node
+    let r = https(&s, "GET", "/api/v1/honeypots/7d", &auth, "");
+    assert_eq!(r.status, 200, "{}", r.body);
+    let a: serde_json::Value = serde_json::from_str(&r.body).unwrap();
+    assert_eq!((a["window"].as_str(), a["total"].as_u64()), (Some("7d"), Some(2)), "{}", r.body);
+    assert_eq!(a["hits"][0]["evidence"][0], "11-09 02:33:57 connected to honeypot TCP/23, honeypots 7d");
+    let names: std::collections::BTreeSet<&str> = a["hits"].as_array().unwrap().iter().filter_map(|h| h["node"].as_str()).collect();
+    assert_eq!(names, ["vpn", "xmpp"].into_iter().collect(), "{}", r.body);
+    assert!(a["nodes"][2]["error"].is_string(), "the dead node says why it is missing");
+    assert_eq!(https(&s, "GET", "/api/v1/honeypots/30d", &auth, "").status, 404);
 
     // abuse reports: every node's merged, per provider, or one node's
     let r = https(&s, "GET", "/api/v1/abuse/7d", &auth, "");

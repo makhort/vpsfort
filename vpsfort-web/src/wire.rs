@@ -58,13 +58,19 @@ pub enum Want {
     /// And of the last 7 days.
     #[serde(rename = "abuse_7d")]
     Abuse7d,
+    /// The honeypot hits of the last 24 hours (JSON, vpsfort's `honeypots 24h`).
+    #[serde(rename = "honeypots_24h")]
+    Honeypots24h,
+    /// And of the last 7 days.
+    #[serde(rename = "honeypots_7d")]
+    Honeypots7d,
 }
 
 impl Want {
     /// Everything an agent of this version answers, as [`Reply::can`] lists it. Older agents
     /// list nothing: they are asked for snapshots and digests only (an agent refuses a
     /// request it can't read, and vpsfort bans who sends too many of those).
-    pub const ALL: [Want; 4] = [Want::Snapshot, Want::Digest, Want::Abuse24h, Want::Abuse7d];
+    pub const ALL: [Want; 6] = [Want::Snapshot, Want::Digest, Want::Abuse24h, Want::Abuse7d, Want::Honeypots24h, Want::Honeypots7d];
 
     /// The abuse report of a window as the API names it ("24h", "7d").
     pub fn abuse(window: &str) -> Option<Want> {
@@ -75,11 +81,20 @@ impl Want {
         }
     }
 
-    /// The window of an abuse report.
+    /// The honeypot hits of a window as the API names it ("24h", "7d").
+    pub fn honeypots(window: &str) -> Option<Want> {
+        match window {
+            "24h" => Some(Want::Honeypots24h),
+            "7d" => Some(Want::Honeypots7d),
+            _ => None,
+        }
+    }
+
+    /// The window of what vpsfort reads its actions log for: an abuse report, honeypot hits.
     pub fn window(self) -> Option<&'static str> {
         match self {
-            Want::Abuse24h => Some("24h"),
-            Want::Abuse7d => Some("7d"),
+            Want::Abuse24h | Want::Honeypots24h => Some("24h"),
+            Want::Abuse7d | Want::Honeypots7d => Some("7d"),
             _ => None,
         }
     }
@@ -91,6 +106,8 @@ impl Want {
             Want::Digest => "digest",
             Want::Abuse24h => "abuse_24h",
             Want::Abuse7d => "abuse_7d",
+            Want::Honeypots24h => "honeypots_24h",
+            Want::Honeypots7d => "honeypots_7d",
         }
     }
 }
@@ -125,6 +142,9 @@ pub struct Reply {
     /// An abuse report (vpsfort's JSON).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub abuse: Option<Box<RawValue>>,
+    /// Honeypot hits from the actions log (vpsfort's JSON).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub honeypots: Option<Box<RawValue>>,
     /// What this agent answers ([`Want::name`]); empty from agents before abuse reports.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub can: Vec<String>,
@@ -348,6 +368,7 @@ mod tests {
             snapshot: Some(RawValue::from_string(r#"{"mode":"enforce"}"#.into()).unwrap()),
             digest: None,
             abuse: None,
+            honeypots: None,
             can: vec![],
         }
     }

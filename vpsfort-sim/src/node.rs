@@ -1,7 +1,8 @@
 //! A simulated node: its state from a decision log (what vpsfort's own `tui --actions`
 //! makes of it, plus what a log doesn't carry) or from a snapshot the console saved, served
 //! on a console socket the way vpsfort's `[console]` socket answers: `snapshot`, `digest`
-//! (vpsfort's own renderer) and `abuse 24h` / `abuse 7d` (vpsfort's own live report).
+//! (vpsfort's own renderer), `abuse 24h` / `abuse 7d` (vpsfort's own live report) and
+//! `honeypots 24h` / `honeypots 7d` (vpsfort's own reader of the log).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Write};
@@ -397,6 +398,24 @@ impl Node {
         text
     }
 
+    fn honeypots(&self, cmd: &str, since: Dur) -> String {
+        let Some(log) = &self.log else {
+            return "error: this node's state is a snapshot: no actions log to read honeypot hits from".into();
+        };
+        let mut cache = self.abuse.lock().unwrap();
+        if let Some((at, text)) = cache.get(cmd) {
+            if at.elapsed() < ABUSE_FRESH {
+                return text.clone();
+            }
+        }
+        let text = match vpsfort::honeypot::from_log(log, since, time::now()) {
+            Ok(r) => serde_json::to_string(&r).unwrap_or_else(|e| format!("error: {e}")),
+            Err(e) => format!("error: {e:#}"),
+        };
+        cache.insert(cmd.to_string(), (Instant::now(), text.clone()));
+        text
+    }
+
     /// A new ban (and now and then an alert) copied from the log, stamped now.
     fn trickle(&self) {
         let now = time::now();
@@ -485,7 +504,10 @@ impl Node {
                             let v = n.state.lock().unwrap().clone();
                             n.digest(&v, time::now())
                         }
-                        Some(c) => n.abuse(c),
+                        Some(c) => match vpsfort::console::honeypots_window(c) {
+                            Some(since) => n.honeypots(c, since),
+                            None => n.abuse(c),
+                        },
                     };
                     let _ = s.write_all(reply.as_bytes());
                 });

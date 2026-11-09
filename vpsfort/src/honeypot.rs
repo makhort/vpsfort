@@ -19,12 +19,16 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpListener, TcpStream};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+
+use crate::engine::Action;
+use crate::time::{Dur, Micros};
 
 /// The fixed lines a `[ports] honeypot_prompts` port shows, in the role of this server.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -599,6 +603,80 @@ pub fn start(
     errors
 }
 
+/// Bans one answer of [`from_log`] holds, the newest: a week of a busy honeypot node's.
+pub const MAX_LOG_HITS: usize = 10_000;
+
+/// This node's honeypot hits of a window, from its actions log: what the console's Honeypots
+/// tab shows (`honeypots 24h` and `honeypots 7d` on the console socket). The list of latest
+/// decisions in the snapshot is too short for it: it keeps 100 across a restart.
+#[derive(Debug, Serialize)]
+pub struct LogHits {
+    pub from: Micros,
+    pub to: Micros,
+    /// Bans with a hit in the window, also those beyond `hits`.
+    pub total: usize,
+    /// Those bans, the newest first.
+    pub hits: Vec<Action>,
+}
+
+/// Whether an evidence line is a hit on a honeypot port or the decoy site: by what the line
+/// starts with after its time (and a network ban's member address), since what follows is
+/// what a stranger chose.
+fn is_hit_line(line: &str) -> bool {
+    let mut text = line;
+    let mut parts = line.splitn(3, ' ');
+    if let (Some(d), Some(t), Some(rest)) = (parts.next(), parts.next(), parts.next()) {
+        if d.len() == 5 && d.as_bytes()[2] == b'-' && t.len() == 8 && t.as_bytes()[2] == b':' {
+            text = rest;
+        }
+    }
+    if let Some((member, rest)) = text.split_once(' ') {
+        if member.parse::<IpAddr>().is_ok() {
+            text = rest;
+        }
+    }
+    ["connected to honeypot ", "decoy_request: ", "decoy_request_json: "].iter().any(|p| text.starts_with(p))
+}
+
+/// A ban taken over from a peer: it repeats the evidence of the node that caught the source.
+fn is_peers_ban(a: &Action) -> bool {
+    a.category.as_deref() == Some("from peers") || a.message.contains(" (from peer ")
+}
+
+fn newest(hits: &mut Vec<Action>, keep: usize) {
+    hits.sort_by_key(|a| std::cmp::Reverse(a.ts));
+    hits.truncate(keep);
+}
+
+fn collect_hits(path: &Path, from: Micros, keep: usize) -> anyhow::Result<(usize, Vec<Action>)> {
+    let (mut total, mut hits) = (0, Vec::new());
+    crate::abuse::for_each_ban(path, from, |mut a| {
+        if is_peers_ban(&a) || !a.evidence.iter().any(|l| is_hit_line(l)) {
+            return;
+        }
+        total += 1;
+        // what the tab has no use for
+        a.notice = None;
+        a.user_note = None;
+        a.signals.clear();
+        hits.push(a);
+        if hits.len() >= keep.saturating_mul(2) {
+            newest(&mut hits, keep);
+        }
+    })?;
+    newest(&mut hits, keep);
+    Ok((total, hits))
+}
+
+/// The honeypot hits this node decided on in the `since` window up to `now`, from the actions
+/// log at `path` and its rotated copies. Peers' copies of a ban are left out: the node that
+/// caught the source has it.
+pub fn from_log(path: &Path, since: Dur, now: Micros) -> anyhow::Result<LogHits> {
+    let from = crate::abuse::window_start(now, since);
+    let (total, hits) = collect_hits(path, from, MAX_LOG_HITS)?;
+    Ok(LogHits { from, to: now, total, hits })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -879,6 +957,54 @@ mod tests {
         assert_eq!(describe(b"\x01\x02\x03", None), "sent 3 bytes: \"\\x01\\x02\\x03\"");
         // HTTP keeps its own wording
         assert!(describe(b"GET / HTTP/1.1\r\n\r\n", None).starts_with("sent HTTP request"));
+    }
+
+    #[test]
+    fn hits_come_from_the_log_without_the_peers_copies() {
+        let dir = std::env::temp_dir().join(format!("vpsfort-hits-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("actions.jsonl");
+        let now = crate::time::now();
+        let hour = 3600 * crate::time::SEC;
+        let ban = |ago: i64, ip: &str, message: &str, category: &str, line: &str| {
+            serde_json::json!({
+                "ts": now - ago * hour, "kind": "ban", "severity": "high", "target": ip, "until": now + hour, "message": message,
+                "evidence": [line], "applied": true, "category": category, "user_note": "for the user",
+            })
+            .to_string()
+        };
+        let trap = "11-09 02:33:57 connected to honeypot TCP/3389, sent nothing";
+        let site = r#"11-09 02:33:57 decoy_request: "GET / HTTP/1.0" 404 146 "-" "-""#;
+        let lines = [
+            ban(1, "203.0.113.1", "ban 203.0.113.1 for 14d", "tripwire", trap),
+            ban(2, "203.0.113.2", "ban 203.0.113.2 for 14d", "custom", site),
+            ban(3, "203.0.113.3", "ban 203.0.113.3 for 14d (from peer node1): burst", "from peers", trap),
+            ban(4, "203.0.113.4", "ban 203.0.113.4 for 1h", "ssh", "11-09 02:33:57 invalid user oracle"),
+            // a line that only names a honeypot further on: what a stranger typed
+            ban(5, "203.0.113.5", "ban 203.0.113.5 for 1h", "ssh", "11-09 02:33:57 invalid user connected to honeypot TCP/1, sent nothing"),
+            ban(30, "203.0.113.6", "ban 203.0.113.6 for 14d", "tripwire", trap),
+            // a network ban's lines name the member first
+            ban(
+                6,
+                "203.0.113.0/24",
+                "ban 203.0.113.0/24 for 7d",
+                "subnet",
+                "11-09 02:33:57 203.0.113.7 connected to honeypot TCP/23, sent nothing",
+            ),
+        ];
+        std::fs::write(&log, lines.join("\n") + "\n").unwrap();
+        let day = from_log(&log, Dur(86_400), now).unwrap();
+        let targets: Vec<String> = day.hits.iter().filter_map(|a| a.target.map(|t| t.to_string())).collect();
+        assert_eq!(targets, ["203.0.113.1", "203.0.113.2", "203.0.113.0/24"], "the newest first, in the window, no peer's copy");
+        assert_eq!((day.total, day.to, day.from), (3, now, now - 24 * hour));
+        assert_eq!(day.hits[0].user_note, None, "what the tab has no use for is left out");
+        assert_eq!(from_log(&log, Dur(7 * 86_400), now).unwrap().total, 4, "the older one is within a week");
+        // more than one answer holds: the newest, and the count of all
+        let (total, hits) = collect_hits(&log, now - 24 * hour, 2).unwrap();
+        assert_eq!((total, hits.len(), hits[1].target.map(|t| t.to_string())), (3, 2, Some("203.0.113.2".to_string())));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(from_log(&log, Dur(86_400), now).is_err(), "no log: said, not an empty list");
     }
 
     #[test]

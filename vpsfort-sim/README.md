@@ -9,8 +9,8 @@ What runs:
 - **A node per decision log** (`actions.jsonl`): its state is what vpsfort's own log reader
   (`tui --actions`) makes of the log (the bans active at its end, the decisions, the alerts,
   the countries and networks), its digest comes from vpsfort's digest renderer, and its
-  abuse reports from vpsfort's live report builder, so the console sees exactly what a
-  daemon's `[console]` socket would answer. A log is shifted so that it ends now (`shift_to_now`),
+  abuse reports from vpsfort's live report builder and its honeypot hits from vpsfort's reader
+  of the log, so the console sees exactly what a daemon's `[console]` socket would answer. A log is shifted so that it ends now (`shift_to_now`),
   and every `trickle_secs` a new ban (now and then an alert) copied from it, stamped now, keeps
   the page's "new since your last look" paths busy.
 - **A node per snapshot** the console saved ("Snapshot" or "Download JSON" on a node's page,

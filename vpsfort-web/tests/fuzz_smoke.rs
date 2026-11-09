@@ -82,3 +82,8 @@ fn snapshot() {
 fn abuse_report() {
     run("abuse_report", fuzzing::abuse_report, 1500);
 }
+
+#[test]
+fn honeypot_hits() {
+    run("honeypot_hits", fuzzing::honeypot_hits, 1500);
+}

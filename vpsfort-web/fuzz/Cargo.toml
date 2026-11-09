@@ -39,6 +39,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "honeypot_hits"
+path = "fuzz_targets/honeypot_hits.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "abuse_report"
 path = "fuzz_targets/abuse_report.rs"
 test = false

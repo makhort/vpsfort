@@ -12,6 +12,7 @@ pub mod envfile;
 pub mod fleet;
 pub mod fuzzing;
 pub mod history;
+pub mod honeypots;
 pub mod http;
 pub mod local;
 pub mod log;

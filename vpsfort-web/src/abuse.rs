@@ -98,12 +98,12 @@ pub struct Parsed {
     pub sources: Vec<Source>,
 }
 
-fn clean(s: &str, max: usize) -> String {
+pub(crate) fn clean(s: &str, max: usize) -> String {
     s.chars().filter(|c| !c.is_control()).take(max).collect()
 }
 
 /// An address or network as vpsfort writes it, or None.
-fn net_ok(n: &str) -> bool {
+pub(crate) fn net_ok(n: &str) -> bool {
     (2..=43).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_hexdigit() || b".:/".contains(&b))
 }
 

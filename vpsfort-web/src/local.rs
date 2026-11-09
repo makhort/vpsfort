@@ -1,5 +1,5 @@
 //! This node's vpsfort, through its console socket (`[console] socket`): a read-only socket
-//! that answers `snapshot`, `digest` and `abuse 24h` / `abuse 7d` and refuses everything else
+//! that answers `snapshot`, `digest`, `abuse 24h` / `abuse 7d` and `honeypots 24h` / `honeypots 7d` and refuses everything else
 //! (vpsfort's `src/console.rs`).
 
 use std::io::{Read, Write};
@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 
 use crate::snapshot::{self, Snapshot};
 use crate::wire::Want;
@@ -83,11 +83,24 @@ impl Local {
         Ok(text)
     }
 
+    /// The honeypot hits `want` (JSON as vpsfort writes it; vpsfort keeps it a minute).
+    pub fn honeypots(&self, want: Want) -> Result<String> {
+        let window = want.window().context("not honeypot hits")?;
+        ask_within(&self.socket, &format!("honeypots {window}"), ABUSE_TIMEOUT).map_err(|e| {
+            if format!("{e:#}").contains("read-only socket") {
+                anyhow!("this node's vpsfort is older: update it for the honeypot history")
+            } else {
+                e
+            }
+        })
+    }
+
     pub fn get(&self, want: Want) -> Result<Answer> {
         Ok(match want {
             Want::Snapshot => Answer::Snapshot(self.snapshot()?),
             Want::Digest => Answer::Digest(self.digest()?),
             Want::Abuse24h | Want::Abuse7d => Answer::Abuse(self.abuse(want)?),
+            Want::Honeypots24h | Want::Honeypots7d => Answer::Honeypots(self.honeypots(want)?),
         })
     }
 }
@@ -96,6 +109,7 @@ pub enum Answer {
     Snapshot(Arc<Snapshot>),
     Digest(String),
     Abuse(String),
+    Honeypots(String),
 }
 
 /// The node name vpsfort uses in the cluster, if it is in one.

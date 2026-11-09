@@ -7,7 +7,7 @@ import { SVG, on, h, s, patch, livePart } from "/dom.js";
 import {
   ms, duration, compact, matches, niceMax, mergePlaces, mergePorts, WORTH, abuseRows, utc, providerName, abuseText,
   mailto, parseRdap, csv, linkify, parseHash, queryFor, applyQuery, drift, REPORTED_DAYS, brief, browserName, groupAttention, reoffended, viewTitle,
-  mergeAcross, decisionKey, alertKey, snapshotDiff, buckets, sparkPath, newSince, mapMarkers,
+  mergeAcross, decisionKey, alertKey, snapshotDiff, buckets, sparkPath, newSince, mapMarkers, trapHits,
 } from "/core.js";
 
 (() => {
@@ -33,6 +33,7 @@ import {
     node: {},
     digest: {},
     abuse: {},
+    honeypots: {},
     address: {},
     mailbox: {},
     sessions: null,
@@ -60,7 +61,7 @@ import {
       overview: { range: "3h" },
       alerts: { level: "all", node: "", q: "", merge: true },
       bans: { node: "", q: "", group: false },
-      honeypots: { node: "", kind: "", q: "" },
+      honeypots: { window: "24h", node: "", kind: "", q: "" },
       offenders: { node: "", q: "" },
       activity: { kind: "", node: "", q: "", merge: true },
       world: { q: "", selected: "", all: false, allNets: false, allPorts: false },
@@ -1244,38 +1245,23 @@ import {
 
   // ------------------------------------------------------------------ honeypots
 
-  // A honeypot's evidence line: `11-09 01:07:00 connected to honeypot TCP/445, sent an SMB2
-  // negotiate (178 bytes): "..."`, or the decoy web site's `11-09 01:23:02 decoy_request: "GET
-  // / HTTP/1.1" 404 118 "-" "zgrab/0.x"`.
-  const TRAP_LINE = /^(?:\d\d-\d\d \d\d:\d\d:\d\d )?(?:connected to honeypot (TCP\/\d+), (.*)|decoy_request(?:_json)?: (.*))$/;
+  // How long a node's hits from its log are shown before they are asked again; what the
+  // latest decisions add in between comes with every refresh.
+  const HONEYPOTS_EVERY = 60 * 1000;
+  const HONEYPOT_WINDOWS = { "24h": 86400e6, "7d": 7 * 86400e6 };
 
-  // A ban a node took over from a peer: `ban 203.0.113.9 [...] for 14d (from peer honeypot1): ...`.
-  const FROM_PEER = /\(from peer ([^)]+)\)/;
-
-  // The nodes' decisions whose evidence came from a honeypot port or the decoy site, one row
-  // per evidence line, with the scanner's address, the port and what it sent, so none of
-  // them needs its address page opened. A ban the peers took over carries the same evidence
-  // on each of them: one row, the deciding node's (its own row when the latest decisions
-  // still hold it, else a copy put under the origin's name), so the hits are counted and
-  // filtered by the node that caught them.
-  function trapHits(actions, nodes) {
-    const idOf = new Map((nodes || []).map((n) => [n.name, n.id]));
-    const rows = new Map();
-    for (const a of actions) {
-      const peer = FROM_PEER.exec(a.message || "");
-      const copy = Boolean(peer) || a.category === "from peers";
-      const node = peer ? peer[1] : a.node;
-      const node_id = peer ? (idOf.has(peer[1]) ? idOf.get(peer[1]) : peer[1]) : a.node_id;
-      for (const l of a.evidence || []) {
-        const m = TRAP_LINE.exec(l);
-        if (!m) continue;
-        const key = `${a.target}:${l}`;
-        const have = rows.get(key);
-        if (have && (!have.copy || copy)) continue;
-        rows.set(key, { ...a, node, node_id, copy, port: m[1] || "web", sent: m[2] || m[3], line: l, key: `${node_id}:${a.target}:${l}` });
-      }
+  async function loadHoneypots(win) {
+    const cur = state.honeypots[win];
+    if (cur && (cur.loading || Date.now() - cur.at < HONEYPOTS_EVERY)) return;
+    state.honeypots[win] = { ...(cur || {}), loading: true };
+    try {
+      // the nodes read their actions logs first
+      state.honeypots[win] = { data: await api(`/api/v1/honeypots/${win}`, { timeout: 150000 }), at: Date.now() };
+    } catch (e) {
+      if (e instanceof LoginNeeded) return;
+      state.honeypots[win] = { data: cur && cur.data, error: e.message, at: Date.now() };
     }
-    return [...rows.values()];
+    update();
   }
 
   function viewHoneypots(root) {
@@ -1284,6 +1270,7 @@ import {
     const exp = h("span", { class: "export" });
     const nodeSel = select(nodeOptions(f.node), (v) => { f.node = v; update(); }, "Node");
     const ports = h("div", { class: "chips ports" });
+    const notes = h("div", { class: "trap-notes muted" });
     const q = search(f.q, "Search addresses, ports, what was sent", (v) => { f.q = v; update(); });
     const kindSel = select([["", "Ports and decoy sites"], ["ports", "Honeypot ports"], ["web", "Decoy sites"]].map(([v, l]) => h("option", { value: v, selected: v === f.kind }, l)), (v) => { f.kind = v; update(); }, "Kind");
     // a chip narrows the table to its port (the decoy sites to their kind); the same chip again widens it
@@ -1302,7 +1289,7 @@ import {
     const cols = [
       { label: "Time", sort: (r) => r.ts, cell: (r) => timeCell(r.ts), csv: (r) => utc(r.ts) },
       { label: "Node", sort: (r) => r.node, cell: (r) => nodeChip(r.node, r.node_id) },
-      { label: "Address", sort: (r) => r.target, cell: (r) => addrLink(r.target), csv: (r) => r.target },
+      { label: "Address", sort: (r) => r.addr, cell: (r) => addrLink(r.addr), csv: (r) => r.addr },
       { label: "Port", cls: "nowrap", sort: (r) => (r.port === "web" ? 0 : Number(r.port.slice(4))), cell: (r) => (r.port === "web" ? "decoy site" : r.port) },
       { label: "What it sent", cls: "msg", cell: (r) => h("span", { class: "mono" }, r.sent), csv: (r) => r.sent },
       { label: "Decision", cls: "nowrap", sort: (r) => r.kind, cell: (r) => (r.kind === "ban" && r.until ? `ban, ${left(r.until)}${ended(r) ? "" : " left"}` : r.kind), csv: (r) => r.kind },
@@ -1310,10 +1297,12 @@ import {
     root.append(
       h("div", { class: "page-head" }, h("h1", null, "Honeypots"), h("span", { class: "sub" }, "what connected to the honeypot ports and the decoy sites, and what it sent")),
       filterRow(
+        select(WINDOWS.map(([v, l]) => h("option", { value: v, selected: v === f.window }, l)), (v) => { f.window = v; update(); }, "Period"),
         kindSel,
         nodeSel,
         q,
         columnChooser("honeypots", cols), count, exp),
+      notes,
       ports);
     root.appendChild(body);
     return {
@@ -1321,19 +1310,30 @@ import {
         patch(nodeSel, nodeOptions(f.node));
         const d = state.data;
         if (!ready("actions")) return;
-        const all = trapHits(d.actions, d.nodes);
+        loadHoneypots(f.window);
+        const log = state.honeypots[f.window] || { loading: true };
+        // the logs, asked every minute, and the latest decisions, which come with every refresh
+        const since = Date.now() * 1000 - HONEYPOT_WINDOWS[f.window];
+        const all = trapHits([...((log.data && log.data.hits) || []), ...d.actions.filter((a) => a.ts >= since)], d.nodes);
         // a port typed whole ("23", "TCP/23") is that port, not every port it is a prefix of
         const portQ = /^(?:tcp\/)?(\d+)$/i.exec((f.q || "").trim());
-        const hit = (r) => (portQ ? r.port === `TCP/${portQ[1]}` : matches(f.q, r.target, r.port, r.sent));
+        const hit = (r) => (portQ ? r.port === `TCP/${portQ[1]}` : matches(f.q, r.addr, r.target, r.port, r.sent));
         const rows = all.filter((r) => (!f.node || r.node_id === f.node) && (!f.kind || (f.kind === "web") === (r.port === "web")) && hit(r));
         const by = new Map();
         for (const r of all.filter((r) => !f.node || r.node_id === f.node)) by.set(r.port, (by.get(r.port) || 0) + 1);
-        const top = [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 24);
+        const top = [...by.entries()].sort((a, b) => b[1] - a[1]);
         patch(ports, top.map(([p, n]) => h("button", { type: "button", class: `chip${picked(p) ? " on" : ""}`, "data-k": p, title: `${num(n)} hit${n === 1 ? "" : "s"}: click to show only these`, "aria-pressed": picked(p) ? "true" : "false", onclick: () => pick(p) }, p === "web" ? "decoy site" : p, " ", h("b", null, num(n)))));
         const fresh = newSince(rows, state.lastLook);
-        count.textContent = `${num(rows.length)} hit${rows.length === 1 ? "" : "s"}${fresh.count ? `, ${num(fresh.count)} new` : ""} among the nodes' latest decisions`;
+        const period = WINDOWS.find(([v]) => v === f.window)[1].toLowerCase();
+        count.textContent = `${num(rows.length)} hit${rows.length === 1 ? "" : "s"}${fresh.count ? `, ${num(fresh.count)} new` : ""} in the ${period}${log.loading ? ", reading the nodes' logs…" : ""}`;
+        const trouble = [
+          log.error ? `The nodes' logs couldn't be read (${log.error}): only their latest decisions are shown.` : null,
+          log.data && log.data.total > log.data.hits.length ? `The newest ${num(log.data.hits.length)} of ${num(log.data.total)} bans with a hit are shown.` : null,
+          ...((log.data && log.data.nodes) || []).filter((n) => n.error && (!f.node || n.node_id === f.node)).map((n) => `${n.node}: only its latest decisions (${n.error}).`),
+        ].filter(Boolean);
+        patch(notes, trouble.map((t) => h("div", null, t)));
         patch(exp, tableExport("honeypots", cols, rows));
-        patch(body, table("honeypots", cols, rows, { key: (r) => r.key, detail: actionDetail, sort: { col: "Time", asc: false }, empty: all.length ? "Nothing matches." : "No honeypot hit among the nodes' latest decisions. Honeypot ports and the decoy site are set up per node ([ports] honeypot, [sources] apps = [\"decoy\"]).", rowClass: (r) => (fresh.isNew(r) ? "fresh" : "") }));
+        patch(body, table("honeypots", cols, rows, { key: (r) => r.key, detail: actionDetail, sort: { col: "Time", asc: false }, limit: 1000, empty: log.loading && !all.length ? "Reading the nodes' logs…" : all.length ? "Nothing matches." : "No honeypot hit in this period. Honeypot ports and the decoy site are set up per node ([ports] honeypot, [sources] apps = [\"decoy\"]).", rowClass: (r) => (fresh.isNew(r) ? "fresh" : "") }));
       },
     };
   }

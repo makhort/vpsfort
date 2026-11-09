@@ -39,6 +39,15 @@ pub fn snapshot(data: &[u8]) {
     }
 }
 
+/// Honeypot hits as an agent (any holder of the web key) or vpsfort sends them: read, merged.
+pub fn honeypot_hits(data: &[u8]) {
+    if let Ok(text) = std::str::from_utf8(data) {
+        if let Ok(p) = crate::honeypots::parse(text) {
+            let _ = serde_json::to_string(&crate::honeypots::merge("7d", vec![("0".into(), "x".into(), Ok(p))], crate::time::now()));
+        }
+    }
+}
+
 /// An abuse report as an agent (any holder of the web key) or vpsfort sends it: read, merged
 /// with itself (two nodes saw the same) and split per provider.
 pub fn abuse_report(data: &[u8]) {

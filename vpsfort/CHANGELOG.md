@@ -3,6 +3,12 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.7.7 - 2026-11-09
+
+The honeypot hits for the console, from the actions log.
+
+- The console socket answers `honeypots 24h` and `honeypots 7d`: the bans this node decided on a hit on a honeypot port or the decoy site, from the actions log and its rotated copies (the newest 10,000), without the peers' copies. The web console's Honeypots tab reads them: it could only see the latest decisions kept in memory, of which a restart leaves 100, about two hours of a honeypot node's.
+
 ## 0.7.6 - 2026-11-09
 
 What the honeypot node's first Telnet connections showed.
