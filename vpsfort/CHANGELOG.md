@@ -3,6 +3,17 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.7.8 - 2026-11-09
+
+What a day on a honeypot node showed: VNC and MySQL prompts, a real FTP refusal, more openings named.
+
+- A honeypot's POP3 prompt refuses what it doesn't know, as a real server does: after anything but `USER` it answers Dovecot's `-ERR Unknown command.` instead of `+OK`. fingerprintx, which the honeypot node's visitors run, sends a bogus command and takes a port for POP3 only if `-ERR` comes back, so `+OK` to anything marked the port as not being what it claimed.
+- An LDAP bind is named whatever the size of its message ID: fingerprintx's 4-byte ID left one as raw bytes.
+- Two more honeypot prompts for clients that wait for the server, after a day on a honeypot node where half the VNC and four of five MySQL connections sat silent. `vnc` sends the `RFB 003.008` version line and keeps the client's. `mysql` sends a server's first packet (by default Debian 12's MariaDB; `honeypot_banners` names another version), with a new salt and connection number each time and no offer of TLS, and the evidence names the account the client logs in as.
+- A honeypot's FTP prompt refuses what comes before a login with vsftpd's `530 Please login with USER and PASS.`: only `USER` gets the `331` that brings out the password. `AUTH TLS` was answered `331`, which no vsftpd does.
+- More openings are named in a honeypot's evidence: an RDP connection request without a cookie (every TPKT request seen on 3389 was one), lowercase `info` and `ping` to Redis, a DCE/RPC bind, a FastCGI request and a MikroTik Winbox request.
+- The honeypot node template shows prompts on 587 (SMTP), 3306 (MySQL), 5900 and 5901 (VNC) as well.
+
 ## 0.7.7 - 2026-11-09
 
 The honeypot hits for the console, from the actions log.

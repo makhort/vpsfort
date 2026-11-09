@@ -73,7 +73,7 @@ honeypot = []
 # 0 closes at once without reading; at most 4096.
 honeypot_capture = 512
 # Honeypot ports that show a server's fixed prompts (login:, 220, +OK) and keep the replies,
-# for dedicated honeypot nodes (README, "Dedicated honeypot nodes"): telnet, ftp, smtp, pop3, imap, ssh (the banner alone).
+# for dedicated honeypot nodes (README, "Dedicated honeypot nodes"): telnet, ftp, smtp, pop3, imap, ssh and vnc (the banner alone), mysql (the greeting).
 # honeypot_prompts = { "2323/tcp" = "telnet", "21/tcp" = "ftp", "22/tcp" = "ssh", "25/tcp" = "smtp" }
 # The greeting each prompted protocol opens with, a real server's line (OpenSSH, vsftpd, Postfix,
 # Dovecot) unless set here: the software and version the port is to pass for. Set ssh to what

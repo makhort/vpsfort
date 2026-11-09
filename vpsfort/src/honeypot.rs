@@ -13,14 +13,16 @@
 //! mail scanners) hand over the login they try instead of showing as `sent nothing`; for SSH,
 //! the server's identification line alone, which makes the client send its own (`SSH-2.0-
 //! libssh_0.9.6`: the tool), the one thing it says before the key exchange a honeypot can't
-//! follow. Nothing the client sends is parsed or answered: the same lines go out whatever
-//! arrives.
+//! follow; VNC's version line likewise; for MySQL, a server's first packet, which brings out
+//! the client's login. Nothing the client sends acts on what goes out: the same lines go out
+//! whatever arrives, but for the second line of POP3 and FTP, which depends on the first word
+//! of the reply ([`Prompts::reply_to`]).
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpListener, TcpStream};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -40,10 +42,13 @@ pub enum Prompts {
     Pop3,
     Imap,
     Ssh,
+    Vnc,
+    Mysql,
 }
 
 impl Prompts {
-    pub const ALL: [Prompts; 6] = [Prompts::Telnet, Prompts::Ftp, Prompts::Smtp, Prompts::Pop3, Prompts::Imap, Prompts::Ssh];
+    pub const ALL: [Prompts; 8] =
+        [Prompts::Telnet, Prompts::Ftp, Prompts::Smtp, Prompts::Pop3, Prompts::Imap, Prompts::Ssh, Prompts::Vnc, Prompts::Mysql];
 
     /// Its name in the configuration and the evidence.
     pub fn name(self) -> &'static str {
@@ -54,13 +59,17 @@ impl Prompts {
             Prompts::Pop3 => "pop3",
             Prompts::Imap => "imap",
             Prompts::Ssh => "ssh",
+            Prompts::Vnc => "vnc",
+            Prompts::Mysql => "mysql",
         }
     }
 
-    /// What the evidence calls what was shown: prompts, or SSH's one banner.
+    /// What the evidence calls what was shown: prompts, or the one line or packet of the
+    /// protocols that show only that.
     fn what(self) -> &'static str {
         match self {
-            Prompts::Ssh => "banner",
+            Prompts::Ssh | Prompts::Vnc => "banner",
+            Prompts::Mysql => "greeting",
             _ => "prompts",
         }
     }
@@ -81,42 +90,74 @@ impl Prompts {
                 "* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN AUTH=LOGIN] Dovecot (Debian) ready."
             }
             Prompts::Ssh => "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u5",
+            // what TigerVNC, x11vnc and QEMU all send
+            Prompts::Vnc => "RFB 003.008",
+            // Debian 12's server, as `SELECT VERSION()` shows it, with the `5.5.5-` MariaDB 10
+            // puts before it in the greeting
+            Prompts::Mysql => "5.5.5-10.11.19-MariaDB-0+deb12u1",
         }
     }
 
     /// What a greeting of this protocol must start with to be one a client takes (RFC 4253's
-    /// identification line, the FTP and SMTP `220` reply, POP3's `+OK`, IMAP's untagged `OK`;
-    /// a Telnet issue line is free text).
+    /// identification line, the FTP and SMTP `220` reply, POP3's `+OK`, IMAP's untagged `OK`,
+    /// RFC 6143's `RFB `; a Telnet issue line is free text, a MySQL version is checked below).
     fn banner_prefix(self) -> &'static str {
         match self {
-            Prompts::Telnet => "",
+            Prompts::Telnet | Prompts::Mysql => "",
             Prompts::Ftp | Prompts::Smtp => "220",
             Prompts::Pop3 => "+OK",
             Prompts::Imap => "* OK",
             Prompts::Ssh => "SSH-2.0-",
+            Prompts::Vnc => "RFB ",
         }
     }
 
     /// Whether `banner` can be sent as this protocol's greeting: its prefix, then something
-    /// (SSH: a software token, with comments after a space), printable ASCII, at most 253
-    /// characters before the line end.
+    /// (SSH: a software token, with comments after a space; VNC: exactly `ddd.ddd`, which is
+    /// all a client and a scanner accept; MySQL: a version number), printable ASCII, at most
+    /// 253 characters before the line end.
     pub fn valid_banner(self, banner: &str) -> bool {
         let Some(rest) = banner.strip_prefix(self.banner_prefix()) else { return false };
         let token_ok = match self {
             Prompts::Ssh => !rest.is_empty() && !rest.starts_with(' '),
             Prompts::Telnet => true,
+            Prompts::Vnc => {
+                matches!(rest.as_bytes(), [a, b, c, b'.', d, e, f] if [a, b, c, d, e, f].iter().all(|x| x.is_ascii_digit()))
+            }
+            Prompts::Mysql => rest.starts_with(|c: char| c.is_ascii_digit()),
             _ => rest.is_empty() || rest.starts_with(' '),
         };
         token_ok && banner.len() <= 253 && banner.bytes().all(|b| (0x20..=0x7e).contains(&b))
     }
 
-    /// The bytes the greeting goes out as: with its line end, and for Telnet the way a
-    /// telnetd shows it: its option negotiation first ([`TELNET_OPTIONS`]), then the issue
-    /// line with blank lines around it and the prompt after it.
+    /// The bytes the greeting goes out as, built for each connection: with its line end, for
+    /// Telnet the way a telnetd shows it: its option negotiation first ([`TELNET_OPTIONS`]),
+    /// then the issue line with blank lines around it and the prompt after it; for MySQL the
+    /// server's first packet, around the version ([`mysql_greeting`]).
     fn first_line(self, banner: &str) -> Vec<u8> {
         match self {
             Prompts::Telnet => [TELNET_OPTIONS, format!("\r\n{banner}\r\n\r\nlogin: ").as_bytes()].concat(),
+            Prompts::Vnc => format!("{banner}\n").into_bytes(), // RFC 6143: a bare line feed
+            Prompts::Mysql => mysql_greeting(banner),
             _ => format!("{banner}\r\n").into_bytes(),
+        }
+    }
+
+    /// What goes out in place of `line`, given what the client has said so far: `line`, except
+    /// for the reply of POP3 and FTP to the first thing said. A real server refuses anything
+    /// but a command it knows, and scanners test for that: fingerprintx sends a bogus command
+    /// and takes the port for POP3 only if `-ERR` comes back. So only `USER` gets the reply
+    /// that brings out the password. The first word is all that is looked at.
+    fn reply_to<'a>(self, line: &'a [u8], said: &[u8]) -> &'a [u8] {
+        let user = said.split(u8::is_ascii_whitespace).next().is_some_and(|w| w.eq_ignore_ascii_case(b"USER"));
+        if said.is_empty() || user {
+            return line;
+        }
+        match self {
+            Prompts::Pop3 => b"-ERR Unknown command.\r\n", // Dovecot's words, as the greeting's
+            // vsftpd's words before a login, also to `AUTH TLS` when it has no TLS configured
+            Prompts::Ftp => b"530 Please login with USER and PASS.\r\n",
+            _ => line,
         }
     }
 
@@ -138,8 +179,61 @@ impl Prompts {
             Prompts::Pop3 => vec![first, b"+OK\r\n"],
             // `a1 LOGIN user pass` in one line
             Prompts::Imap => vec![first],
+            // the client's version line; the security types that would come next are not sent
+            Prompts::Vnc => vec![first],
+            // the client's login: the account by name, the password as a salted hash
+            Prompts::Mysql => vec![first],
         }
     }
+}
+
+/// `N` bytes from the system. If it has none to give the bytes stay zero: this is only a
+/// greeting's salt, not worth stopping a listener for.
+fn random_bytes<const N: usize>() -> [u8; N] {
+    use chacha20poly1305::aead::{rand_core::RngCore, OsRng};
+    let mut bytes = [0u8; N];
+    let _ = OsRng.try_fill_bytes(&mut bytes);
+    bytes
+}
+
+/// The connection number of the last MySQL greeting. A server numbers its connections from
+/// its start; this starts where one that has been up for a while would be.
+static MYSQL_CONNECTION: AtomicU32 = AtomicU32::new(0);
+
+/// A server's first packet (protocol 10) for `version`: the client answers it with its login.
+/// The salt and the connection number change with every connection, as on a real server; the
+/// same ones twice would show two addresses of a scanner that they met one fake. TLS isn't
+/// offered, as a Debian package's default server doesn't, so the login comes in the clear.
+fn mysql_greeting(version: &str) -> Vec<u8> {
+    let start = 1 + u32::from_le_bytes(random_bytes()) % 90_000;
+    let _ = MYSQL_CONNECTION.compare_exchange(0, start, Ordering::Relaxed, Ordering::Relaxed);
+    let connection = MYSQL_CONNECTION.fetch_add(1, Ordering::Relaxed);
+    // printable, as a server's own
+    let salt = random_bytes::<20>().map(|b| 33 + b % 94);
+    // MariaDB leaves CLIENT_MYSQL off and says what else it can do where MySQL has filler
+    let maria = version.contains("MariaDB");
+    let capabilities_low: u16 = if maria { 0xf7fe } else { 0xf7ff };
+    let capabilities_maria: [u8; 4] = if maria { [0x1d, 0, 0, 0] } else { [0; 4] };
+    let mut body = vec![10];
+    body.extend_from_slice(version.as_bytes());
+    body.push(0);
+    body.extend_from_slice(&connection.to_le_bytes());
+    body.extend_from_slice(&salt[..8]);
+    body.push(0);
+    body.extend_from_slice(&capabilities_low.to_le_bytes());
+    body.push(45); // utf8mb4_general_ci
+    body.extend_from_slice(&2u16.to_le_bytes()); // autocommit
+    body.extend_from_slice(&0x81ffu16.to_le_bytes());
+    body.push(salt.len() as u8 + 1);
+    body.extend_from_slice(&[0; 6]);
+    body.extend_from_slice(&capabilities_maria);
+    body.extend_from_slice(&salt[8..]);
+    body.push(0);
+    body.extend_from_slice(b"mysql_native_password\0");
+    let mut packet = (body.len() as u32).to_le_bytes()[..3].to_vec();
+    packet.push(0); // the packet's sequence number
+    packet.extend_from_slice(&body);
+    packet
 }
 
 /// Which honeypot ports show prompts, and the greeting each protocol opens with.
@@ -152,10 +246,10 @@ pub struct Prompting {
 }
 
 impl Prompting {
-    /// A port's prompts, if it has any, with their greeting as it goes out.
-    fn script(&self, port: u16) -> Option<(Prompts, Arc<Vec<u8>>)> {
+    /// A port's prompts, if it has any, with the greeting they open with.
+    fn script(&self, port: u16) -> Option<(Prompts, Arc<str>)> {
         let p = *self.by_port.get(&port)?;
-        Some((p, Arc::new(p.first_line(self.banners.get(&p).map_or(p.default_banner(), String::as_str)))))
+        Some((p, Arc::from(self.banners.get(&p).map_or(p.default_banner(), String::as_str))))
     }
 }
 
@@ -306,14 +400,43 @@ fn read_line(s: &mut TcpStream, deadline: Instant, capture: usize, out: &mut Vec
     }
 }
 
+/// Appends what a client answers a MySQL greeting with to `out`: the one packet its header
+/// announces when that is a login (the packet numbered 1), else what the first read brings
+/// (a TLS client hello, an HTTP request). Within the deadline and the capture.
+fn read_mysql_answer(s: &mut TcpStream, deadline: Instant, capture: usize, out: &mut Vec<u8>) {
+    let mut buf = [0u8; 512];
+    while out.len() < capture {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() || s.set_read_timeout(Some(left)).is_err() {
+            return;
+        }
+        match s.read(&mut buf) {
+            Ok(0) | Err(_) => return,
+            Ok(k) => out.extend_from_slice(&buf[..k.min(capture - out.len())]),
+        }
+        if let [a, b, c, number, ..] = out[..] {
+            if number != 1 || out.len() >= 4 + u32::from_le_bytes([a, b, c, 0]) as usize {
+                return;
+            }
+        }
+    }
+}
+
 /// Shows the prompts, one by one, reading the reply to each; returns the replies. The same
-/// lines go out whatever the client sends, within [`PROMPT_WAIT`] and `capture` bytes in all.
-fn converse(mut s: TcpStream, capture: usize, prompts: Prompts, first: &[u8]) -> Vec<u8> {
+/// lines go out whatever the client sends ([`Prompts::reply_to`] has the exceptions), within
+/// [`PROMPT_WAIT`] and `capture` bytes in all.
+fn converse(mut s: TcpStream, capture: usize, prompts: Prompts, banner: &str) -> Vec<u8> {
     let deadline = Instant::now() + PROMPT_WAIT;
+    let first = prompts.first_line(banner);
     let (mut out, mut pending) = (Vec::new(), Vec::new());
-    for line in prompts.lines(first) {
+    for line in prompts.lines(&first) {
+        let line = prompts.reply_to(line, &out);
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() || s.set_write_timeout(Some(left)).is_err() || s.write_all(line).is_err() || s.flush().is_err() {
+            break;
+        }
+        if prompts == Prompts::Mysql {
+            read_mysql_answer(&mut s, deadline, capture, &mut out);
             break;
         }
         if !read_line(&mut s, deadline, capture, &mut out, &mut pending, prompts == Prompts::Telnet) {
@@ -390,11 +513,21 @@ pub fn describe(sent: &[u8], prompts: Option<Prompts>) -> String {
     match (prompts, sent.is_empty()) {
         (Some(p), true) => return format!("sent nothing to the {} {}", p.name(), p.what()),
         (Some(p), false) => {
+            if let Some(user) = mysql_login_user(sent).filter(|_| p == Prompts::Mysql) {
+                let (user, after) = (ascii(user, SHOWN_FIELD), ascii(&sent[MYSQL_NAME_AT..], SHOWN));
+                return format!("answered the mysql greeting with a login as \"{user}\" ({} bytes): \"{after}\"", sent.len());
+            }
             // a reply that is another protocol's opening (TLS tried after the greeting) is
-            // named too; not what the prompt asks for (a client's banner after SSH's, Telnet's
-            // own negotiation), which would say nothing
-            let name = protocol(sent)
-                .filter(|&n| !matches!((p, n), (Prompts::Ssh, "an SSH client banner") | (Prompts::Telnet, "Telnet option negotiation")));
+            // named too; not what the prompt asks for (a client's banner after SSH's or
+            // VNC's, Telnet's own negotiation), which would say nothing
+            let name = protocol(sent).filter(|&n| {
+                !matches!(
+                    (p, n),
+                    (Prompts::Ssh, "an SSH client banner")
+                        | (Prompts::Vnc, "a VNC client version")
+                        | (Prompts::Telnet, "Telnet option negotiation")
+                )
+            });
             let what = name.map_or_else(|| format!("{} bytes", sent.len()), |name| format!("{name} ({} bytes)", sent.len()));
             return format!("answered the {} {} with {what}: \"{}\"", p.name(), p.what(), ascii(sent, SHOWN));
         }
@@ -418,6 +551,37 @@ pub fn describe(sent: &[u8], prompts: Option<Prompts>) -> String {
     }
 }
 
+/// Where the account name starts in a MySQL login: after the packet's header and the fixed
+/// fields (capabilities, largest packet, character set, filler). The account is the one thing
+/// in it that says anything, and the filler's zeros would use up an evidence line before it.
+const MYSQL_NAME_AT: usize = 4 + 32;
+
+/// The account a MySQL client logs in as, if `s` is a login: the packet numbered 1, the 4.1
+/// protocol's flag, the name up to its zero byte (or to the end of a capture cut short).
+fn mysql_login_user(s: &[u8]) -> Option<&[u8]> {
+    if s.get(3) != Some(&1) || s.get(5)? & 0x02 == 0 {
+        return None;
+    }
+    let rest = s.get(MYSQL_NAME_AT..).filter(|r| !r.is_empty())?;
+    rest.split(|&b| b == 0).next()
+}
+
+/// Whether the bytes open an LDAP bind: a BER sequence, a message ID of up to 4 bytes (a
+/// client picks its size: scanners often send 4), then the bind request's tag.
+fn is_ldap_bind(s: &[u8]) -> bool {
+    if s.first() != Some(&0x30) {
+        return false;
+    }
+    // the sequence's length: one byte, or 0x81..=0x84 and that many more
+    let id_at = match s.get(1) {
+        Some(0..=0x7f) => 2,
+        Some(l @ 0x81..=0x84) => 2 + usize::from(l - 0x80),
+        _ => return false,
+    };
+    let (Some(0x02), Some(&size @ 1..=4)) = (s.get(id_at), s.get(id_at + 1)) else { return false };
+    s.get(id_at + 2 + usize::from(size)) == Some(&0x60)
+}
+
 /// What the first bytes of a connection are, for the protocols scanners open with (the
 /// client speaks first in each), so the evidence says "an SMB2 negotiate" before the hex. By
 /// the fixed bytes of each protocol's opening message: a length that matches, a magic string,
@@ -426,17 +590,19 @@ fn protocol(s: &[u8]) -> Option<&'static str> {
     let n = s.len();
     let at = |i: usize| s.get(i).copied();
     let be16 = |i: usize| Some(u16::from_be_bytes([at(i)?, at(i + 1)?]) as usize);
+    let le16 = |i: usize| Some(u16::from_le_bytes([at(i)?, at(i + 1)?]) as usize);
     let be32 = |i: usize| Some(u32::from_be_bytes([at(i)?, at(i + 1)?, at(i + 2)?, at(i + 3)?]));
     let le32 = |i: usize| Some(u32::from_le_bytes([at(i)?, at(i + 1)?, at(i + 2)?, at(i + 3)?]));
     let has = |needle: &[u8]| s.windows(needle.len()).any(|w| w == needle);
     // a length field that is the whole message, or more than was captured
     let whole = |len: Option<usize>| len.is_some_and(|l| l >= n && l <= MAX_CAPTURE * 4);
     let first_line = s.split(|&b| b == b'\n').next().unwrap_or(s);
+    let first_line = first_line.strip_suffix(b"\r").unwrap_or(first_line);
     Some(if s.starts_with(b"SSH-") {
         "an SSH client banner"
     } else if s.starts_with(b"RFB 0") {
         "a VNC client version"
-    } else if first_line.strip_suffix(b"\r").unwrap_or(first_line).ends_with(b" SIP/2.0") {
+    } else if first_line.ends_with(b" SIP/2.0") {
         "a SIP request"
     } else if s.starts_with(b"AMQP") {
         "an AMQP protocol header"
@@ -446,6 +612,8 @@ fn protocol(s: &[u8]) -> Option<&'static str> {
         "a Java RMI handshake"
     } else if (s.starts_with(b"*") && has(b"\r\n$"))
         || [&b"INFO"[..], b"PING", b"CONFIG ", b"AUTH ", b"EVAL "].iter().any(|c| s.starts_with(c))
+        || first_line == b"info"
+        || first_line == b"ping"
     {
         "a Redis command"
     } else if s.starts_with(b"stats") || s.starts_with(b"version\r\n") {
@@ -469,7 +637,8 @@ fn protocol(s: &[u8]) -> Option<&'static str> {
             "an SMB1 request"
         }
     } else if at(0) == Some(3) && at(1) == Some(0) && whole(be16(2)) && at(5) == Some(0xe0) {
-        if has(b"mstshash") {
+        // by its cookie, or without one by the RDP negotiation request right after the header
+        if has(b"mstshash") || s.get(11..15) == Some(b"\x01\x00\x08\x00") {
             "an RDP connection request"
         } else {
             "a TPKT connection request (RDP or Siemens S7)"
@@ -480,6 +649,12 @@ fn protocol(s: &[u8]) -> Option<&'static str> {
         "a PostgreSQL startup message"
     } else if le32(0).is_some_and(|l| l >= 16) && le32(12).is_some_and(|op| [2004, 2010, 2011, 2013].contains(&op)) {
         "a MongoDB query"
+    } else if s.starts_with(b"\x05\x00\x0b") && whole(le16(8)) {
+        "a DCE/RPC bind"
+    } else if at(0) == Some(1) && at(1) == Some(1) && be16(4) == Some(8) && be16(8).is_some_and(|role| (1..=3).contains(&role)) {
+        "a FastCGI request"
+    } else if s.get(1..7) == Some(b"\x02index") {
+        "a MikroTik Winbox request"
     } else if at(0) == Some(5) && n >= 3 && at(1) == Some((n - 2) as u8) {
         "a SOCKS5 greeting"
     } else if at(0) == Some(4) && (at(1) == Some(1) || at(1) == Some(2)) && n >= 9 {
@@ -488,7 +663,7 @@ fn protocol(s: &[u8]) -> Option<&'static str> {
         "an MQTT connect"
     } else if n >= 8 && s[2..4] == [0, 0] && be16(4) == Some(n - 6) && (1..=0x7f).contains(&s[7]) {
         "a Modbus request"
-    } else if at(0) == Some(0x30) && n >= 7 && s[2..7].windows(3).any(|w| w[0] == 0x02 && w[1] == 0x01) && s[..12.min(n)].contains(&0x60) {
+    } else if is_ldap_bind(s) {
         "an LDAP bind request"
     } else if n >= 16 && at(0).is_some_and(|b| b & 0x80 != 0) && s[8..12] == [0, 0, 0, 0] && s[12..16] == [0, 0, 0, 2] {
         "an RPC call (rpcbind or NFS)"
@@ -522,7 +697,7 @@ fn serve(
     listener: TcpListener,
     port: u16,
     capture: usize,
-    script: Option<(Prompts, Arc<Vec<u8>>)>,
+    script: Option<(Prompts, Arc<str>)>,
     on_hit: Arc<dyn Fn(Hit) -> bool + Send + Sync>,
     reading: Arc<AtomicUsize>,
     stop: Arc<AtomicBool>,
@@ -564,7 +739,7 @@ fn serve(
             thread::spawn(move || {
                 let prompts = script.as_ref().map(|(p, _)| *p);
                 let sent = match &script {
-                    Some((p, first)) => converse(s, capture, *p, first),
+                    Some((p, banner)) => converse(s, capture, *p, banner),
                     None => read_first(s, capture),
                 };
                 reading.fetch_sub(1, Ordering::Relaxed);
@@ -922,6 +1097,8 @@ mod tests {
             name(b"\x03\x00\x00\x2b\x26\xe0\x00\x00\x00\x00\x00Cookie: mstshash=admin\r\n\x01\x00\x08\x00\x03\x00\x00\x00"),
             "sent an RDP connection request"
         );
+        // the RDP negotiation request without a cookie, all five seen on 3389 on the honeypot node
+        assert_eq!(name(b"\x03\x00\x00\x13\x0e\xe0\x00\x00\x00\x00\x00\x01\x00\x08\x00\x03\x00\x00\x00"), "sent an RDP connection request");
         assert_eq!(
             name(b"\x03\x00\x00\x16\x11\xe0\x00\x00\x00\x01\x00\xc1\x02\x01\x00\xc2\x02\x01\x02\xc0\x01\x0a"),
             "sent a TPKT connection request (RDP or Siemens S7)"
@@ -934,7 +1111,17 @@ mod tests {
         assert_eq!(name(b"\x3a\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\xd4\x07\x00\x00\x00\x00\x00\x00admin.$cmd\x00\x00\x00\x00\x00\x01\x00\x00\x00\x13\x00\x00\x00\x10isMaster\x00\x01\x00\x00\x00\x00"), "sent a MongoDB query");
         assert_eq!(name(b"*1\r\n$4\r\nINFO\r\n"), "sent a Redis command");
         assert_eq!(name(b"INFO\r\n"), "sent a Redis command");
+        assert_eq!(name(b"info\n"), "sent a Redis command");
+        assert_eq!(name(b"ping\r\n"), "sent a Redis command");
+        assert_eq!(describe(b"information\n", None), "sent 12 bytes: \"information\\n\"", "lower case: only the whole command");
         assert_eq!(name(b"stats\r\n"), "sent a memcached command");
+        // as seen on the honeypot node
+        let mut dce = b"\x05\x00\x0b\x03\x10\x00\x00\x00\x48\x00\x00\x00\x01\x00\x00\x00".to_vec();
+        dce.resize(72, 0);
+        assert_eq!(name(&dce), "sent a DCE/RPC bind");
+        let fcgi = b"\x01\x01\xe6\x0a\x00\x08\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x01\x04\xe6\x0a\x00\x00\x00\x00";
+        assert_eq!(name(fcgi), "sent a FastCGI request");
+        assert_eq!(name(b"\x13\x02index\x00\x00\x00\x00\x00\x00\x00\xff\xed\x00\x00\x00\x00\x00"), "sent a MikroTik Winbox request");
         assert_eq!(name(b"\x05\x02\x00\x02"), "sent a SOCKS5 greeting");
         assert_eq!(name(b"\x04\x01\x00\x50\xcb\x00\x71\x01\x00"), "sent a SOCKS4 connect");
         assert_eq!(name(b"\x10\x1a\x00\x04MQTT\x04\x02\x00\x3c\x00\x0emqtt-explorer"), "sent an MQTT connect");
@@ -942,6 +1129,18 @@ mod tests {
         assert_eq!(name(b"CNXN\x00\x00\x00\x01\x00\x10\x00\x00"), "sent an ADB connect");
         assert_eq!(name(b"\x00\x01\x00\x00\x00\x06\x01\x03\x00\x00\x00\x01"), "sent a Modbus request");
         assert_eq!(name(b"\x30\x0c\x02\x01\x01\x60\x07\x02\x01\x03\x04\x00\x80\x00"), "sent an LDAP bind request");
+        // as fingerprintx sends it: a 4-byte message ID, seen on the honeypot node
+        let ldap = b"0:\x02\x04\x19\x00\xe7\xf8`2\x02\x01\x03\x04\x17cn=pcvueuuqtafriifthgjz\x80\x14pcvueuuqtafriifthgjz";
+        assert_eq!(ldap.len(), 60);
+        assert_eq!(name(ldap), "sent an LDAP bind request");
+        // the sequence's length in the long form
+        assert_eq!(name(b"\x30\x81\x0c\x02\x02\x00\x01\x60\x07\x02\x01\x03\x04\x00\x80\x00"), "sent an LDAP bind request");
+        // the same start, but not a bind (a search); and cut short
+        assert!(!is_ldap_bind(b"\x30\x0c\x02\x01\x01\x63\x07\x60\x60"));
+        assert!(!is_ldap_bind(b"\x30\x0c\x02\x04\x19"));
+        assert!(!is_ldap_bind(b"\x30\x0c\x02\x05\x00\x00\x00\x00\x00\x60"), "an ID larger than LDAP allows");
+        assert!(!is_ldap_bind(b"\x30"));
+        assert!(!is_ldap_bind(b""));
         assert_eq!(
             name(b"\x80\x00\x00\x28\x12\x34\x56\x78\x00\x00\x00\x00\x00\x00\x00\x02\x00\x01\x86\xa0\x00\x00\x00\x02\x00\x00\x00\x03"),
             "sent an RPC call (rpcbind or NFS)"
@@ -1045,10 +1244,231 @@ mod tests {
         assert_eq!(Prompts::Telnet.first_line("Ubuntu 22.04.4 LTS"), [TELNET_OPTIONS, b"\r\nUbuntu 22.04.4 LTS\r\n\r\nlogin: "].concat());
         let own = Prompting { by_port: BTreeMap::new(), banners: [(Prompts::Ftp, "220 ProFTPD Server".to_string())].into_iter().collect() };
         let own = Prompting { by_port: [(21, Prompts::Ftp), (110, Prompts::Pop3)].into_iter().collect(), ..own };
-        assert_eq!(own.script(21).map(|(p, f)| (p, f.to_vec())), Some((Prompts::Ftp, b"220 ProFTPD Server\r\n".to_vec())));
+        assert_eq!(own.script(21).map(|(p, b)| (p, b.to_string())), Some((Prompts::Ftp, "220 ProFTPD Server".to_string())));
         let pop = own.script(110).unwrap();
-        assert_eq!((pop.0, pop.1.as_slice()), (Prompts::Pop3, &b"+OK Dovecot (Debian) ready.\r\n"[..]), "the others keep their defaults");
+        assert_eq!((pop.0, &*pop.1), (Prompts::Pop3, "+OK Dovecot (Debian) ready."), "the others keep their defaults");
         assert_eq!(own.script(22), None, "no prompts on this port");
+        // VNC: exactly what a client takes, sent with a bare line feed
+        assert_eq!(Prompts::Vnc.first_line(Prompts::Vnc.default_banner()), b"RFB 003.008\n");
+        assert!(Prompts::Vnc.valid_banner("RFB 003.003") && Prompts::Vnc.valid_banner("RFB 005.000"));
+        for bad in ["RFB 3.8", "RFB 003.008 x", "RFB 003-008", "RFB 00a.008", "003.008"] {
+            assert!(!Prompts::Vnc.valid_banner(bad), "{bad:?}");
+        }
+        // MySQL: a version number
+        assert!(Prompts::Mysql.valid_banner("5.7.44-log") && Prompts::Mysql.valid_banner("8.0.43"));
+        assert!(!Prompts::Mysql.valid_banner("MariaDB") && !Prompts::Mysql.valid_banner(""));
+    }
+
+    /// The parts of a MySQL greeting a client or a scanner reads.
+    struct Greeting {
+        version: Vec<u8>,
+        connection: u32,
+        salt: Vec<u8>,
+        capabilities_low: u16,
+        plugin: Vec<u8>,
+    }
+
+    fn parse_greeting(packet: &[u8]) -> Greeting {
+        let length = u32::from_le_bytes([packet[0], packet[1], packet[2], 0]) as usize;
+        assert_eq!(packet.len(), 4 + length, "the header says the packet's size");
+        assert_eq!(packet[3], 0, "the first packet of a connection");
+        assert_eq!(packet[4], 10, "protocol 10");
+        // fingerprintx: 4 header bytes read as a little-endian 25..=4096, 35 bytes at least,
+        // and a zero 13 bytes after the version's
+        let header = u32::from_le_bytes([packet[0], packet[1], packet[2], packet[3]]);
+        assert!((25..=4096).contains(&header) && packet.len() >= 35, "{header}");
+        let end = 5 + packet[5..].iter().position(|&b| b == 0).unwrap();
+        assert_eq!(packet[end + 13], 0, "the filler after the salt's first part");
+        // Nmap: `^.\0\0\0\x0a` before the version: the length has to fit one byte
+        assert!(packet[..4][1..] == [0, 0, 0]);
+        let at = end + 1;
+        let connection = u32::from_le_bytes(packet[at..at + 4].try_into().unwrap());
+        let mut salt = packet[at + 4..at + 12].to_vec();
+        let capabilities_low = u16::from_le_bytes(packet[at + 13..at + 15].try_into().unwrap());
+        assert_eq!(capabilities_low & 0x0800, 0, "no TLS offered: the login comes in the clear");
+        assert_eq!(packet[at + 15], 45, "the character set");
+        assert_eq!(packet[at + 18..at + 20], [0xff, 0x81], "capabilities' upper part");
+        assert_eq!(usize::from(packet[at + 20]), 21, "the salt's length, with its zero");
+        let second = at + 21 + 10;
+        salt.extend_from_slice(&packet[second..second + 12]);
+        assert_eq!(packet[second + 12], 0);
+        let plugin = packet[second + 13..packet.len() - 1].to_vec();
+        assert_eq!(packet[packet.len() - 1], 0);
+        Greeting { version: packet[5..end].to_vec(), connection, salt, capabilities_low, plugin }
+    }
+
+    #[test]
+    fn a_mysql_greeting_is_what_clients_and_scanners_read_and_never_the_same_twice() {
+        let (one, two) = (mysql_greeting(Prompts::Mysql.default_banner()), mysql_greeting(Prompts::Mysql.default_banner()));
+        let (a, b) = (parse_greeting(&one), parse_greeting(&two));
+        assert_eq!(a.version, b"5.5.5-10.11.19-MariaDB-0+deb12u1");
+        assert_eq!(a.plugin, b"mysql_native_password");
+        assert_eq!(a.capabilities_low & 1, 0, "MariaDB leaves CLIENT_MYSQL off");
+        assert_eq!(a.salt.len(), 20);
+        assert!(a.salt.iter().chain(&b.salt).all(|c| (33..=126).contains(c)), "printable, as a server's");
+        assert_ne!(a.salt, b.salt, "a fresh salt each time");
+        assert!(b.connection > a.connection, "the connections are counted");
+        // another server's version: MySQL's flags
+        let mysql = parse_greeting(&mysql_greeting("5.7.44-log"));
+        assert_eq!((mysql.version.as_slice(), mysql.capabilities_low & 1), (&b"5.7.44-log"[..], 1));
+    }
+
+    /// A login as a client writes it: the 4.1 protocol, then its name, its hash, its plugin.
+    fn mysql_login(user: &[u8]) -> Vec<u8> {
+        let mut body = 0x0003_a685u32.to_le_bytes().to_vec(); // includes CLIENT_PROTOCOL_41
+        body.extend_from_slice(&0x0100_0000u32.to_le_bytes());
+        body.push(45);
+        body.extend_from_slice(&[0; 23]);
+        body.extend_from_slice(user);
+        body.push(0);
+        body.push(20);
+        body.extend_from_slice(&[0xab; 20]);
+        body.extend_from_slice(b"mysql_native_password\0");
+        let mut packet = (body.len() as u32).to_le_bytes()[..3].to_vec();
+        packet.push(1);
+        packet.extend_from_slice(&body);
+        packet
+    }
+
+    #[test]
+    fn a_mysql_login_is_shown_by_its_account() {
+        let login = mysql_login(b"root");
+        assert!(
+            describe(&login, Some(Prompts::Mysql)).starts_with(&format!(
+                "answered the mysql greeting with a login as \"root\" ({} bytes): \"root\\x00\\x14\\xab",
+                login.len()
+            )),
+            "{}",
+            describe(&login, Some(Prompts::Mysql))
+        );
+        // what a stranger chose can't act on a terminal or a report
+        let odd = describe(&mysql_login(b"\x1b]52;c;x\x07\"root"), Some(Prompts::Mysql));
+        assert!(odd.contains("a login as \"\\x1b]52;c;x\\x07\\\"root\"") && odd.chars().all(|c| !c.is_control()), "{odd}");
+        // a capture that ends inside the name still has what arrived
+        assert!(describe(&mysql_login(b"administrator")[..40], Some(Prompts::Mysql)).contains("a login as \"admi\""));
+        // not a login: the plain form, named when it is another protocol's opening
+        assert_eq!(describe(b"\r\n", Some(Prompts::Mysql)), "answered the mysql greeting with 2 bytes: \"\\r\\n\"");
+        assert!(describe(b"\x16\x03\x01\x02\x00\x01\x00\x01\xfc", Some(Prompts::Mysql))
+            .starts_with("answered the mysql greeting with a TLS client hello"));
+        assert_eq!(mysql_login_user(&mysql_login(b"root")[..36]), None, "the name hasn't arrived");
+        let mut old = mysql_login(b"root");
+        old[5] &= !0x02;
+        assert_eq!(mysql_login_user(&old), None, "not the 4.1 protocol: the name is elsewhere");
+        assert_eq!(describe(b"", Some(Prompts::Mysql)), "sent nothing to the mysql greeting");
+    }
+
+    /// Needs to bind 127.0.0.1 too.
+    #[test]
+    fn a_mysql_login_ends_the_conversation_at_its_packets_end() {
+        let port = free_port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        assert!(
+            start(&[port], 512, &prompting(port, Prompts::Mysql), move |h| tx.send(h).is_ok(), Arc::new(AtomicBool::new(false))).is_empty()
+        );
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let mut buf = [0u8; 256];
+        let n = s.read(&mut buf).unwrap();
+        assert_eq!(parse_greeting(&buf[..n]).version, Prompts::Mysql.default_banner().as_bytes());
+        // the login in two pieces, and a command behind it that is no part of it
+        let login = mysql_login(b"root");
+        let started = Instant::now();
+        s.write_all(&login[..20]).unwrap();
+        thread::sleep(Duration::from_millis(50));
+        s.write_all(&login[20..]).unwrap();
+        assert_eq!(s.read(&mut buf).unwrap_or(0), 0, "closed after the login");
+        assert!(started.elapsed() < Duration::from_secs(5), "not held to the deadline: {:?}", started.elapsed());
+        let hit = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!((hit.sent.as_slice(), hit.prompts), (login.as_slice(), Some(Prompts::Mysql)));
+    }
+
+    /// Needs to bind 127.0.0.1 too.
+    #[test]
+    fn the_vnc_banner_is_sent_and_the_clients_version_kept() {
+        let port = free_port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        assert!(
+            start(&[port], 64, &prompting(port, Prompts::Vnc), move |h| tx.send(h).is_ok(), Arc::new(AtomicBool::new(false))).is_empty()
+        );
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let mut buf = [0u8; 64];
+        let n = s.read(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"RFB 003.008\n", "the 12 bytes clients and scanners insist on");
+        s.write_all(b"RFB 003.008\n").unwrap();
+        assert_eq!(s.read(&mut buf).unwrap_or(0), 0, "closed after the client's version");
+        let hit = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!((hit.sent.as_slice(), hit.prompts), (&b"RFB 003.008\n"[..], Some(Prompts::Vnc)));
+        assert_eq!(describe(&hit.sent, hit.prompts), "answered the vnc banner with 12 bytes: \"RFB 003.008\\n\"");
+        assert_eq!(describe(b"", Some(Prompts::Vnc)), "sent nothing to the vnc banner");
+    }
+
+    /// Needs to bind 127.0.0.1 too.
+    #[test]
+    fn ftp_refuses_what_comes_before_a_login() {
+        let port = free_port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        assert!(
+            start(&[port], 64, &prompting(port, Prompts::Ftp), move |h| tx.send(h).is_ok(), Arc::new(AtomicBool::new(false))).is_empty()
+        );
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let mut buf = [0u8; 64];
+        let n = s.read(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"220 (vsFTPd 3.0.3)\r\n");
+        // both lines in one packet, as seen on the honeypot node
+        s.write_all(b"AUTH TLS\r\nQUIT\r\n").unwrap();
+        let n = s.read(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"530 Please login with USER and PASS.\r\n");
+        assert_eq!(s.read(&mut buf).unwrap_or(0), 0);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap().sent, b"AUTH TLS\r\nQUIT\r\n");
+        // a login still gets its password prompt, in any case
+        for user in [&b"USER root\r\n"[..], b"user root\r\n"] {
+            assert_eq!(Prompts::Ftp.reply_to(b"331 Please specify the password.\r\n", user), b"331 Please specify the password.\r\n");
+        }
+        assert_eq!(Prompts::Ftp.reply_to(b"220 x\r\n", b""), b"220 x\r\n", "the greeting comes first");
+    }
+
+    /// Needs to bind 127.0.0.1 too.
+    #[test]
+    fn pop3_refuses_what_it_doesnt_know_and_takes_a_login() {
+        let run = |sends: &[&[u8]]| {
+            let port = free_port();
+            let (tx, rx) = std::sync::mpsc::channel();
+            assert!(start(&[port], 64, &prompting(port, Prompts::Pop3), move |h| tx.send(h).is_ok(), Arc::new(AtomicBool::new(false)))
+                .is_empty());
+            let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            let mut heard = Vec::new();
+            for said in sends {
+                let mut buf = [0u8; 128];
+                let n = s.read(&mut buf).unwrap();
+                heard.push(String::from_utf8_lossy(&buf[..n]).into_owned());
+                s.write_all(said).unwrap();
+            }
+            if sends.len() == 1 {
+                let mut buf = [0u8; 128];
+                let n = s.read(&mut buf).unwrap();
+                heard.push(String::from_utf8_lossy(&buf[..n]).into_owned());
+            }
+            drop(s);
+            (heard, rx.recv_timeout(Duration::from_secs(5)).unwrap())
+        };
+        // what fingerprintx does: the greeting must start +OK, the bogus command's answer -ERR
+        let (heard, hit) = run(&[b"Not a command \r\n"]);
+        assert!(heard[0].starts_with("+OK"), "{heard:?}");
+        assert_eq!(heard[1], "-ERR Unknown command.\r\n");
+        assert_eq!(hit.sent, b"Not a command \r\n");
+        // a login still comes out whole, in any case
+        for user in [&b"USER root\r\n"[..], b"user root\r\n"] {
+            let (heard, hit) = run(&[user, b"PASS 1234\r\n"]);
+            assert_eq!(heard[1], "+OK\r\n", "{heard:?}");
+            assert_eq!(hit.sent, [user, b"PASS 1234\r\n"].concat());
+        }
+        // only the first word counts, and only for POP3
+        assert_eq!(Prompts::Pop3.reply_to(b"+OK\r\n", b"USERNAME x\r\n"), b"-ERR Unknown command.\r\n");
+        assert_eq!(Prompts::Pop3.reply_to(b"+OK Dovecot\r\n", b""), b"+OK Dovecot\r\n", "the greeting comes first");
+        assert_eq!(Prompts::Smtp.reply_to(b"250 mail\r\n", b"Not a command\r\n"), b"250 mail\r\n");
     }
 
     /// Needs to bind 127.0.0.1 too.

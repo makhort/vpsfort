@@ -483,12 +483,39 @@ export function banPlace(message) {
   return inner.endsWith(")") ? { place: "", network: inner } : { place: inner, network: "" };
 }
 
+// When a hit was: the time its evidence line starts with (`11-09 01:07:00`, UTC, no year),
+// which is hours before the ban that lists it when a network ban gathers its members' hits.
+// `ts`, the ban's, gives the year; a line more than a day "after" the ban is from the December
+// before a January ban. A line without a time is the ban's.
+export function hitTime(line, ts) {
+  const m = /^(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d) /.exec(line);
+  if (!m) return ts;
+  const at = (year) => Date.UTC(year, m[1] - 1, m[2], m[3], m[4], m[5]) * 1000;
+  const year = new Date(ts / 1000).getUTCFullYear();
+  return at(year) > ts + 86400e6 ? at(year - 1) : at(year);
+}
+
+// What a client that spoke another protocol to a decoy site's web port sent, by how the web
+// server's log escapes the start of it (nginx in capitals, Apache in small letters). The
+// bytes stay; this says what they are, as the honeypot ports' lines do.
+const WEB_PORT_BYTES = [
+  [/^"\\x16\\x03\\x0[0-3]/i, "a TLS client hello"],
+  [/^"\\x12\\x01\\x00/i, "an MS SQL (TDS) pre-login"],
+  [/^"\\x00\\x0e8/i, "an OpenVPN client reset"],
+];
+
+function decoySent(request) {
+  const named = WEB_PORT_BYTES.find(([bytes]) => bytes.test(request));
+  return named ? `sent ${named[1]}: ${request}` : request;
+}
+
 // The decisions whose evidence came from a honeypot port or the decoy site, one row per
 // evidence line, with the scanner's address, the port and what it sent. A ban the peers took
 // over carries the same evidence on each of them: one row, the deciding node's (its own row
 // when there is one, else a copy put under the origin's name), so the hits are counted and
 // filtered by the node that caught them. The same hit from the log and from the latest
-// decisions is one row too.
+// decisions is one row too, and so is a hit listed by the address's ban and again by the
+// network ban that followed, whose line names the member.
 export function trapHits(actions, nodes) {
   const idOf = new Map((nodes || []).map((n) => [n.name, n.id]));
   const rows = new Map();
@@ -501,10 +528,10 @@ export function trapHits(actions, nodes) {
       const m = TRAP_LINE.exec(l);
       if (!m) continue;
       const addr = m[1] || a.target;
-      const key = `${node}:${addr}:${l}`;
+      const key = `${node}:${addr}:${m[1] ? l.replace(` ${m[1]} `, " ") : l}`;
       const have = rows.get(key);
       if (have && (!have.copy || copy)) continue;
-      rows.set(key, { ...a, ...banPlace(a.message), node, node_id, copy, addr, port: m[2] || "web", sent: m[3] || m[4] || "not recorded", line: l, key });
+      rows.set(key, { ...a, ...banPlace(a.message), node, node_id, copy, addr, port: m[2] || "web", sent: m[3] || (m[4] && decoySent(m[4])) || "not recorded", hit_ts: hitTime(l, a.ts), line: l, key });
     }
   }
   return [...rows.values()];

@@ -66,8 +66,8 @@ honeypot = [
 # Bytes read from each honeypot connection (up to 3 seconds) before it is closed; at most 4096.
 honeypot_capture = 512
 # The ports whose clients wait for the server to speak first show a real server's lines and
-# keep the replies (a Telnet or FTP login, an SMTP AUTH, an SSH client's own banner).
-honeypot_prompts = { "23/tcp" = "telnet", "2323/tcp" = "telnet", "21/tcp" = "ftp", "22/tcp" = "ssh", "2222/tcp" = "ssh", "25/tcp" = "smtp", "110/tcp" = "pop3", "143/tcp" = "imap" }
+# keep the replies (a Telnet or FTP login, an SMTP AUTH, an SSH or VNC client's own banner, a MySQL login).
+honeypot_prompts = { "23/tcp" = "telnet", "2323/tcp" = "telnet", "21/tcp" = "ftp", "22/tcp" = "ssh", "2222/tcp" = "ssh", "25/tcp" = "smtp", "587/tcp" = "smtp", "110/tcp" = "pop3", "143/tcp" = "imap", "3306/tcp" = "mysql", "5900/tcp" = "vnc", "5901/tcp" = "vnc" }
 # The greetings are real Debian packages' lines unless set here (the software and version each
 # port is to pass for). Set ssh to what the sshd on this host's real port sends, so a scanner
 # meets one sshd, not two: `nc -w 2 <this host> <ssh port>` prints it.

@@ -3,6 +3,14 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.6.6 - 2026-11-09
+
+The Honeypots tab counts each hit once, at its own time, and names what reached a decoy site in another protocol.
+
+- The Honeypots tab counts a hit once when an address's ban and the network ban that followed both list it.
+- Its Time column says when the hit was, not when the ban listing it was taken: a network ban gathers hits from hours before. A hit older than the period chosen is left out.
+- A decoy site's rows name what a client sent when it spoke another protocol to a web port (a TLS client hello, an MS SQL pre-login, an OpenVPN client reset), before the bytes the web server logged.
+
 ## 0.6.5 - 2026-11-09
 
 Where the honeypots' visitors come from.

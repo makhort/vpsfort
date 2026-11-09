@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   abuseRows, abuseText, abuseSubject, mailto, parseRdap, plainEmail, csv, linkify, parseHash, queryFor, applyQuery,
-  drift, niceMax, duration, mergePlaces, reportedSources, brief, browserName, groupAttention, reoffended, viewTitle, mapMarkers, trapHits, banPlace,
+  drift, niceMax, duration, mergePlaces, reportedSources, brief, browserName, groupAttention, reoffended, viewTitle, mapMarkers, trapHits, banPlace, hitTime,
 } from "../core.js";
 
 const T = 1793000000000000; // 2026-10-26 07:33 UTC (vpsfort's microseconds)
@@ -282,6 +282,41 @@ test("honeypot hits: one row each, under the node that caught it", () => {
   // a line from before the capture existed stops after the port
   rows = trapHits([ban("trap", "2", "192.0.2.5", ["10-30 12:47:24 connected to honeypot TCP/23"])], nodes);
   assert.deepEqual(rows.map((r) => [r.port, r.sent]), [["TCP/23", "not recorded"]]);
+});
+
+test("honeypot hits: listed by two bans, at their own time, and named on a web port", () => {
+  const nodes = [{ name: "trap", id: "2" }];
+  const utc = (...a) => Date.UTC(...a) * 1000;
+  const later = utc(2026, 10, 9, 13, 6, 49);
+  const ban = (target, ts, evidence) => ({ kind: "ban", ts, node: "trap", node_id: "2", target, message: `ban ${target} for 14d`, evidence });
+
+  // the address's own ban and the network ban after it list the same hit: one row
+  const own = "11-09 11:05:58 connected to honeypot TCP/23, sent nothing";
+  const member = "11-09 11:05:58 192.0.2.9 connected to honeypot TCP/23, sent nothing";
+  let rows = trapHits([ban("192.0.2.0/24", later, [member]), ban("192.0.2.9", later - 2e6, [own])], nodes);
+  assert.deepEqual(rows.map((r) => [r.addr, r.target, r.port]), [["192.0.2.9", "192.0.2.0/24", "TCP/23"]]);
+  // the network's other members, and the same address at another time, are hits of their own
+  rows = trapHits([ban("192.0.2.0/24", later, [member, member.replace("192.0.2.9", "192.0.2.8"), member.replace("11:05:58", "11:06:58")])], nodes);
+  assert.equal(rows.length, 3);
+  const site = "11-09 11:05:58 192.0.2.7 decoy_request: \"GET / HTTP/1.1\" 404 118 \"-\" \"x\"";
+  rows = trapHits([ban("192.0.2.0/24", later, [site]), ban("192.0.2.7", later, [site.replace(" 192.0.2.7", "")])], nodes);
+  assert.equal(rows.length, 1, "a decoy site's hit too");
+
+  // the row says when the hit was, and the ban keeps its own time
+  rows = trapHits([ban("192.0.2.0/24", later, [member])], nodes);
+  assert.deepEqual([rows[0].hit_ts, rows[0].ts], [utc(2026, 10, 9, 11, 5, 58), later]);
+  assert.equal(hitTime("12-31 23:59:58 connected to honeypot TCP/23, sent nothing", utc(2027, 0, 1, 0, 0, 2)), utc(2026, 11, 31, 23, 59, 58), "the year before a January ban");
+  assert.equal(hitTime("connected to honeypot TCP/23, sent nothing", later), later, "no time: the ban's");
+
+  // what a web server's log escapes is named, in capitals or not; the bytes stay; a request isn't touched
+  const sent = (request) => trapHits([ban("192.0.2.6", later, [`11-09 11:05:58 decoy_request: ${request}`])], nodes)[0].sent;
+  assert.equal(sent('"\\x16\\x03\\x01\\x00\\xEE\\x01" 400 157 "-" "-"'), 'sent a TLS client hello: "\\x16\\x03\\x01\\x00\\xEE\\x01" 400 157 "-" "-"');
+  assert.match(sent('"\\x16\\x03\\x00\\x00i\\x01" 400 157 "-" "-"'), /^sent a TLS client hello: /);
+  assert.match(sent('"\\x12\\x01\\x00/\\x00" 400 150 "-" "-"'), /^sent an MS SQL \(TDS\) pre-login: /);
+  assert.match(sent('"\\x00\\x0E8^\\x8B" 400 150 "-" "-"'), /^sent an OpenVPN client reset: /);
+  assert.match(sent('"\\x00\\x0e8^\\x8b" 400 150 "-" "-"'), /^sent an OpenVPN client reset: /);
+  assert.equal(sent('"GET / HTTP/1.1" 404 118 "-" "x"'), '"GET / HTTP/1.1" 404 118 "-" "x"');
+  assert.equal(sent('"\\x01\\x02" 400 150 "-" "-"'), '"\\x01\\x02" 400 150 "-" "-"', "bytes it doesn't know stay as they are");
 });
 
 test("a ban's place and network, from its message", () => {

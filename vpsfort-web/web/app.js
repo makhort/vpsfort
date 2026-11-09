@@ -1287,7 +1287,7 @@ import {
     const picked = (p) => (p === "web" ? f.kind === "web" : f.q.trim() === p);
     const body = h("section", { class: "card" });
     const cols = [
-      { label: "Time", sort: (r) => r.ts, cell: (r) => timeCell(r.ts), csv: (r) => utc(r.ts) },
+      { label: "Time", sort: (r) => r.hit_ts, cell: (r) => timeCell(r.hit_ts), csv: (r) => utc(r.hit_ts) },
       { label: "Node", sort: (r) => r.node, cell: (r) => nodeChip(r.node, r.node_id) },
       { label: "Address", sort: (r) => r.addr, cell: (r) => addrLink(r.addr), csv: (r) => r.addr },
       { label: "Place", sort: (r) => r.place, cell: (r) => r.place },
@@ -1316,7 +1316,7 @@ import {
         const log = state.honeypots[f.window] || { loading: true };
         // the logs, asked every minute, and the latest decisions, which come with every refresh
         const since = Date.now() * 1000 - HONEYPOT_WINDOWS[f.window];
-        const all = trapHits([...((log.data && log.data.hits) || []), ...d.actions.filter((a) => a.ts >= since)], d.nodes);
+        const all = trapHits([...((log.data && log.data.hits) || []), ...d.actions.filter((a) => a.ts >= since)], d.nodes).filter((r) => r.hit_ts >= since);
         // a port typed whole ("23", "TCP/23") is that port, not every port it is a prefix of
         const portQ = /^(?:tcp\/)?(\d+)$/i.exec((f.q || "").trim());
         const hit = (r) => (portQ ? r.port === `TCP/${portQ[1]}` : matches(f.q, r.addr, r.target, r.port, r.place, r.network, r.sent));

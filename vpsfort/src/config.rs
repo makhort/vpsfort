@@ -339,16 +339,17 @@ pub struct PortsCfg {
     /// Honeypot ports that show a server's fixed prompts and read the reply to each, so
     /// clients that wait for the server (Telnet bots, FTP and mail scanners) hand over the
     /// login they try: `{ "2323/tcp" = "telnet", "21/tcp" = "ftp", "25/tcp" = "smtp" }`
-    /// (also `pop3`, `imap`, and `ssh`: the identification line alone, which brings out the
-    /// client's). Nothing the client sends is parsed or answered. Off by
-    /// default: for dedicated honeypot nodes.
+    /// (also `pop3`, `imap`, `ssh` and `vnc`: the identification line alone, which brings out
+    /// the client's, and `mysql`: a server's first packet, which brings out its login).
+    /// Nothing the client sends changes what goes out, but for the first word the second
+    /// line of POP3 and FTP goes by. Off by default: for dedicated honeypot nodes.
     pub honeypot_prompts: BTreeMap<String, crate::honeypot::Prompts>,
     /// The greeting each prompted protocol opens with, by default a real server's as its
-    /// Debian package writes it (vsftpd, Postfix, Dovecot, OpenSSH; Debian's issue line
-    /// for Telnet): `{ ssh = "SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.11", ftp = "220 ProFTPD
-    /// Server (Debian)" }` names others, for the software and version the port is to pass
-    /// for. Set `ssh` to what the sshd on this host's real port sends (`nc -w 2 host port`),
-    /// so a scanner meets one sshd, not two.
+    /// Debian package writes it (vsftpd, Postfix, Dovecot, OpenSSH, MariaDB; Debian's issue
+    /// line for Telnet; the usual `RFB 003.008` for VNC): `{ ssh = "SSH-2.0-OpenSSH_9.6p1
+    /// Ubuntu-3ubuntu13.11", ftp = "220 ProFTPD Server (Debian)" }` names others, for the
+    /// software and version the port is to pass for. Set `ssh` to what the sshd on this
+    /// host's real port sends (`nc -w 2 host port`), so a scanner meets one sshd, not two.
     pub honeypot_banners: BTreeMap<crate::honeypot::Prompts, String>,
 }
 
