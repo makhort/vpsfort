@@ -3,6 +3,12 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.7.5 - 2026-11-09
+
+A fix found on the honeypot node's peers.
+
+- Evidence shared with the peers and quoted in the abuse report keeps a honeypot's captured bytes: a word holding an `@` is withheld as an account only when it looks like one (`alice@example.org`), not when it is a quoted capture, whose `\xfeSMB@` turned a whole SMB2 negotiate into `[account]` on the peers.
+
 ## 0.7.4 - 2026-11-09
 
 Fixes found on the Fedora node and the honeypot node.

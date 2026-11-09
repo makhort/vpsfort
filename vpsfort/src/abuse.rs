@@ -167,14 +167,28 @@ pub fn sanitize(text: &str) -> Option<String> {
         "failed Nextcloud login (account name withheld)".to_string()
     } else if text.starts_with("registered account ") {
         "registered an account".to_string()
-    } else if let Some(c) = cut(text, " (+") {
-        c // never show internal points
+    } else if let Some(c) = cut(text, " (+").filter(|_| {
+        text.ends_with(')') && text.rsplit(" (+").next().is_some_and(|p| p[..p.len() - 1].bytes().all(|b| b.is_ascii_digit() || b == b'.'))
+    }) {
+        c // never show internal points ("3x ssh_invalid_user (+60)"); a user agent's "(+https://..." isn't one
     } else {
         text.to_string()
     };
     // Anything still looking like an account or e-mail address.
-    let t: Vec<String> = t.split(' ').map(|w| if w.contains('@') { "[account]".to_string() } else { w.to_string() }).collect();
+    let t: Vec<String> = t.split(' ').map(|w| if looks_like_account(w) { "[account]".to_string() } else { w.to_string() }).collect();
     Some(t.join(" ").chars().filter(|c| !c.is_control()).take(300).collect())
+}
+
+/// A word that is an account or e-mail address (`alice@example.org`, with punctuation
+/// around it), not one that merely holds an `@`: a honeypot's captured bytes
+/// (`"\x00\x00\x00\xae\xfeSMB@\x00..."`) are evidence, and they stay.
+fn looks_like_account(word: &str) -> bool {
+    let Some((local, domain)) = word.split_once('@') else { return false };
+    !local.is_empty()
+        && !domain.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '-' | '_' | '+' | ',' | ':' | ';' | '(' | ')' | '[' | ']'))
 }
 
 /// `10-12 14:03:11 text` with the year of the ban it belongs to (December lines in a
@@ -976,7 +990,17 @@ mod tests {
         assert!(!sanitize("nextcloud login failed for bob").unwrap().contains("bob"));
         assert_eq!(sanitize("registered account eve@example.org").unwrap(), "registered an account");
         assert_eq!(sanitize("auth failed: user x@example.org unknown").unwrap(), "auth failed: user [account] unknown");
+        assert_eq!(sanitize("mail from (bob@example.org), rejected").unwrap(), "mail from [account] rejected");
+        // a honeypot's captured bytes hold an '@' (SMB2's header, a user agent's URL): not an account
+        let smb =
+            r#"connected to honeypot TCP/445, sent an SMB2 negotiate (108 bytes): "\x00\x00\x00h\xfeSMB@\x00\x00\x00\x00\x00\x00\x00""#;
+        assert_eq!(sanitize(smb).unwrap(), smb);
+        assert_eq!(shareable(&format!("11-09 09:51:54 {smb}")).unwrap(), format!("11-09 09:51:54 {smb}"));
+        let ua = r#"sent HTTP request "GET / HTTP/1.1" with user agent "Bot/1.0 (+https://example.org/bot@info)" (90 bytes)"#;
+        assert_eq!(sanitize(ua).unwrap(), ua);
         assert_eq!(sanitize("peer vpn: 3x ssh_invalid_user (+60)"), None);
+        assert_eq!(sanitize("3x ssh_invalid_user (+60)").unwrap(), "3x ssh_invalid_user", "points are cut");
+        assert_eq!(sanitize("score (+12.5)").unwrap(), "score");
         assert_eq!(sanitize("tripwire block TCP/23").unwrap(), "tripwire block TCP/23");
         // network-ban lines start with the member address
         assert_eq!(sanitize("192.0.2.9 failed password for alice").unwrap(), "192.0.2.9 failed password login (account name withheld)");

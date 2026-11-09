@@ -1249,25 +1249,33 @@ import {
   // / HTTP/1.1" 404 118 "-" "zgrab/0.x"`.
   const TRAP_LINE = /^(?:\d\d-\d\d \d\d:\d\d:\d\d )?(?:connected to honeypot (TCP\/\d+), (.*)|decoy_request(?:_json)?: (.*))$/;
 
+  // A ban a node took over from a peer: `ban 203.0.113.9 [...] for 14d (from peer honeypot1): ...`.
+  const FROM_PEER = /\(from peer ([^)]+)\)/;
+
   // The nodes' decisions whose evidence came from a honeypot port or the decoy site, one row
   // per evidence line, with the scanner's address, the port and what it sent, so none of
-  // them needs its address page opened. A ban a peer took over carries the same evidence:
-  // the origin's row is kept, the copies are not.
-  function trapHits(actions) {
-    const seen = new Set();
-    const out = [];
-    const sorted = [...actions].sort((a, b) => (a.origin ? 1 : 0) - (b.origin ? 1 : 0));
-    for (const a of sorted) {
+  // them needs its address page opened. A ban the peers took over carries the same evidence
+  // on each of them: one row, the deciding node's (its own row when the latest decisions
+  // still hold it, else a copy put under the origin's name), so the hits are counted and
+  // filtered by the node that caught them.
+  function trapHits(actions, nodes) {
+    const idOf = new Map((nodes || []).map((n) => [n.name, n.id]));
+    const rows = new Map();
+    for (const a of actions) {
+      const peer = FROM_PEER.exec(a.message || "");
+      const copy = Boolean(peer) || a.category === "from peers";
+      const node = peer ? peer[1] : a.node;
+      const node_id = peer ? (idOf.has(peer[1]) ? idOf.get(peer[1]) : peer[1]) : a.node_id;
       for (const l of a.evidence || []) {
         const m = TRAP_LINE.exec(l);
         if (!m) continue;
         const key = `${a.target}:${l}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push({ ...a, port: m[1] || "web", sent: m[2] || m[3], line: l, key: `${a.node_id}:${a.ts}:${l}` });
+        const have = rows.get(key);
+        if (have && (!have.copy || copy)) continue;
+        rows.set(key, { ...a, node, node_id, copy, port: m[1] || "web", sent: m[2] || m[3], line: l, key: `${node_id}:${a.target}:${l}` });
       }
     }
-    return out;
+    return [...rows.values()];
   }
 
   function viewHoneypots(root) {
@@ -1283,7 +1291,7 @@ import {
       { label: "Address", sort: (r) => r.target, cell: (r) => addrLink(r.target), csv: (r) => r.target },
       { label: "Port", cls: "nowrap", sort: (r) => (r.port === "web" ? 0 : Number(r.port.slice(4))), cell: (r) => (r.port === "web" ? "decoy site" : r.port) },
       { label: "What it sent", cls: "msg", cell: (r) => h("span", { class: "mono" }, r.sent), csv: (r) => r.sent },
-      { label: "Decision", cls: "nowrap", sort: (r) => r.kind, cell: (r) => (r.kind === "ban" && r.until ? `ban, ${left(r.until)} left` : r.kind), csv: (r) => r.kind },
+      { label: "Decision", cls: "nowrap", sort: (r) => r.kind, cell: (r) => (r.kind === "ban" && r.until ? `ban, ${left(r.until)}${ended(r) ? "" : " left"}` : r.kind), csv: (r) => r.kind },
     ];
     root.append(
       h("div", { class: "page-head" }, h("h1", null, "Honeypots"), h("span", { class: "sub" }, "what connected to the honeypot ports and the decoy sites, and what it sent")),
@@ -1299,7 +1307,7 @@ import {
         patch(nodeSel, nodeOptions(f.node));
         const d = state.data;
         if (!ready("actions")) return;
-        const all = trapHits(d.actions);
+        const all = trapHits(d.actions, d.nodes);
         const rows = all.filter((r) => (!f.node || r.node_id === f.node) && (!f.kind || (f.kind === "web") === (r.port === "web")) && matches(f.q, r.target, r.port, r.sent));
         const by = new Map();
         for (const r of all.filter((r) => !f.node || r.node_id === f.node)) by.set(r.port, (by.get(r.port) || 0) + 1);

@@ -3,6 +3,12 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.6.2 - 2026-11-09
+
+A fix checked in the simulator against the honeypot node's export.
+
+- The Honeypots tab puts each hit under the node that caught it. A ban the peers took over carries the honeypot's evidence on every node, and the tab kept whichever copy came first, so hits were counted under the peers and the honeypot node's own filter showed a few. The deciding node's row is kept; where only the peers' copies are among the latest decisions, the hit is shown under the origin's name. A ban whose end has passed reads "ban, ended 12m ago", not "... ago left".
+
 ## 0.6.1 - 2026-11-09
 
 A fix found on the console.
