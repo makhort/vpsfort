@@ -145,7 +145,12 @@ pub fn sanitize(text: &str) -> Option<String> {
         return None;
     }
     let cut = |s: &str, at: &str| s.find(at).map(|i| s[..i].to_string());
-    let t = if text.contains("canary account") {
+    // (at the line's start: a client's own text further in, a user agent or a path saying
+    // "canary account", doesn't choose what the report says about it)
+    let t = if text.starts_with(crate::event::CANARY_LOGIN)
+        || text.starts_with("registration of canary account")
+        || text.starts_with("login attempt on canary account")
+    {
         if text.starts_with(crate::event::CANARY_LOGIN) {
             "logged in to a decoy account (credentials that are never used legitimately)".to_string()
         } else if text.starts_with("registration of") {
@@ -998,6 +1003,9 @@ mod tests {
         assert_eq!(shareable(&format!("11-09 09:51:54 {smb}")).unwrap(), format!("11-09 09:51:54 {smb}"));
         let ua = r#"sent HTTP request "GET / HTTP/1.1" with user agent "Bot/1.0 (+https://example.org/bot@info)" (90 bytes)"#;
         assert_eq!(sanitize(ua).unwrap(), ua);
+        let rpc =
+            r#"sent HTTP request "POST / HTTP/1.1" calling "eth_accounts" for host "example.org:8545" without a user agent (143 bytes)"#;
+        assert_eq!(sanitize(rpc).unwrap(), rpc);
         assert_eq!(sanitize("peer vpn: 3x ssh_invalid_user (+60)"), None);
         assert_eq!(sanitize("3x ssh_invalid_user (+60)").unwrap(), "3x ssh_invalid_user", "points are cut");
         assert_eq!(sanitize("score (+12.5)").unwrap(), "score");

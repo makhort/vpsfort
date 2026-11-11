@@ -683,9 +683,40 @@ impl GeoDb {
         if !db.pinned.is_empty() {
             db.summary += &format!(", {} networks pinned by [geo] places", db.pinned.len());
         }
+        db.summary += &format!(", about {} MB in memory", db.approx_bytes() >> 20);
         Ok(db)
     }
 
+    /// About how much memory the loaded database takes.
+    pub fn approx_bytes(&self) -> usize {
+        use std::mem::size_of;
+        let ranges = self.loc4.v.capacity() * size_of::<(u32, u32, Loc)>()
+            + self.loc6.v.capacity() * size_of::<(u64, u64, Loc)>()
+            + self.as4.v.capacity() * size_of::<(u32, u32, AsVal)>()
+            + self.as6.v.capacity() * size_of::<(u64, u64, AsVal)>();
+        let names = self.orgs.iter().map(|o| o.capacity() + size_of::<String>()).sum::<usize>()
+            + self.locations.iter().map(|l| l.city.capacity() + size_of::<Location>()).sum::<usize>();
+        ranges + names
+    }
+
+    /// What to tell when the database takes more than half of the memory the service may
+    /// use (`limit`, bytes): a city or commercial database loads within `max_ranges`, but
+    /// what is left for everything else (the addresses tracked in a flood, the reports from
+    /// the actions log) is then too little, and the kernel ends the service.
+    pub fn size_warning(&self, limit: Option<u64>) -> Option<String> {
+        let (size, limit) = (self.approx_bytes() as u64, limit?);
+        (size > limit / 2).then(|| {
+            format!(
+                "the geo database takes about {} MB of the {} MB the service may use (MemoryMax): raise the limit \
+                 (systemctl edit vpsfort: [Service] MemoryMax=384M), or load less ([geo] max_ranges, a country and network database instead of a city one)",
+                size >> 20,
+                limit >> 20
+            )
+        })
+    }
+}
+
+impl GeoDb {
     /// Loads whichever of `<dir>/country.gz` and `<dir>/asn.gz` exist, each of at most
     /// `max_ranges` ranges.
     pub fn load(dir: &Path, max_ranges: usize) -> Result<GeoDb> {
@@ -1181,7 +1212,7 @@ fn advice(max_ranges: usize, limit: u64) -> Option<String> {
 
 /// The unit's `memory.max` (cgroup v2), found through /proc/self/cgroup; `None` when
 /// unlimited ("max") or unknown.
-fn cgroup_memory_max() -> Option<u64> {
+pub fn cgroup_memory_max() -> Option<u64> {
     let cgroup = std::fs::read_to_string("/proc/self/cgroup").ok()?;
     let path = cgroup.lines().find_map(|l| l.strip_prefix("0::"))?.trim();
     parse_limit(&std::fs::read_to_string(format!("/sys/fs/cgroup{path}/memory.max")).ok()?)
@@ -1659,5 +1690,19 @@ pub(crate) mod tests {
             let v4 = nets.iter().filter(|n| n.is_v4()).count();
             println!("{:<40} {v4:>7} IPv4 + {:>6} IPv6 networks in {:?}", cfg.describe(), nets.len() - v4, start.elapsed());
         }
+    }
+
+    #[test]
+    fn a_database_too_big_for_the_service_is_said() {
+        let mut db = GeoDb::default();
+        for i in 0..100_000u32 {
+            db.loc4.v.push((i * 256, i * 256 + 255, Loc::default()));
+        }
+        let size = db.approx_bytes() as u64;
+        assert!(size >= 100_000 * 8, "{size}");
+        assert_eq!(db.size_warning(None), None, "no limit: nothing to compare with");
+        assert_eq!(db.size_warning(Some(size * 4)), None);
+        let w = db.size_warning(Some(size + 1)).expect("more than half");
+        assert!(w.contains("MemoryMax") && w.contains("max_ranges"), "{w}");
     }
 }

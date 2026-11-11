@@ -164,8 +164,23 @@ fn summary(n: &Node, now: Micros) -> Value {
     out
 }
 
-/// What needs the admin's attention on one node: `(level, text)`.
+/// Problems listed per node at most: an admin reads a handful, and a node that sent a
+/// hundred thousand (one per certificate, peer or source it claims to have) would be the
+/// whole attention list, and its history.
+const MAX_PROBLEMS: usize = 60;
+
+/// What needs the admin's attention on one node: `(level, text)`, the texts cut and without
+/// control characters (parts of them are the node's own words).
 pub fn problems(n: &Node, now: Micros) -> Vec<(&'static str, String)> {
+    let mut out = all_problems(n, now);
+    out.truncate(MAX_PROBLEMS);
+    for (_, text) in &mut out {
+        *text = crate::abuse::clean(text, 300);
+    }
+    out
+}
+
+fn all_problems(n: &Node, now: Micros) -> Vec<(&'static str, String)> {
     let mut out = Vec::new();
     let since = |t: Option<Micros>| t.map(|t| format!(" since {}", crate::time::fmt_ts(t))).unwrap_or_default();
     match state(n) {

@@ -1,6 +1,6 @@
 [package]
 name = "vpsfort-web"
-version = "0.6.6"
+version = "0.7.0"
 edition = "2021"
 description = "Read-only web console for a vpsfort cluster: every node's bans, alerts and health on one HTTPS page, for one admin"
 license = "MIT"

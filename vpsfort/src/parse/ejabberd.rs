@@ -196,7 +196,7 @@ impl EjabberdParser {
                 }
             }
         } else if let Some(rest) = text.strip_prefix("The account ") {
-            // The account azerty@example.org was registered from IP address ::ffff:12.240.43.85
+            // The account azerty@example.org was registered from IP address ::ffff:12.242.43.85
             if let Some((jid, ip)) = rest.split_once(" was registered from IP address ") {
                 if let Some(ip) = parse_ip(ip.trim()) {
                     out.push(Event::new(ts, ip, Signal::XmppRegister).account(Some(jid)).detail(format!("registered account {jid}")));
@@ -318,19 +318,19 @@ mod tests {
     fn tls_failure_attributed_by_pid_not_by_previous_line() {
         let mut p = parser();
         let mut out = vec![];
-        p.feed(&rec(0, "2026-08-16 21:53:54.665 [info] (#PID<0.10.0>) Accepted connection [::ffff:13.236.40.218]:38436 -> [::ffff:11.242.39.236]:5223"), &mut out);
+        p.feed(&rec(0, "2026-08-16 21:53:54.665 [info] (#PID<0.10.0>) Accepted connection [::ffff:13.240.40.218]:38436 -> [::ffff:11.242.39.236]:5223"), &mut out);
         p.feed(
             &rec(
                 0,
-                "2026-08-16 21:53:54.666 [info] (#PID<0.11.0>) Accepted connection [::ffff:13.46.43.31]:1 -> [::ffff:11.242.39.236]:5223",
+                "2026-08-16 21:53:54.666 [info] (#PID<0.11.0>) Accepted connection [::ffff:13.48.43.31]:1 -> [::ffff:11.242.39.236]:5223",
             ),
             &mut out,
         );
         p.feed(&rec(1, "2026-08-16 21:53:54.700 [info] (tls|<0.10.0>) Failed to secure c2s connection: TLS failed: SSL_do_handshake failed: error:0A000102:SSL routines::unsupported protocol"), &mut out);
-        p.feed(&rec(1, "2026-08-16 21:53:55.000 [info] (tls|<0.11.0>) Accepted c2s SCRAM-SHA-512-PLUS authentication for user2@example.org by mnesia backend from ::ffff:13.46.43.31"), &mut out);
+        p.feed(&rec(1, "2026-08-16 21:53:55.000 [info] (tls|<0.11.0>) Accepted c2s SCRAM-SHA-512-PLUS authentication for user2@example.org by mnesia backend from ::ffff:13.48.43.31"), &mut out);
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].signal, Signal::XmppTlsFail);
-        assert_eq!(out[0].ip.to_string(), "13.236.40.218");
+        assert_eq!(out[0].ip.to_string(), "13.240.40.218");
         assert_eq!(out[0].detail, "TLS failed: unsupported protocol");
         assert_eq!(out[1].signal, Signal::XmppAuthOk);
         assert_eq!(out[1].account.as_deref(), Some("user2@example.org"));
@@ -348,8 +348,8 @@ mod tests {
     fn silent_client_connection_and_other_ports() {
         let mut p = parser();
         let mut out = vec![];
-        p.feed(&rec(0, "2026-08-21 22:17:26.048 [info] (#PID<0.2334.0>) Accepted connection [::ffff:13.35.253.221]:64606 -> [::ffff:11.242.39.236]:5222"), &mut out);
-        p.feed(&rec(0, "2026-08-21 22:17:27.481 [info] (#PID<0.2336.0>) Accepted connection [::ffff:13.35.253.221]:23136 -> [::ffff:11.242.39.236]:5269"), &mut out);
+        p.feed(&rec(0, "2026-08-21 22:17:26.048 [info] (#PID<0.2334.0>) Accepted connection [::ffff:13.37.253.221]:64606 -> [::ffff:11.242.39.236]:5222"), &mut out);
+        p.feed(&rec(0, "2026-08-21 22:17:27.481 [info] (#PID<0.2336.0>) Accepted connection [::ffff:13.37.253.221]:23136 -> [::ffff:11.242.39.236]:5269"), &mut out);
         p.feed(
             &rec(0, "2026-08-16 21:36:25.361 [info] (#PID<0.28907.0>) Accepted connection 11.145.111.110:50735 -> 11.242.39.236:5349"),
             &mut out,
@@ -374,7 +374,7 @@ mod tests {
         p.feed(&rec(0, "2026-08-16 21:35:11.121 [info] Closing inbound s2s connection ::ffff:11.184.26.161 -> example.org: Stream closed by local host: not well-formed (invalid token) (not-well-formed)"), &mut out);
         p.feed(&rec(0, "2026-08-16 21:35:11.121 [info] Closing inbound s2s connection ::ffff:5.5.5.5 -> example.org: Connection failed: connection closed"), &mut out);
         p.feed(
-            &rec(0, "2026-08-22 08:56:37.094 [warning] Cannot serve /opt/ejabberd/upload/x/y.jpg to ::ffff:12.202.11.41: No such file"),
+            &rec(0, "2026-08-22 08:56:37.094 [warning] Cannot serve /opt/ejabberd/upload/x/y.jpg to ::ffff:12.204.11.41: No such file"),
             &mut out,
         );
         assert_eq!(out.len(), 3);
@@ -391,7 +391,7 @@ mod tests {
         let mut out = vec![];
         p.feed(&rec(0, "2026-09-18 15:05:55.227 [warning] (tls|<0.15027.0>) Failed c2s HT-SHA-256-EXPR authentication for user5@example.org from ::ffff:12.67.62.53: Invalid username or password"), &mut out);
         p.feed(
-            &rec(0, "2026-09-13 22:36:29.090 [info] The account azerty@example.org was registered from IP address ::ffff:12.240.43.85"),
+            &rec(0, "2026-09-13 22:36:29.090 [info] The account azerty@example.org was registered from IP address ::ffff:12.242.43.85"),
             &mut out,
         );
         p.feed(

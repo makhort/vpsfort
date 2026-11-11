@@ -78,7 +78,9 @@ vpsfort bans an address that sends many of those).
   admin. `TOTP=off` leaves the passwords alone. **Or a passkey** (WebAuthn: a security key, the
   phone's, the browser's keychain), registered on the "Your account" page (up to 10 per admin,
   kept in `STATE_DIR/passkeys/<admin>.passkeys`, `vpsfort-web passkeys` and `remove-passkey` on the
-  server): the login page offers "Log in with a passkey" for an account that has one. A passkey that
+  server): the login page offers "Log in with a passkey" for an account that has one (so the page
+  tells anyone who asks whether a name is an admin with a passkey, and its credential ids, as
+  WebAuthn logins by name do; the passkey itself is still needed). A passkey that
   checked its holder (a fingerprint, a face, the key's PIN: the user-verification flag) is the login
   on its own, without the password or the code; one that was only touched (a security key without a
   PIN) stands in for the code beside the password, and the page says so. A password that is given
@@ -124,8 +126,8 @@ vpsfort bans an address that sends many of those).
 - **The page** is a few files compiled into the binary (`web/`: `app.js` the views, `dom.js`
   building and patching the page, `core.js` what it works out), no libraries, nothing from other
   hosts. `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; ...`,
-  no inline script, no framing, `no-store`; `connect-src` adds RDAP's servers (rdap.org and the
-  five registries) for the abuse-mailbox lookup below. Everything a node sends (log lines, account names, a
+  no inline script, no framing, `no-store`; `connect-src` adds RDAP's servers (rdap.org, the
+  five registries and Brazil's) for the abuse-mailbox lookup below. Everything a node sends (log lines, account names, a
   peer's notices) goes into the page as text (`textContent`), never as HTML.
 - **A small HTTP parser** of its own (`src/http.rs`): no chunked bodies, no proxy requests, no
   folded headers, one Host and one Content-Length, 16 KB of headers, 8 KB bodies; anything else is
@@ -190,6 +192,7 @@ On the console's node, also:
 6. The admin's login:
    ```bash
    /opt/vpsfort-web/vpsfort-web passwd        # asked twice, not shown; 12 characters at least
+   # (a changed password ends that admin's sessions at their next request)
    /opt/vpsfort-web/vpsfort-web totp-setup    # scan the QR code, or add the otpauth:// link
    ```
    It then asks for the code the app shows and writes the secret only when it matches: if the
@@ -292,10 +295,11 @@ before `switch` end with it (they are signed with the key).
   bans per minute over three hours, per node (also as a table); a card per node.
 - **Alerts, Activity** (every decision), **Bans** (per node, or one row per address with the
   nodes that ban it), **Honeypots** (what connected to the nodes' honeypot ports and decoy web
-  sites in the last 24 hours or 7 days, read from each node's actions log so a restart loses
+  sites in the last 3 hours, 24 hours or 7 days, read from each node's actions log so a restart loses
   nothing, and what it sent, one row per hit with the place, the network, the port and the
-  bytes or request in words, a count per port whose chips narrow the table to that port on a
-  click, filters for ports or decoy sites: the honeypot nodes' catch without opening each
+  bytes or request in words, chips per service type (SSH, Telnet, Mail, VNC and so on) and per
+  port that narrow the table on a click, the port chips folded to two rows until asked for,
+  filters for ports or decoy sites: the honeypot nodes' catch without opening each
   address), **Offenders** (scores, evidence, accounts with failed logins): filters,
   sorting, details on click, a column chooser (kept per browser), CSV and JSON. On Alerts and
   Activity, **Merge** folds the same alert or decision on several nodes (a peer's ban relayed to
@@ -383,8 +387,9 @@ before `switch` end with it (they are signed with the key).
   address may open shared pages 30 times a minute (429 beyond); a wrong, expired or hammering
   request is logged with the address first (`share link refused from …`), and vpsfort's
   `vpsfort_web_share` pattern bans an address that keeps trying. The link carries the address
-  and its expiry, signed with the web key (on a console without one, a key made at start: its
-  links end with a restart). The links made are listed on the account page (who made it, for
+  and its expiry, signed with a key of the console's own (`STATE_DIR/share.key`, made at the first
+  start; never the web key, which every node holds; without a `STATE_DIR` a key made at start: its
+  links end with a restart), and it must be among the links listed. The links made are listed on the account page (who made it, for
   which address, until when; in `STATE_DIR` across restarts), and any admin can **end one
   early** there: it is refused from then on. Making and ending one is logged.
 - **Re-offended:** a network marked mailed whose sources were banned again after the mark shows
@@ -509,7 +514,7 @@ node has that part (`[feeds]`, `[antivirus]`, ... switched on). Rules to start f
 | `/etc/systemd/system/vpsfort-web.service` | root 0644 | the unit |
 | `/run/vpsfort-console/console.sock` | root:vpsfort-web 0660 | vpsfort's console socket (vpsfort makes it) |
 | `/var/lib/vpsfort-web/passkeys/<admin>.passkeys` | vpsfort-web 0600 | the admins' passkeys: public keys, written by the console at registration (the directory of the passwords is root's, and the unit may write nowhere else). With `STATE_DIR=` empty they go beside the password file, which the console must then be able to write. A file beside the password file is still read while the state directory has none for that admin |
-| `/var/lib/vpsfort-web/` (`STATE_DIR`) | vpsfort-web 0700 | `attention-history.json`, `digests.json`, `marks.json`, `share-links.json`, `lockouts.json`, `sessions.json` (the cookies' digests only): the console's own state across restarts |
+| `/var/lib/vpsfort-web/` (`STATE_DIR`) | vpsfort-web 0700 | `attention-history.json`, `digests.json`, `marks.json`, `share-links.json`, `lockouts.json`, `sessions.json` (the cookies' digests only), `share.key` (0600, signs the share links): the console's own state across restarts |
 
 Logs: `journalctl -u vpsfort-web`.
 
@@ -523,9 +528,9 @@ architecture (`uname -m`) and check it:
 
 ```bash
 arch=x86_64-linux-musl     # the server's: aarch64-linux-musl (arm64), armv7-linux-musleabihf (32-bit ARM)
-gh release download vpsfort-web-v0.6.6 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
+gh release download vpsfort-web-v0.7.0 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
 sha256sum -c vpsfort-web-*-$arch.zip.sha256          # the download is intact (macOS: shasum -a 256 -c)
-gh attestation verify vpsfort-web-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-web-v0.6.6
+gh attestation verify vpsfort-web-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-web-v0.7.0
 ```
 
 Then on the server:
@@ -541,7 +546,7 @@ sudo ./install.sh rollback   # back to the previous version
 The same release has a package per architecture, for the distribution's package manager instead of `install.sh`: `vpsfort-web_<version>-1_<arch>.deb` (`amd64`, `arm64`, `armhf`; Debian, Ubuntu and their derivatives) `vpsfort-web-<version>-1.<arch>.rpm` (`x86_64`, `aarch64`, `armv7hl`; Fedora, RHEL and its rebuilds) and `vpsfort-web-<version>-r0.<arch>.apk` (`x86_64`, `aarch64`, `armv7`; Alpine, with OpenRC: below), each with its `.sha256` and `.sigstore.json`, downloaded and verified as the bundle above (`--pattern "*.deb*"`, `"*.rpm*"` or `"*.apk*"`). CI keeps them for every commit as workflow artifacts, and `scripts/package.sh` builds them locally (`cargo install cargo-deb cargo-generate-rpm --locked` once, and python3 for the `.apk`, which `scripts/apk.py` at the repository's root writes; none needs dpkg, rpm or apk-tools, so it runs on macOS too; `--target aarch64-unknown-linux-musl` or `armv7-unknown-linux-musleabihf` for the ARM ones). Or from the signed apt and dnf repository on GitHub Pages, once it is set up (the repository README, "Deployment"), where `apt upgrade` and `dnf upgrade` then bring new versions.
 
 ```bash
-sudo apt install ./vpsfort-web_0.6.6-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-web-0.6.6-1.x86_64.rpm
+sudo apt install ./vpsfort-web_0.7.0-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-web-0.7.0-1.x86_64.rpm
 sudoedit /opt/vpsfort-web/config.env                 # the first install put the template there; then the keys, password, codes ("Setup")
 sudo dpkg-reconfigure vpsfort-web                    # rpm: sudo dnf reinstall ./vpsfort-web-*.rpm  (step 7: owners, modes, the certificate)
 /opt/vpsfort-web/vpsfort-web check && sudo systemctl enable --now vpsfort-web

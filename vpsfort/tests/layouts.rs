@@ -36,7 +36,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const ATTACKER_SSH: &str = "11.152.77.233";
-const ATTACKER_XMPP: &str = "13.156.50.7";
+const ATTACKER_XMPP: &str = "13.158.50.7";
 const ATTACKER_VPN: &str = "11.254.63.115";
 const USER: &str = "bob@example.org";
 const ADMIN: &str = "admin@example.org";
@@ -56,7 +56,7 @@ fn xmpp_attack(ip: &str, jid: &str) -> Vec<String> {
     let ts = vpsfort::time::fmt_ts(vpsfort::time::now());
     let line = |msg: String| journal("ejabberd", "ejabberd.service", &format!("{ts}.000 {msg}"));
     let login =
-        line(format!("[info] (tls|<0.4000.0>) Accepted c2s SCRAM-SHA-256 authentication for {jid} by sql backend from ::ffff:13.46.43.31"));
+        line(format!("[info] (tls|<0.4000.0>) Accepted c2s SCRAM-SHA-256 authentication for {jid} by sql backend from ::ffff:13.48.43.31"));
     let failures = (1..=5).map(|i| {
         line(format!(
             "[warning] (tls|<0.{}.0>) Failed c2s SCRAM-SHA-256 authentication for {jid} from ::ffff:{ip}: Invalid username or password",
@@ -82,8 +82,22 @@ fn journal(ident: &str, unit: &str, msg: &str) -> String {
     e.to_string()
 }
 
+/// A port for a daemon's cluster listener: below the range the kernel takes ports from on its
+/// own (32768 up on Linux), and given to one test only. A port asked from the kernel
+/// (`bind` to port 0) is free only until it is closed again: before the daemon binds it,
+/// another test's outgoing connection or stand-in server could be handed the same one, and the
+/// daemon then starts without its listener.
 fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    use std::sync::atomic::{AtomicU16, Ordering};
+    static NEXT: AtomicU16 = AtomicU16::new(0);
+    // each run starts elsewhere, so two runs on one machine don't walk the same ports
+    let start = 20_000 + (std::process::id() % 100) as u16 * 100;
+    loop {
+        let port = start + NEXT.fetch_add(1, Ordering::Relaxed) % 2_000;
+        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
 }
 
 /// ejabberd's HTTP API (`/api/send_message`): records (to, body) and answers success.

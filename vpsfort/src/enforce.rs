@@ -52,6 +52,8 @@ pub struct Enforcer {
     ipset: PathBuf,
     /// conntrack-tools' conntrack: ends a banned address's open connections (firewalld, ufw).
     conntrack: PathBuf,
+    /// The control socket's directory, root's own: where firewalld's entry files are written.
+    socket_dir: Option<PathBuf>,
     /// iptables chain names: static rules, and bans with operator allows.
     chain: String,
     table: String,
@@ -595,6 +597,54 @@ pub fn nft_fill_script(table: &str, name: &str, nets: &[Net]) -> String {
     s
 }
 
+/// `setup` with its rate limits in the form newer nft takes (1.0.2 on kernel 5.15 and 1.1.3
+/// on 6.12 do): IPv6 sources counted by their /64, and each source's entry ending a while
+/// after its last connection (a minute for a rate per second, ten for one per minute; a
+/// rate per hour keeps the set's two hours). The sets hold 65,536 sources: with every entry
+/// kept for two hours, that many forged sources left the limit off for everyone new for two
+/// hours. None without such rules.
+pub fn limits_per_net(setup: &str) -> Option<String> {
+    const V4: &str = "{ ip saddr limit rate over";
+    const V6: &str = "{ ip6 saddr limit rate over";
+    if !setup.contains(V4) && !setup.contains(V6) {
+        return None;
+    }
+    let harden = |line: &str| {
+        let ends = if line.contains("/second ") {
+            " timeout 1m"
+        } else if line.contains("/minute ") {
+            " timeout 10m"
+        } else {
+            ""
+        };
+        line.replace(V4, &format!("{{ ip saddr{ends} limit rate over"))
+            .replace(V6, &format!("{{ ip6 saddr and ffff:ffff:ffff:ffff::{ends} limit rate over"))
+    };
+    Some(setup.split_inclusive('\n').map(harden).collect())
+}
+
+/// The sources of the deny rules vpsfort put into ufw, from `ufw status`: those whose
+/// comment begins with its name (`Anywhere  DENY  198.51.100.7  # vpsfort burst score ...`).
+pub fn ufw_own_rules(status: &str) -> std::collections::BTreeSet<Net> {
+    status
+        .lines()
+        .filter_map(|line| {
+            let (body, comment) = line.split_once(" # ")?;
+            if !comment.trim_start().starts_with("vpsfort") {
+                return None;
+            }
+            let words: Vec<&str> = body.split_whitespace().collect();
+            let at = words.iter().position(|w| *w == "DENY")?;
+            let from = words.get(at + 1).filter(|w| **w != "IN").or_else(|| words.get(at + 2))?;
+            from.parse::<Net>().ok()
+        })
+        .collect()
+}
+
+/// Rules removed or added in one pass of the ufw backend's check at start (ufw takes a
+/// second for each).
+const UFW_RECONCILE: usize = 200;
+
 pub fn nft_allow_script(table: &str, net: &Net, timeout_secs: i64) -> String {
     let set = if net.is_v4() { "oper4" } else { "oper6" };
     format!("add element inet {table} {set} {{ {net} timeout {}s }}\n", timeout_secs.max(1))
@@ -615,6 +665,14 @@ pub fn nft_legacy_script(table: &str) -> String {
     format!("flush chain inet {table} pre\ndelete chain inet {table} pre\n")
 }
 
+/// Whether nft's complaint about a `delete element` says the element isn't there. The ban
+/// sets hold intervals, where nft looks the element up itself and says "element does not
+/// exist" (its newer versions); older ones, and sets without intervals, pass on the kernel's
+/// ENOENT, "No such file or directory". `tests/real_nft.rs` asks the installed nft.
+fn nft_element_gone(complaint: &str) -> bool {
+    complaint.contains("element does not exist") || complaint.contains("No such file or directory")
+}
+
 impl Enforcer {
     pub fn shadow() -> Self {
         Enforcer {
@@ -627,6 +685,7 @@ impl Enforcer {
             firewall_cmd: PathBuf::new(),
             ipset: PathBuf::new(),
             conntrack: PathBuf::new(),
+            socket_dir: None,
             chain: String::new(),
             table: String::new(),
             setup: String::new(),
@@ -653,6 +712,7 @@ impl Enforcer {
             firewall_cmd: cfg.enforce.firewall_cmd.clone(),
             ipset: cfg.enforce.ipset.clone(),
             conntrack: cfg.enforce.conntrack.clone(),
+            socket_dir: cfg.socket.parent().map(std::path::Path::to_path_buf),
             chain: cfg.enforce.iptables_chain.clone(),
             table: cfg.enforce.nft_table.clone(),
             setup: String::new(),
@@ -767,7 +827,19 @@ impl Enforcer {
 
     /// Runs the setup (it flushes the `bans` chain), then the kernel tripwire rules again.
     fn run_setup(&self) -> Result<()> {
-        self.run_nft(&self.setup)?;
+        // `[[ratelimit]]` counts IPv6 sources per /64 (one customer's network: counted per
+        // address, a host with a /64 has a new allowance with every address it picks), and
+        // its entries end minutes after a source's last connection. The same ruleset with
+        // the plain rules follows if this nft doesn't take the first.
+        match limits_per_net(&self.setup) {
+            Some(per_net) => {
+                if let Err(e) = self.run_nft(&per_net) {
+                    eprintln!("vpsfort: rate limits per IPv6 /64 with entries that end: not taken by nft ({e:#}); the plain rules instead");
+                    self.run_nft(&self.setup)?;
+                }
+            }
+            None => self.run_nft(&self.setup)?,
+        }
         if let Some(t) = &self.trip {
             if let Err(e) = self.run_nft(&nft_trip_rules_script(&self.table, t)) {
                 eprintln!("vpsfort: kernel tripwire rules: {e:#}");
@@ -1003,15 +1075,24 @@ impl Enforcer {
         Ok(())
     }
 
+    /// Where firewalld's entry files are written: the control socket's directory, which is
+    /// root's alone on every layout, once it is there. Under systemd the service's /tmp is
+    /// private too; under OpenRC it is everyone's, where another user could take a file's
+    /// name first (it is made new, so nothing is written through a link, but the batch
+    /// would fail as often as that user cared to).
+    fn entries_dir(&self) -> PathBuf {
+        self.socket_dir.as_deref().filter(|d| d.is_dir()).map_or_else(std::env::temp_dir, std::path::Path::to_path_buf)
+    }
+
     /// `--add-entries-from-file` / `--remove-entries-from-file` for many entries, in chunks.
-    /// The file is the client's to read (in the service's private /tmp).
+    /// The file is the client's to read.
     fn firewalld_file(&self, set: &str, verb: &str, entries: &[String]) -> Result<()> {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         for chunk in entries.chunks(10_000) {
             let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!("vpsfort-firewalld-{}-{n}", std::process::id()));
+            let path = self.entries_dir().join(format!("vpsfort-firewalld-{}-{n}", std::process::id()));
             let _ = std::fs::remove_file(&path);
             let written = std::fs::OpenOptions::new()
                 .write(true)
@@ -1151,15 +1232,26 @@ impl Enforcer {
                 self.add(&net, until, now, &a.message)
             }
             ActionKind::Unban => self.remove(&net).or_else(|e| {
-                // For nft and ipset the kernel may already have expired the element.
-                if matches!(self.kind, Kind::Nft | Kind::Ipset) {
+                // The kernel may already have expired the element: nft says so, ipset is run
+                // with `-exist`. Any other failure (nft not answering, a script it can't
+                // read) used to count as done too, and the address stayed banned in the
+                // kernel while vpsfort showed it unbanned.
+                if self.kind == Kind::Nft && nft_element_gone(&format!("{e:#}")) {
                     Ok(())
                 } else {
                     Err(e)
                 }
             }),
             ActionKind::Allow => match self.kind {
-                Kind::Nft => self.run_nft(&nft_allow_script(&self.table, &net, (a.until.unwrap_or(a.ts) - a.ts) / SEC)),
+                Kind::Nft => {
+                    // An entry that is there keeps the end it has when added again (`vpsfort
+                    // allow` for longer, or shorter): it is taken out first. Not there is no
+                    // error to tell; the bans inside were lifted already, so the moment
+                    // between the two changes nothing.
+                    let set = if net.is_v4() { "oper4" } else { "oper6" };
+                    let _ = self.run_nft(&format!("delete element inet {} {set} {{ {net} }}\n", self.table));
+                    self.run_nft(&nft_allow_script(&self.table, &net, (a.until.unwrap_or(a.ts) - a.ts) / SEC))
+                }
                 // ufw has no "skip vpsfort's rules only": an allow rule would open every port
                 // to the network, past your own rules. The bans inside it are lifted (Unban
                 // actions) and it is never banned again; nothing else is needed.
@@ -1269,6 +1361,14 @@ impl Enforcer {
             return Some(match self.firewalld_setup(true) {
                 Ok(()) => {
                     self.restore(bans, now);
+                    // (the blocklists too: they stayed empty until their next refresh,
+                    // a day later by default)
+                    if !feeds.is_empty() {
+                        let _ = self.load_feeds(feeds);
+                    }
+                    if !waf.is_empty() {
+                        let _ = self.load_waf(waf);
+                    }
                     if !geo.is_empty() {
                         let _ = self.load_geoblock(geo);
                     }
@@ -1430,11 +1530,54 @@ impl Enforcer {
         failed
     }
 
+    /// ufw keeps its rules across restarts, so nothing is put back there; but a change it
+    /// refused while vpsfort ran is forgotten with the process: a ban that never got in, or
+    /// (worse) an unban that never got out, whose address then stayed denied for good. At
+    /// start the deny rules carrying vpsfort's comment are compared with the bans it holds:
+    /// the others go, the missing ones are added.
+    fn ufw_reconcile(&self, live: &[&Ban], now: Micros) -> Vec<(Ban, String)> {
+        let mut failed = Vec::new();
+        let mut cmd = Command::new(&self.ufw);
+        cmd.arg("status");
+        let have = match crate::proc::run(cmd, None, FIREWALL_TIMEOUT) {
+            Ok(o) if o.status.success() => ufw_own_rules(&String::from_utf8_lossy(&o.stdout)),
+            _ => return failed,
+        };
+        let stale: Vec<Net> = have.iter().filter(|n| !live.iter().any(|b| b.net == **n)).copied().collect();
+        let missing: Vec<&&Ban> = live.iter().filter(|b| !have.contains(&b.net)).collect();
+        for net in stale.iter().take(UFW_RECONCILE) {
+            if let Err(e) = self.remove(net) {
+                eprintln!("vpsfort: ufw: removing the rule left for {net}: {e:#}");
+            }
+        }
+        for b in missing.iter().take(UFW_RECONCILE) {
+            if let Err(e) = self.add(&b.net, b.until, now, "restored") {
+                failed.push(((**b).clone(), format!("{e:#}")));
+            }
+        }
+        if !stale.is_empty() || !missing.is_empty() {
+            eprintln!(
+                "vpsfort: ufw: {} rule(s) of vpsfort's without a ban removed, {} ban(s) without a rule added{}",
+                stale.len().min(UFW_RECONCILE),
+                missing.len().min(UFW_RECONCILE),
+                if stale.len().max(missing.len()) > UFW_RECONCILE {
+                    format!(" ({UFW_RECONCILE} at a start: the rest at the next)")
+                } else {
+                    String::new()
+                }
+            );
+        }
+        failed
+    }
+
     /// Re-adds bans from saved state (nft sets don't survive a reboot). Returns the bans the
     /// firewall program refused, with its complaint, for the caller to try again.
     pub fn restore(&self, bans: &[Ban], now: Micros) -> Vec<(Ban, String)> {
         let live: Vec<&Ban> = bans.iter().filter(|b| b.until > now).collect();
         let mut failed = Vec::new();
+        if self.kind == Kind::Ufw {
+            return self.ufw_reconcile(&live, now);
+        }
         if self.kind == Kind::Ipset {
             for chunk in live.chunks(10_000) {
                 let script: String = chunk.iter().map(|b| ipset_add_line(&self.chain, &b.net, (b.until - now) / SEC)).collect();
@@ -1480,8 +1623,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn nft_says_an_element_is_gone_in_two_ways() {
+        // an interval set, nft's own lookup
+        assert!(nft_element_gone(
+            "nft: /dev/stdin:1:36-47: Error: element does not exist\ndelete element inet vpsfort ban4 { 198.51.100.7 }"
+        ));
+        // the kernel's own answer
+        assert!(nft_element_gone("nft: /dev/stdin:1:1-48: Error: Could not process rule: No such file or directory"));
+        assert!(!nft_element_gone("nft: /dev/stdin:1:1-2: Error: syntax error, unexpected junk"));
+        assert!(!nft_element_gone("nft: took longer than 10s"));
+    }
+
+    #[test]
     fn scripts() {
-        let allow: Vec<Net> = vec!["13.46.43.31".parse().unwrap(), "2001:db8::/32".parse().unwrap()];
+        let allow: Vec<Net> = vec!["13.48.43.31".parse().unwrap(), "2001:db8::/32".parse().unwrap()];
         let ports: Vec<PortSpec> = ["51820/udp", "51821/tcp", "443"].iter().map(|p| p.parse().unwrap()).collect();
         let s = nft_setup_script("vpsfort", &allow, &ports, &[], None, &[]);
         assert!(s.contains("chain bans { type filter hook prerouting priority mangle - 1; policy accept; }"), "after conntrack");
@@ -1506,11 +1661,11 @@ mod tests {
             "flush set inet vpsfort feed4\nflush set inet vpsfort feed6\nadd element inet vpsfort feed4 { 11.1.16.0/20 }\nadd element inet vpsfort feed6 { 3fff:1c0::/29 }\n"
         );
         assert_eq!(nft_allow_script("t", &"8.8.8.8".parse().unwrap(), 60), "add element inet t oper4 { 8.8.8.8 timeout 60s }\n");
-        assert!(s.contains("add element inet vpsfort allow4 { 13.46.43.31 }"));
+        assert!(s.contains("add element inet vpsfort allow4 { 13.48.43.31 }"));
         assert!(s.contains("add element inet vpsfort allow6 { 2001:db8::/32 }"));
         // the host's own 127.0.0.1 next to the configured 127.0.0.0/8 must not break the set
-        let overlapping: Vec<Net> = ["127.0.0.0/8", "127.0.0.1", "13.46.43.31"].iter().map(|n| n.parse().unwrap()).collect();
-        assert!(nft_setup_script("t", &overlapping, &[], &[], None, &[]).contains("add element inet t allow4 { 127.0.0.0/8, 13.46.43.31 }"));
+        let overlapping: Vec<Net> = ["127.0.0.0/8", "127.0.0.1", "13.48.43.31"].iter().map(|n| n.parse().unwrap()).collect();
+        assert!(nft_setup_script("t", &overlapping, &[], &[], None, &[]).contains("add element inet t allow4 { 127.0.0.0/8, 13.48.43.31 }"));
         let net: Net = "11.145.59.0/24".parse().unwrap();
         assert_eq!(nft_add_script("vpsfort", &net, 3600), "add element inet vpsfort ban4 { 11.145.59.0/24 timeout 3600s }\n");
         let v6: Net = "2001:db8::1".parse().unwrap();
@@ -1547,7 +1702,7 @@ mod tests {
 
     #[test]
     fn iptables_rules() {
-        let allow: Vec<Net> = ["13.46.43.31", "127.0.0.0/8", "127.0.0.1", "2001:db8::/32"].iter().map(|n| n.parse().unwrap()).collect();
+        let allow: Vec<Net> = ["13.48.43.31", "127.0.0.0/8", "127.0.0.1", "2001:db8::/32"].iter().map(|n| n.parse().unwrap()).collect();
         let ports: Vec<PortSpec> = ["51820/udp", "443"].iter().map(|p| p.parse().unwrap()).collect();
         let lines: Vec<String> = iptables_static_rules("vpsfort", &allow, &ports)
             .iter()
@@ -1558,7 +1713,7 @@ mod tests {
             [
                 "iptables -F vpsfort",
                 "iptables -A vpsfort -s 127.0.0.0/8 -j RETURN",
-                "iptables -A vpsfort -s 13.46.43.31 -j RETURN",
+                "iptables -A vpsfort -s 13.48.43.31 -j RETURN",
                 "iptables -A vpsfort -p tcp -m multiport --dports 443 -j RETURN",
                 "iptables -A vpsfort -p udp -m multiport --dports 443,51820 -j RETURN",
                 "iptables -A vpsfort -m conntrack --ctdir REPLY -j RETURN",
@@ -1850,10 +2005,14 @@ mod tests {
                 inner: vec![],
             },
         ];
-        let msg = e.heal(&bans, &[], &[], &[], &[], now).unwrap();
+        let (feed, waf): (Net, Net) = ("192.0.2.128/25".parse().unwrap(), "198.18.7.0/24".parse().unwrap());
+        let msg = e.heal(&bans, &[], &[feed], &[waf], &[], now).unwrap();
         assert!(msg.contains("restored 2 bans"), "{msg}");
         let log = std::fs::read_to_string(&calls).unwrap();
         assert!(!log.contains("--reload"), "the objects are there: {log}");
+        // the blocklists and the WAF list are entries a reload forgets too
+        assert!(log.contains("--ipset=vpsfort-feed4 ") && log.contains("192.0.2.128/25\n"), "{log}");
+        assert!(log.contains("--ipset=vpsfort-waf4 ") && log.contains("198.18.7.0/24\n"), "{log}");
         assert!(log.contains("--ipset=vpsfort-ban4 --add-entries-from-file=") && log.contains("198.51.100.7\n"), "{log}");
         assert!(log.contains("--ipset=vpsfort-ban6 --add-entries-from-file=") && log.contains("2001:db8::1\n"), "{log}");
         assert!(!log.contains("198.51.100.8"), "an ended ban isn't restored: {log}");
@@ -2013,6 +2172,19 @@ mod tests {
     }
 
     #[test]
+    fn firewalld_entry_files_go_to_the_control_sockets_directory() {
+        let dir = std::env::temp_dir().join(format!("lg-fwd-dir-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut e = Enforcer::shadow();
+        assert_eq!(e.entries_dir(), std::env::temp_dir(), "none known");
+        e.socket_dir = Some(dir.join("missing"));
+        assert_eq!(e.entries_dir(), std::env::temp_dir(), "not there yet");
+        e.socket_dir = Some(dir.clone());
+        assert_eq!(e.entries_dir(), dir, "root's own: no other user can take a file's name there");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn ufw_allow_opens_no_ports() {
         use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("lg-ufw-{}", std::process::id()));
@@ -2093,5 +2265,83 @@ mod tests {
 	}
 }"#;
         assert_eq!(parse_rate_limit_drops(listing), vec![(0, 15), (1, 0)]);
+    }
+
+    #[test]
+    fn ipv6_rate_limits_are_tried_per_network_first() {
+        let limits = [RateLimitCfg { ports: vec!["22/tcp".parse().unwrap()], rate: "10/minute".into(), burst: 5 }];
+        let setup = nft_setup_script("t", &[], &[], &limits, None, &[]);
+        let per_net = limits_per_net(&setup).expect("a limit");
+        // (as loaded on nft 1.0.2 / kernel 5.15 and nft 1.1.3 / kernel 6.12, 2026-11-11)
+        assert!(
+            per_net.contains("update @rl0_6 { ip6 saddr and ffff:ffff:ffff:ffff:: timeout 10m limit rate over 10/minute burst 5 packets }"),
+            "{per_net}"
+        );
+        assert!(per_net.contains("update @rl0_4 { ip saddr timeout 10m limit rate over 10/minute"), "IPv4 per address, ending too");
+        assert_eq!(per_net.replace(" and ffff:ffff:ffff:ffff::", "").replace("saddr timeout 10m", "saddr"), setup, "nothing else differs");
+        assert_eq!(limits_per_net(&nft_setup_script("t", &[], &[], &[], None, &[])), None);
+        // a rate per second ends sooner, one per hour keeps the set's own two hours
+        let limits = [
+            RateLimitCfg { ports: vec!["53/udp".parse().unwrap()], rate: "20/second".into(), burst: 5 },
+            RateLimitCfg { ports: vec!["25/tcp".parse().unwrap()], rate: "30/hour".into(), burst: 5 },
+        ];
+        let per_net = limits_per_net(&nft_setup_script("t", &[], &[], &limits, None, &[])).unwrap();
+        assert!(per_net.contains("update @rl0_4 { ip saddr timeout 1m limit rate over 20/second"), "{per_net}");
+        assert!(per_net.contains("update @rl1_4 { ip saddr limit rate over 30/hour"), "{per_net}");
+    }
+
+    /// A change ufw refused is forgotten when vpsfort stops: at start its own rules are
+    /// compared with the bans it holds.
+    #[test]
+    fn ufw_rules_are_reconciled_at_start() {
+        use std::os::unix::fs::PermissionsExt;
+        let status = "Status: active\n\nTo                         Action      From\n--                         ------      ----\n\
+            Anywhere                   DENY        198.51.100.7               # vpsfort burst score fast=100\n\
+            Anywhere                   DENY        203.0.113.0/24             # vpsfort 3 bad addresses in subnet\n\
+            Anywhere                   DENY        192.0.2.66                 # the admin's own rule\n\
+            22/tcp                     ALLOW       Anywhere                   # vpsfort is not in this one's source\n\
+            Anywhere (v6)              DENY        2001:db8::/64              # vpsfort restored\n";
+        let own: Vec<String> = ufw_own_rules(status).iter().map(|n| n.to_string()).collect();
+        assert_eq!(own, ["198.51.100.7", "203.0.113.0/24", "2001:db8::/64"]);
+
+        let dir = std::env::temp_dir().join(format!("lg-ufw-reconcile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (ufw, calls) = (dir.join("ufw"), dir.join("calls"));
+        std::fs::write(dir.join("status"), status).unwrap();
+        std::fs::write(
+            &ufw,
+            format!(
+                "#!/bin/sh\necho \"$@\" >> '{}'\nif [ \"$1\" = status ]; then cat '{}'; fi\n",
+                calls.display(),
+                dir.join("status").display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&ufw, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let cfg = Config {
+            mode: Mode::Enforce,
+            enforce: crate::config::EnforceCfg { backend: Backend::Ufw, ufw, conntrack: PathBuf::new(), ..Default::default() },
+            ..Default::default()
+        };
+        let e = Enforcer::new(&cfg, &[]);
+        assert_eq!(e.kind, Kind::Ufw);
+        let now = 1_000 * SEC;
+        let ban = |net: &str| Ban {
+            net: net.parse().unwrap(),
+            since: now,
+            until: now + 3600 * SEC,
+            offence: 1,
+            reason: String::new(),
+            origin: None,
+            inner: vec![],
+        };
+        let _ = std::fs::remove_file(&calls);
+        assert!(e.restore(&[ban("198.51.100.7"), ban("192.0.2.200")], now).is_empty());
+        let log = std::fs::read_to_string(&calls).unwrap();
+        assert!(log.contains("delete deny from 203.0.113.0/24\n") && log.contains("delete deny from 2001:db8::/64\n"), "{log}");
+        assert!(log.contains("prepend deny from 192.0.2.200 comment vpsfort restored\n"), "{log}");
+        assert!(!log.contains("192.0.2.66") && !log.contains("from 198.51.100.7"), "the admin's rule and the ban in place stay: {log}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -24,11 +24,13 @@ MemoryMax=256M
 # vpsfort-signal-bot's, vpsfort-matrix-bot's; any may be missing), talks to the peers and
 # rdap.org. An outbox elsewhere needs  ReadWritePaths=<it>  (systemctl edit vpsfort-abuse-report).
 StateDirectory=vpsfort
+StateDirectoryMode=0700
 ReadWritePaths=-/opt/vpsfort-xmpp-bot/outbox
 ReadWritePaths=-/opt/vpsfort-tg-bot/outbox
 ReadWritePaths=-/opt/vpsfort-mail-bot/outbox
 ReadWritePaths=-/opt/vpsfort-signal-bot/outbox
 ReadWritePaths=-/opt/vpsfort-matrix-bot/outbox
+ReadWritePaths=-/opt/vpsfort-push-bot/outbox
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes

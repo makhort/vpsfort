@@ -346,10 +346,46 @@ fn socket_owners() -> HashMap<u64, String> {
     owners
 }
 
+/// Listeners on whitelisted ports that the firewall doesn't open to everyone (`22/tcp`).
+/// With the firewalld backend a whitelisted port is a port of vpsfort's zone, which accepts
+/// it from the banned addresses whatever the other zones say: such a port would be open to
+/// the banned and closed to everyone else.
+pub fn whitelisted_but_closed(listeners: &[Listener], whitelist: &[crate::config::PortSpec]) -> Vec<String> {
+    let mut out: Vec<String> = listeners
+        .iter()
+        .filter(|l| l.exposure == Exposure::Firewalled)
+        .filter(|l| whitelist.iter().any(|w| w.port == l.key.port && w.proto.is_none_or(|p| p == l.key.proto)))
+        .map(|l| format!("{}/{}", l.key.port, if l.key.proto == Proto::Udp { "udp" } else { "tcp" }))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 // ------------------------------------------------------------------ ufw parsing
 
 /// Parses `ufw status` (plain or verbose): returns (active, the rules letting traffic in, from
 /// anywhere or from some sources).
+/// The ports of the app profiles Debian's and Ubuntu's packages install (`ufw app list`),
+/// by the name `ufw status` shows instead of them.
+fn app_profile(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "OpenSSH" => "22/tcp",
+        "Nginx HTTP" | "Apache" | "WWW" | "Lighttpd HTTP" => "80/tcp",
+        "Nginx HTTPS" | "Apache Secure" | "WWW Secure" | "Lighttpd HTTPS" => "443/tcp",
+        "Nginx Full" | "Apache Full" | "WWW Full" | "Lighttpd Full" => "80,443/tcp",
+        "Postfix" | "SMTP" => "25/tcp",
+        "Postfix SMTPS" => "465/tcp",
+        "Postfix Submission" => "587/tcp",
+        "Dovecot IMAP" | "IMAP" => "143/tcp",
+        "Dovecot Secure IMAP" | "IMAPS" => "993/tcp",
+        "Dovecot POP3" | "POP3" => "110/tcp",
+        "Dovecot Secure POP3" | "POP3S" => "995/tcp",
+        "DNS" | "Bind9" => "53",
+        _ => return None,
+    })
+}
+
 pub fn parse_ufw_status(text: &str) -> (bool, Vec<UfwRule>) {
     let active = text.lines().any(|l| l.trim() == "Status: active");
     let mut rules = Vec::new();
@@ -383,8 +419,38 @@ pub fn parse_ufw_status(text: &str) -> (bool, Vec<UfwRule>) {
         };
         let Some(&from) = rest.first() else { continue };
         let from = (from != "Anywhere").then(|| from.to_string());
-        let to = words[..at].join(" ");
-        let to = to.trim_end_matches(" (v6)").trim();
+        // The target: ports (`22/tcp`), with `on eth0` for one interface, one of the host's
+        // addresses in front, `(v6)`; `Anywhere`; or an app profile's name. Rules with an
+        // interface, an address or a profile used to be left out: ports they open showed
+        // as blocked.
+        let mut target: Vec<&str> = words[..at].iter().copied().filter(|w| *w != "(v6)").collect();
+        if let Some(on) = target.iter().position(|w| *w == "on") {
+            // what enters by a bridge or a tunnel of the host's own isn't the internet's
+            if target.get(on + 1).is_some_and(|i| internal_interface(i)) {
+                continue;
+            }
+            target.truncate(on);
+        }
+        if target.len() > 1 && target[0].parse::<crate::net::Net>().is_ok() {
+            target.remove(0);
+        }
+        let named = target.join(" ");
+        if named == "Anywhere" || named.parse::<crate::net::Net>().is_ok() {
+            let rule = UfwRule {
+                lo: 0,
+                hi: u16::MAX,
+                proto: None,
+                label: named.clone(),
+                limit: action == "LIMIT",
+                from: from.clone(),
+                every: true,
+            };
+            if !rules.contains(&rule) {
+                rules.push(rule);
+            }
+            continue;
+        }
+        let to = app_profile(&named).unwrap_or(named.as_str());
         let (ports, proto, suffix) = match to.split_once('/') {
             Some((p, "tcp")) => (p, Some(Proto::Tcp), "/tcp"),
             Some((p, "udp")) => (p, Some(Proto::Udp), "/udp"),
@@ -401,7 +467,7 @@ pub fn parse_ufw_status(text: &str) -> (bool, Vec<UfwRule>) {
             };
             // App profiles ("OpenSSH") and "Anywhere" targets can't be mapped to ports.
             let (Some(lo), Some(hi)) = (lo, hi) else { continue };
-            let label = if items.len() == 1 { to.to_string() } else { format!("{item}{suffix} (of {to})") };
+            let label = if items.len() == 1 { named.clone() } else { format!("{item}{suffix} (of {named})") };
             let rule = UfwRule { lo, hi, proto, label, limit: action == "LIMIT", from: from.clone(), every: false };
             if !rules.contains(&rule) {
                 rules.push(rule);
@@ -748,6 +814,10 @@ fn parse_ipt_rule(words: &[String]) -> IptRule {
             "-d" | "--destination" | "--dst" => {
                 if !neg && value.parse::<crate::net::Net>().is_ok_and(|n| n.prefix > 0 && n.addr.is_loopback()) {
                     r.skip = true;
+                } else if neg || value.parse::<crate::net::Net>().map_or(true, |n| n.prefix > 0) {
+                    // for some of the host's addresses only: a DROP there closes nothing
+                    // for the others (an ACCEPT still lets in)
+                    r.unsure = true;
                 }
             }
             "-i" | "--in-interface" => {
@@ -770,8 +840,15 @@ fn parse_ipt_rule(words: &[String]) -> IptRule {
                 }
             }
             "--syn" => r.skip |= neg,
-            "--sport" | "--source-port" | "--sports" | "--source-ports" | "--match-set" | "--src-range" | "--src-type" | "--tcp-flags"
-            | "-f" | "--fragment" => r.skip = true,
+            // `--syn` as iptables-save writes it (`--tcp-flags FIN,SYN,RST,ACK SYN`): a new
+            // connection. It used to make the rule one that says nothing, so a port such a
+            // rule accepts showed as blocked.
+            "--tcp-flags" => {
+                let flags = if i > start + 1 { words[start + 1].as_str() } else { "" };
+                r.skip |= neg || flags != "SYN" || !value.split(',').any(|f| f == "SYN");
+            }
+            "--sport" | "--source-port" | "--sports" | "--source-ports" | "--match-set" | "--src-range" | "--src-type" | "-f"
+            | "--fragment" => r.skip = true,
             "-m" | "--match" => r.limit |= matches!(value, "limit" | "hashlimit" | "recent" | "connlimit"),
             "-j" | "--jump" => r.target = value.to_string(),
             "-g" | "--goto" => (r.target, r.goto) = (value.to_string(), true),
@@ -1301,7 +1378,7 @@ To                         Action      From
 5349/tcp                   ALLOW       Anywhere                   # TURNS
 OpenSSH                    ALLOW       Anywhere
 Anywhere                   DENY        12.15.0.0/16              # blocked
-Anywhere                   ALLOW       13.46.43.31
+Anywhere                   ALLOW       13.48.43.31
 2222/tcp (v6)             LIMIT       Anywhere (v6)              # SSH
 ";
 
@@ -1320,7 +1397,12 @@ Anywhere                   ALLOW       13.46.43.31
         let (active, rules) = parse_ufw_status(UFW);
         assert!(active);
         let labels: Vec<&str> = rules.iter().map(|r| r.label.as_str()).collect();
-        assert_eq!(labels, vec!["53/udp", "2222/tcp", "51820/udp", "49152:65535/udp", "5349/tcp"]);
+        // (an app profile by its ports; `Anywhere` from one address is every port, from there)
+        assert_eq!(labels, vec!["53/udp", "2222/tcp", "51820/udp", "49152:65535/udp", "5349/tcp", "OpenSSH", "Anywhere"]);
+        let ssh = rules.iter().find(|r| r.label == "OpenSSH").unwrap();
+        assert!(ssh.matches(22, Proto::Tcp) && !ssh.matches(22, Proto::Udp) && ssh.from.is_none());
+        let home = rules.iter().find(|r| r.label == "Anywhere").unwrap();
+        assert!(home.every && home.from.as_deref() == Some("13.48.43.31"));
     }
 
     #[test]
@@ -1396,7 +1478,11 @@ Anywhere                   ALLOW       13.46.43.31
         assert!(exp.contains(&("0.0.0.0:4369/tcp".into(), Exposure::Firewalled)));
         assert!(exp.contains(&("127.0.0.53:53/udp".into(), Exposure::Local)));
         assert!(exp.contains(&("172.17.0.1:53/udp".into(), Exposure::Local)), "docker bridge address is private");
-        assert_eq!(r.dead_rules, vec!["53/udp"], "only a loopback resolver listens on 53; ranges are never 'dead'");
+        assert_eq!(
+            r.dead_rules,
+            vec!["53/udp", "OpenSSH"],
+            "only a loopback resolver listens on 53, and sshd moved off 22; ranges are never 'dead'"
+        );
         let turn = |port| r.listeners.iter().find(|l| l.key.port == port).unwrap();
         assert!(turn(50123).dynamic && turn(50123).exposure == Exposure::Allowed, "TURN relay socket inside the allowed range");
         assert!(!turn(5349).dynamic, "TURNS listener has its own rule");
@@ -1406,7 +1492,8 @@ Anywhere                   ALLOW       13.46.43.31
         assert_eq!(rule(2222), (Some("LIMIT 2222/tcp"), true, "allowed by ufw, rate-limited".into()));
         assert_eq!(rule(5349), (Some("ALLOW 5349/tcp"), false, "allowed by ufw".into()));
         assert_eq!(rule(50123), (Some("ALLOW 49152:65535/udp"), false, "allowed by ufw".into()));
-        assert_eq!(rule(4369), (None, false, "blocked by ufw".into()));
+        // (closed to the internet; the one address `Anywhere ALLOW 13.48.43.31` names gets in)
+        assert_eq!(rule(4369), (Some("ALLOW Anywhere from 13.48.43.31"), false, "allowed by ufw from some sources only".into()));
         assert_eq!(
             rule(51820),
             (Some("LIMIT 51820/udp"), false, "published by docker, bypasses ufw".into()),
@@ -1758,5 +1845,53 @@ work (active)
             honeypot: true,
         };
         assert!(hp.describe(Firewall::Firewalld).contains("firewall-cmd --permanent --add-port=2222/tcp"));
+    }
+
+    /// Rules for one interface, for one of the host's addresses, and iptables-save's long
+    /// form of `--syn` used to be left out: the ports they open showed as blocked.
+    #[test]
+    fn rules_with_an_interface_an_address_or_tcp_flags_count() {
+        let ufw = "Status: active\n\nTo                         Action      From\n--                         ------      ----\n\
+            8080/tcp on eth0           ALLOW       Anywhere\n\
+            9090/tcp on wg0            ALLOW       Anywhere\n\
+            203.0.113.5 8443/tcp       ALLOW       Anywhere\n\
+            Nginx Full                 ALLOW       Anywhere\n\
+            8080/tcp (v6) on eth0      ALLOW       Anywhere (v6)\n";
+        let (_, rules) = parse_ufw_status(ufw);
+        let open = |port| rules.iter().any(|r| r.from.is_none() && r.matches(port, Proto::Tcp));
+        assert!(open(8080) && open(8443) && open(80) && open(443), "{rules:?}");
+        assert!(!open(9090), "what enters by the VPN's interface isn't from the internet");
+        assert_eq!(rules.iter().filter(|r| r.matches(8080, Proto::Tcp)).count(), 1, "the v6 row is the same rule");
+
+        let words = |s: &str| s.split_whitespace().map(String::from).collect::<Vec<_>>();
+        let syn = parse_ipt_rule(&words("-p tcp -m tcp --dport 22 --tcp-flags FIN,SYN,RST,ACK SYN -j ACCEPT"));
+        assert!(!syn.skip && syn.target == "ACCEPT", "a new connection, as --syn");
+        assert!(parse_ipt_rule(&words("-p tcp --dport 22 --tcp-flags SYN,ACK SYN,ACK -j ACCEPT")).skip, "not a new connection");
+        assert!(parse_ipt_rule(&words("-p tcp --dport 22 ! --tcp-flags FIN,SYN,RST,ACK SYN -j DROP")).skip);
+        let one_address = parse_ipt_rule(&words("-d 203.0.113.5/32 -p tcp --dport 25 -j DROP"));
+        assert!(one_address.unsure && !one_address.skip, "closes the port at one address only");
+        assert!(parse_ipt_rule(&words("-d 127.0.0.1/32 -p tcp --dport 25 -j DROP")).skip);
+    }
+
+    #[test]
+    fn whitelisted_ports_the_firewall_closes_are_named() {
+        let l = |port, proto, exposure| Listener {
+            key: ListenerKey { addr: "0.0.0.0".parse().unwrap(), port, proto },
+            process: "x".into(),
+            exposure,
+            dynamic: false,
+            rule: None,
+            limited: false,
+            honeypot: false,
+        };
+        let listeners = [
+            l(5222, Proto::Tcp, Exposure::Firewalled),
+            l(5222, Proto::Tcp, Exposure::Firewalled),
+            l(443, Proto::Tcp, Exposure::Allowed),
+            l(53, Proto::Udp, Exposure::Firewalled),
+            l(8080, Proto::Tcp, Exposure::Firewalled),
+        ];
+        let whitelist: Vec<crate::config::PortSpec> = ["5222/tcp", "443/tcp", "53"].iter().map(|p| p.parse().unwrap()).collect();
+        assert_eq!(whitelisted_but_closed(&listeners, &whitelist), ["5222/tcp", "53/udp"]);
     }
 }

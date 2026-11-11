@@ -1,6 +1,6 @@
 [package]
 name = "vpsfort-push-bot"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 description = "Push bot delivering vpsfort's admin alerts, digests and reports to ntfy, Gotify or a webhook"
 license = "MIT"

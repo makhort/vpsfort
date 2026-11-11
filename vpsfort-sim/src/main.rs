@@ -196,7 +196,7 @@ fn run(config_path: &Path) -> Result<()> {
         history_days: 7,
         digest_days: 14,
     };
-    let console = Arc::new(Console::new(console_cfg, auth, fleet, Some(key)));
+    let console = Arc::new(Console::new(console_cfg, auth, fleet));
     let addr = console::serve(Arc::clone(&console))?;
     digests::collect_daily(console);
     println!("console on https://{addr} (on {} with {} agent{})", first.name, remotes.len(), if remotes.len() == 1 { "" } else { "s" });

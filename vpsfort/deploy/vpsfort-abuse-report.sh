@@ -238,7 +238,9 @@ deliver() { # report file, what it says about its origin
         dir=${entry%:*}
         owner=${entry##*:}
         # leftovers of a run that died before the rename (root's: the bot can't remove them)
-        rm -f "${dir:?}"/.abuse-report-*.txt.tmp "${dir:?}"/.abuse-report-*.txt.??????
+        # (`|| true`: the bot's user can make a directory under such a name, which `rm -f`
+        # fails on, and with it the whole report)
+        rm -f "${dir:?}"/.abuse-report-*.txt.tmp "${dir:?}"/.abuse-report-*.txt.?????? 2> /dev/null || true
         if ! tmp=$(mktemp "$dir/.$name.XXXXXX"); then
             echo "WARNING: cannot write in $dir: no report for that bot" >&2
             continue

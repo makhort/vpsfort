@@ -3,7 +3,8 @@
 //! (`PASSWORD_FILE`, `TOTP_FILE`); others are made the same way with `--user <name>`, their
 //! files in `ADMINS_DIR` (`<name>.password`, `<name>.totp`). All may do the same: there are
 //! no roles. A login opens a session kept in memory (a restart ends them all) and named by a
-//! random cookie; removing an account's files ends its sessions at their next request.
+//! random cookie; removing an account's files, or setting its password anew, ends its
+//! sessions at their next request.
 //!
 //! Guessing is slowed three ways: Argon2's cost (one check at a time), a lockout of the
 //! address after [`MAX_FAILURES`] failures, and vpsfort itself, which reads the failures
@@ -73,6 +74,9 @@ struct Session {
     agent: String,
     /// The admin's login before this one, and the failures since (shown once after the login).
     previous: LoginRecord,
+    /// The password the session was opened under ([`password_tag`]): it ends when the
+    /// account's password is another.
+    pw: [u8; 8],
 }
 
 /// An admin's last good login and the failed attempts since (kept in `STATE_DIR` across
@@ -133,6 +137,8 @@ pub struct Auth {
     last_step: Mutex<HashMap<String, u64>>,
     /// One Argon2 check at a time (each takes ~19 MB and tens of milliseconds).
     checking: Mutex<()>,
+    /// One change of a passkeys file at a time (read, changed, written whole).
+    passkeys_lock: Mutex<()>,
     /// Logins since start: succeeded, failed, refused while locked out (for /metrics).
     pub logins: [AtomicU64; 3],
     /// `lockouts.json` and `sessions.json` in `STATE_DIR` (None: in memory).
@@ -146,6 +152,9 @@ struct SavedLockouts {
     by_ip: Vec<(IpAddr, SavedFailures)>,
     accounts: Vec<(String, SavedAccount)>,
     all: Vec<Micros>,
+    /// Each admin's newest TOTP time step used: a restart must not make a used code good again.
+    #[serde(default)]
+    steps: Vec<(String, u64)>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -181,6 +190,22 @@ struct SavedSession {
     ip: IpAddr,
     agent: String,
     previous: LoginRecord,
+    /// [`password_tag`], hex; empty in a file from before sessions carried one.
+    #[serde(default)]
+    pw: String,
+}
+
+/// What a session remembers of the password it was opened under: the start of the hash's
+/// digest. Nothing to log in with, and another for every `passwd`, even with the same password.
+fn password_tag(hash: &str) -> [u8; 8] {
+    let d = sha2::Sha256::digest(hash.trim().as_bytes());
+    d[..8].try_into().expect("8 bytes")
+}
+
+/// An admin's TOTP secret from its file: 16 bytes at least (`totp-setup` writes 20). A file
+/// that holds less, or nothing, would make codes anyone can work out.
+fn totp_secret(file: &Path) -> Option<Vec<u8>> {
+    read_secret(file).ok().and_then(|t| crate::totp::unbase32(&t)).filter(|s| s.len() >= 16)
 }
 
 /// Wall-clock times to the monotonic clock, around the moment of reading.
@@ -332,6 +357,7 @@ impl Auth {
             all_failures: Mutex::default(),
             last_step: Mutex::default(),
             checking: Mutex::new(()),
+            passkeys_lock: Mutex::new(()),
             logins: Default::default(),
             lockouts_path,
             sessions_path,
@@ -353,6 +379,7 @@ impl Auth {
             all_failures: Mutex::default(),
             last_step: Mutex::default(),
             checking: Mutex::new(()),
+            passkeys_lock: Mutex::new(()),
             logins: Default::default(),
             lockouts_path: None,
             sessions_path: None,
@@ -392,6 +419,7 @@ impl Auth {
             }
             let mut all = self.all_failures.lock().unwrap_or_else(|e| e.into_inner());
             all.extend(saved.all.into_iter().take(100_000).map(|t| clock.to_instant(t)));
+            self.last_step.lock().unwrap_or_else(|e| e.into_inner()).extend(saved.steps.into_iter().take(1000));
             let locked = failures.values().filter(|f| f.locked_until.is_some_and(|u| u > clock.instant)).count();
             if locked > 0 {
                 say!("{locked} address(es) still locked out, read back from {}", self.lockouts_path.as_ref().expect("set").display());
@@ -403,9 +431,16 @@ impl Auth {
             for s in saved.sessions.into_iter().take(MAX_ALL_SESSIONS) {
                 let Ok(bytes) = crate::wire::unhex(&s.key) else { continue };
                 let Ok(key) = <[u8; 32]>::try_from(bytes) else { continue };
+                // (a session from before they carried one goes on under the password of now)
+                let pw = crate::wire::unhex(&s.pw)
+                    .ok()
+                    .and_then(|b| <[u8; 8]>::try_from(b).ok())
+                    .or_else(|| self.current_tag(&s.user))
+                    .unwrap_or_default();
                 sessions.insert(
                     key,
                     Session {
+                        pw,
                         user: s.user,
                         created: clock.to_instant(s.created_at),
                         // the idle clock starts afresh: how long the console was down is unknown
@@ -469,6 +504,7 @@ impl Auth {
                     })
                     .collect(),
                 all: all.iter().filter(|t| clock.instant - **t < WINDOW).map(|t| clock.to_wall(*t)).collect(),
+                steps: self.last_step.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|(u, s)| (u.clone(), *s)).collect(),
             }
         };
         if let Ok(v) = serde_json::to_value(&saved) {
@@ -493,6 +529,7 @@ impl Auth {
                         ip: s.ip,
                         agent: s.agent.clone(),
                         previous: s.previous.clone(),
+                        pw: crate::wire::hex(&s.pw),
                     })
                     .collect(),
                 records: records.iter().map(|(u, r)| (u.clone(), r.clone())).collect(),
@@ -581,8 +618,7 @@ impl Auth {
             anyhow::anyhow!("{}: not a password hash ({e}): set it with `vpsfort-web passwd{user}`", a.password_file.display())
         })?;
         if let Some(f) = &a.totp_file {
-            let secret = read_secret(f).ok().and_then(|t| crate::totp::unbase32(&t)).filter(|s| s.len() >= 16);
-            if secret.is_none() {
+            if totp_secret(f).is_none() {
                 bail!("{}: no TOTP secret: make one with `vpsfort-web totp-setup{user}`", f.display());
             }
         }
@@ -641,7 +677,16 @@ impl Auth {
         if hit.len() >= 1000 && !hit.contains_key(user) {
             hit.retain(|_, a| a.locked_until.is_some_and(|u| u > now) || !a.known_ips.is_empty());
             if hit.len() >= 1000 {
-                return;
+                // all of them locked: the one whose lock ends first makes room, never an
+                // account that was logged in to (those are real). Leaving this failure
+                // uncounted would keep a real account without its lock for as long as
+                // made-up names fill the table.
+                let first_out =
+                    hit.iter().filter(|(_, a)| a.known_ips.is_empty()).min_by_key(|(_, a)| a.locked_until).map(|(u, _)| u.clone());
+                match first_out {
+                    Some(u) => hit.remove(&u),
+                    None => return,
+                };
             }
         }
         let a = hit.entry(user.to_string()).or_default();
@@ -665,7 +710,7 @@ impl Auth {
     fn code_ok_for(&self, user: &str, code: &str) -> bool {
         let Some(a) = self.account(user).filter(|a| a.password_file.exists()) else { return false };
         let Some(f) = a.totp_file.as_ref() else { return false };
-        let Some(secret) = read_secret(f).ok().and_then(|t| crate::totp::unbase32(&t)) else { return false };
+        let Some(secret) = totp_secret(f) else { return false };
         let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let used = self.last_step.lock().unwrap_or_else(|e| e.into_inner()).get(user).copied().unwrap_or(0);
         crate::totp::verify(&secret, code, unix, used).is_some()
@@ -720,6 +765,7 @@ impl Auth {
     /// Adds a passkey to the admin's file (at most [`crate::webauthn::MAX_PER_ADMIN`]).
     pub fn add_passkey(&self, user: &str, cred: crate::webauthn::Credential) -> Result<()> {
         let a = self.account(user).context("no such admin")?;
+        let _one = self.passkeys_lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut creds = Self::load_passkeys(&a)?;
         if creds.iter().any(|c| c.id == cred.id) {
             bail!("this passkey is registered already");
@@ -734,6 +780,7 @@ impl Auth {
     /// Removes a passkey by its id; false when there was none.
     pub fn remove_passkey(&self, user: &str, id: &str) -> Result<bool> {
         let a = self.account(user).context("no such admin")?;
+        let _one = self.passkeys_lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut creds = Self::load_passkeys(&a)?;
         let before = creds.len();
         creds.retain(|c| c.id != id);
@@ -825,6 +872,7 @@ impl Auth {
             // a passkey stands in for the code, whether or not TOTP is on
             (Some(a), _, Some(Ok((cred, count, _)))) => {
                 if password_ok {
+                    let _one = self.passkeys_lock.lock().unwrap_or_else(|e| e.into_inner());
                     let mut creds = Self::load_passkeys(a).unwrap_or_default();
                     if let Some(c) = creds.iter_mut().find(|c| c.id == cred.id) {
                         c.sign_count = *count;
@@ -844,7 +892,7 @@ impl Auth {
             (None, Some(_), None) => Err("no such account"),
             (Some(a), Some(_), None) => {
                 let f = a.totp_file.as_ref().expect("TOTP is on");
-                match read_secret(f).ok().and_then(|t| crate::totp::unbase32(&t)) {
+                match totp_secret(f) {
                     None => Err("no TOTP secret for this account yet (totp-setup)"),
                     Some(secret) => {
                         let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -875,7 +923,7 @@ impl Auth {
                     let r = records.entry(user.clone()).or_default();
                     std::mem::replace(r, LoginRecord { at: Some(crate::time::now()), ip: Some(ip), failed_since: 0 })
                 };
-                let token = self.open_session(&user, ip, previous, now)?;
+                let token = self.open_session(&user, ip, previous, now, password_tag(&hash))?;
                 self.logins[0].fetch_add(1, Ordering::Relaxed);
                 say!("login from {ip} as {user}");
                 self.save_lockouts();
@@ -912,7 +960,12 @@ impl Auth {
         }
     }
 
-    fn open_session(&self, user: &str, ip: IpAddr, previous: LoginRecord, now: Instant) -> Result<String> {
+    /// The tag of the password `user` has now; None when its file can't be read.
+    fn current_tag(&self, user: &str) -> Option<[u8; 8]> {
+        self.account(user).and_then(|a| read_secret(&a.password_file).ok()).map(|hash| password_tag(&hash))
+    }
+
+    fn open_session(&self, user: &str, ip: IpAddr, previous: LoginRecord, now: Instant, pw: [u8; 8]) -> Result<String> {
         let mut raw = [0u8; 32];
         crate::wire::getrandom(&mut raw)?;
         let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
@@ -929,7 +982,17 @@ impl Auth {
         let at = crate::time::now();
         sessions.insert(
             digest(&token),
-            Session { user: user.to_string(), created: now, last: now, created_at: at, last_at: at, ip, agent: String::new(), previous },
+            Session {
+                user: user.to_string(),
+                created: now,
+                last: now,
+                created_at: at,
+                last_at: at,
+                ip,
+                agent: String::new(),
+                previous,
+                pw,
+            },
         );
         Ok(token)
     }
@@ -949,6 +1012,13 @@ impl Auth {
         if user != MAIN && !self.account(&user).is_some_and(|a| a.password_file.exists()) {
             sessions.remove(&key);
             say!("session of {user} ended: the account is gone");
+            return None;
+        }
+        // a password set anew ends the sessions opened under the old one (a file that can't
+        // be read just now ends nothing)
+        if self.current_tag(&user).is_some_and(|tag| sessions.get(&key).is_some_and(|s| s.pw != tag)) {
+            sessions.remove(&key);
+            say!("session of {user} ended: the account's password was changed");
             return None;
         }
         let s = sessions.get_mut(&key)?;
@@ -1105,6 +1175,94 @@ mod tests {
         std::fs::write(dir.join("file"), "x").unwrap();
         let blocked = Auth::new(AuthCfg { state_dir: Some(dir.join("file").join("under")), ..plain.cfg.clone() });
         assert!(blocked.passkeys_writable("admin").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A second factor that is one: a secret file that holds none (empty, or a few bytes)
+    /// would make codes anyone can work out, so it counts as no secret at the login too, not
+    /// only at the start-up check of the first admin's.
+    #[test]
+    fn a_short_totp_secret_opens_nothing() {
+        let (auth, dir, _) = setup("short-totp", true);
+        let ip: IpAddr = "192.0.2.7".parse().unwrap();
+        std::fs::create_dir_all(dir.join("admins")).unwrap();
+        std::fs::write(dir.join("admins/ann.password"), hash_password("a long password of ann").unwrap()).unwrap();
+        let code_of = |secret: &[u8]| {
+            let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            format!("{:06}", crate::totp::code(secret, unix / crate::totp::STEP_SECS))
+        };
+        for secret in [&b""[..], &b"short"[..]] {
+            std::fs::write(dir.join("admins/ann.totp"), crate::totp::base32(secret)).unwrap();
+            assert_eq!(auth.login(ip, "ann", "a long password of ann", &code_of(secret)).unwrap(), Login::Wrong, "{secret:?}");
+            assert!(!auth.code_ok_for("ann", &code_of(secret)));
+        }
+        let real = b"0123456789abcdefghij";
+        std::fs::write(dir.join("admins/ann.totp"), crate::totp::base32(real)).unwrap();
+        assert!(matches!(auth.login(ip, "ann", "a long password of ann", &code_of(real)).unwrap(), Login::Ok(_)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A password that is changed ends the account's sessions: whoever had it before must
+    /// not stay in for the rest of the session's twelve hours.
+    #[test]
+    fn a_changed_password_ends_the_sessions() {
+        let (auth, dir, _) = setup("pw-change", false);
+        let ip: IpAddr = "192.0.2.8".parse().unwrap();
+        let Login::Ok(token) = auth.login(ip, "", "correct horse battery", "").unwrap() else { panic!("login") };
+        assert_eq!(auth.session(&token).as_deref(), Some("admin"));
+        std::fs::write(dir.join("pw"), hash_password("another long password").unwrap()).unwrap();
+        assert_eq!(auth.session(&token), None, "the old password's session");
+        let Login::Ok(new) = auth.login(ip, "", "another long password", "").unwrap() else { panic!("login") };
+        assert_eq!(auth.session(&new).as_deref(), Some("admin"));
+        // the same password written again (another salt) is a change too: `passwd` was run
+        std::fs::write(dir.join("pw"), hash_password("another long password").unwrap()).unwrap();
+        assert_eq!(auth.session(&new), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The code just used, and the sessions' passwords, are kept with the state: a restart
+    /// (or a crash someone caused) brings neither a used code nor an old password's session back.
+    #[test]
+    fn used_codes_and_password_tags_survive_a_restart() {
+        let (plain, dir, secret) = setup("kept-steps", true);
+        let cfg = AuthCfg { state_dir: Some(dir.join("state")), ..plain.cfg.clone() };
+        let auth = Auth::new(cfg.clone());
+        let ip: IpAddr = "192.0.2.9".parse().unwrap();
+        let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let code = format!("{:06}", crate::totp::code(&secret, unix / crate::totp::STEP_SECS));
+        let Login::Ok(token) = auth.login(ip, "", "correct horse battery", &code).unwrap() else { panic!("login") };
+        let again = Auth::new(cfg.clone());
+        assert_eq!(again.login(ip, "", "correct horse battery", &code).unwrap(), Login::Wrong, "the code was used before the restart");
+        assert_eq!(again.session(&token).as_deref(), Some("admin"), "the session is read back");
+        std::fs::write(dir.join("pw"), hash_password("another long password").unwrap()).unwrap();
+        assert_eq!(Auth::new(cfg).session(&token), None, "and ends with its password, restart or not");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A thousand made-up names, all locked, must not keep a real account's failures from
+    /// being counted (its own lock would never come).
+    #[test]
+    fn a_full_table_of_locked_names_still_counts_a_new_one() {
+        let (auth, dir, _) = setup("full-accounts", false);
+        let now = Instant::now();
+        {
+            let mut hit = auth.accounts_hit.lock().unwrap();
+            for i in 0..1000 {
+                hit.insert(
+                    format!("x{i}"),
+                    AccountFailures { count: 10, first: Some(now), locked_until: Some(now + WINDOW), known_ips: vec![] },
+                );
+            }
+            hit.insert("ann".into(), AccountFailures { known_ips: vec!["192.0.2.1".parse().unwrap()], ..Default::default() });
+        }
+        for _ in 0..MAX_ACCOUNT_FAILURES {
+            auth.account_failed("bob", now);
+        }
+        let hit = auth.accounts_hit.lock().unwrap();
+        assert!(hit.get("bob").is_some_and(|a| a.locked_until.is_some()), "counted, and locked in its turn");
+        assert!(hit.contains_key("ann"), "an account that was logged in to is never the one to go");
+        assert!(hit.len() <= 1001);
+        drop(hit);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

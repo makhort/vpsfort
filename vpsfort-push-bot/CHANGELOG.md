@@ -3,6 +3,13 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.2.3 - 2026-11-11
+
+Installer hardening, after vpsfort's audit of 2026-11-10.
+
+- `deploy.sh`: the command pasted into the root shell refuses a staging copy holding anything but regular files. A link left there by the SSH user passed the hash check through its target, which could be changed before `install.sh` ran as root (found by vpsfort's thirteenth audit, 2026-11-10).
+- `scripts/ci.sh`: `VPSFORT_PUSH_BOT_SKIP_AUDIT=1` skips the licence check too, as its message says.
+
 ## 0.2.2 - 2026-11-08
 
 Installer hardening, after vpsfort's audit of 2026-11-07.

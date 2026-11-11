@@ -1610,8 +1610,12 @@ fn sshd_version(cfg: &SshAuditCfg) -> Option<String> {
     text.split_whitespace().find(|w| w.starts_with("OpenSSH_")).map(|w| crate::event::clean(w.trim_end_matches(','), 40))
 }
 
+/// The start of a file the audit reads: a regular file only, opened without blocking and
+/// never as a terminal. The paths are sshd's (`AuthorizedKeysFile` in a user's home, a
+/// host key, a command), and a user can put a FIFO there (the audit would wait on it
+/// forever) or a link to their terminal (which would become the daemon's own).
 fn read_small(path: &str) -> Option<String> {
-    let f = std::fs::File::open(path).ok()?;
+    let f = crate::cronwatch::open_regular(std::path::Path::new(path)).ok()?;
     let mut s = String::new();
     std::io::Read::read_to_string(&mut std::io::Read::take(f, 256 << 10), &mut s).ok()?;
     Some(s)
@@ -2344,5 +2348,20 @@ mod tests {
         assert!(f[0].notify && f[0].every > 0 && f[0].severity == Severity::Warning);
         assert_eq!(f[1].message, "SSH audit (standard): no problems");
         assert!(!f[1].notify);
+    }
+
+    /// A user's `authorized_keys` (or what sshd is told to read in their home) may be a pipe:
+    /// the audit must not wait on it.
+    #[test]
+    fn pipes_are_not_read() {
+        let d = std::env::temp_dir().join(format!("lg-sshaudit-fifo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let fifo = d.join("authorized_keys");
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        assert_eq!(read_small(fifo.to_str().unwrap()), None);
+        std::fs::write(d.join("real"), "ssh-ed25519 AAAA\n").unwrap();
+        assert_eq!(read_small(d.join("real").to_str().unwrap()).as_deref(), Some("ssh-ed25519 AAAA\n"));
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

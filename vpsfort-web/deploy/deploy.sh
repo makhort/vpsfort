@@ -36,4 +36,4 @@ REMOTE=/tmp/vpsfort-web-deploy.$(openssl rand -hex 8)
 } | sftp -q -o BatchMode=no -b - "$HOST" >/dev/null
 echo "Copied to $HOST:$REMOTE. Now paste this into a root shell there:"
 echo
-echo "d=\$(mktemp -d /root/vpsfort-web-deploy.XXXXXX) && cp -R $REMOTE/. \"\$d\" && cd \"\$d\" && echo '$MANIFEST  SHA256SUMS' | sha256sum -c --quiet && sha256sum -c --quiet --strict SHA256SUMS && bash install.sh; cd /; rm -rf \"\${d:?}\" $REMOTE"
+echo "d=\$(mktemp -d /root/vpsfort-web-deploy.XXXXXX) && cp -R $REMOTE/. \"\$d\" && [ -z \"\$(find \"\$d\" -mindepth 1 ! -type f)\" ] && cd \"\$d\" && echo '$MANIFEST  SHA256SUMS' | sha256sum -c --quiet && sha256sum -c --quiet --strict SHA256SUMS && bash install.sh; cd /; rm -rf \"\${d:?}\" $REMOTE"

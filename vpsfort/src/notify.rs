@@ -910,15 +910,18 @@ fn sweep(cfg: &NotifyCfg, bot: &mut BotBox, copies: &mut [CopyBot], node: &OnceL
             bot.failing.insert(f.path);
         }
     }
-    for (name, age) in found.stuck {
+    // one message for all of them: the bot's user decides how many there are
+    let more = found.stuck.len().saturating_sub(1);
+    if let Some((name, age)) = found.stuck.into_iter().max_by_key(|(_, age)| *age) {
         let subject = match node.get() {
             Some(node) => format!("[{node}] vpsfort: {}", topic_name(Topic::System)),
             None => format!("vpsfort: {}", topic_name(Topic::System)),
         };
         let body = format!(
-            "{subject}\n\n[High] The admin bot has had {} in its outbox for {} without sending it. \
+            "{subject}\n\n[High] The admin bot has had {}{} in its outbox for {} without sending it. \
              Check the bot's log: no trusted admin device, or the upload failing?",
             crate::event::clean(&name, 120),
+            if more > 0 { format!(" (and {more} more files)") } else { String::new() },
             crate::time::fmt_duration(age.as_secs() as i64 * SEC)
         );
         eprintln!("vpsfort: {name} waits in the admin bot's outbox");

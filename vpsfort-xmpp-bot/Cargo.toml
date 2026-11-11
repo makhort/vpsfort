@@ -1,6 +1,6 @@
 [package]
 name = "vpsfort-xmpp-bot"
-version = "0.7.1"
+version = "0.7.2"
 edition = "2021"
 description = "XMPP bot for vpsfort: an admin bot exposing curated ejabberdctl commands, or a client bot sending vpsfort's admin messages OMEMO-encrypted, else as OpenPGP files"
 license = "MIT"

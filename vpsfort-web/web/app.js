@@ -7,7 +7,7 @@ import { SVG, on, h, s, patch, livePart } from "/dom.js";
 import {
   ms, duration, compact, matches, niceMax, mergePlaces, mergePorts, WORTH, abuseRows, utc, providerName, abuseText,
   mailto, parseRdap, csv, linkify, parseHash, queryFor, applyQuery, drift, REPORTED_DAYS, brief, browserName, groupAttention, reoffended, viewTitle,
-  mergeAcross, decisionKey, alertKey, snapshotDiff, buckets, sparkPath, newSince, mapMarkers, trapHits,
+  mergeAcross, decisionKey, alertKey, snapshotDiff, buckets, sparkPath, newSince, mapMarkers, trapHits, trapService, tally,
 } from "/core.js";
 
 (() => {
@@ -56,12 +56,14 @@ import {
     down: 0,
     hidden: (() => { try { return JSON.parse(pref("lgw-columns", "{}")); } catch (_) { return {}; } })(),
     seen: (() => { try { return JSON.parse(pref("lgw-seen", "{}")); } catch (_) { return {}; } })(),
+    // new rows the admin clicked (per browser): table row key -> when (microseconds)
+    acked: (() => { try { return JSON.parse(pref("lgw-acked", "{}")) || {}; } catch (_) { return {}; } })(),
     pins: (() => { try { return JSON.parse(pref("lgw-pins", "[]")); } catch (_) { return []; } })(),
     filters: {
       overview: { range: "3h" },
       alerts: { level: "all", node: "", q: "", merge: true },
       bans: { node: "", q: "", group: false },
-      honeypots: { window: "24h", node: "", kind: "", q: "" },
+      honeypots: { window: "24h", node: "", kind: "", service: "", ports: false, q: "" },
       offenders: { node: "", q: "" },
       activity: { kind: "", node: "", q: "", merge: true },
       world: { q: "", selected: "", all: false, allNets: false, allPorts: false },
@@ -110,7 +112,9 @@ import {
 
   // vpsfort's times are microseconds since 1970; 0 or missing means "never" (an unset field),
   // and a time before 2000 can only be that too
-  const unset = (t) => !t || t < 946_684_800_000_000;
+  // (and anything that isn't a time a date can hold, which a node gone wrong may send:
+  // formatting it would throw and leave the tab empty)
+  const unset = (t) => !t || typeof t !== "number" || !(t >= 946_684_800_000_000 && t <= 8.64e18);
 
   function when(t) {
     if (unset(t)) return t === null || t === undefined ? "" : "never";
@@ -218,7 +222,7 @@ import {
       login("Your session ended: log in again.");
       throw new LoginNeeded();
     }
-    if (!res.ok) throw new Error(body.error || `${res.status} ${res.statusText}`);
+    if (!res.ok) throw Object.assign(new Error(body.error || `${res.status} ${res.statusText}`), { status: res.status });
     // a request counts as the session's activity
     state.lastApi = Date.now();
     return body;
@@ -621,7 +625,8 @@ import {
   function route() {
     if (!shell) return;
     const { parts, query } = parseHash(location.hash);
-    if (!VIEWS[parts[0]]) parts.splice(0, parts.length, "overview");
+    // (own names only: "#/constructor" isn't a tab)
+    if (!Object.hasOwn(VIEWS, parts[0])) parts.splice(0, parts.length, "overview");
     // a link's filters (#/alerts?level=high&q=ssh)
     if (state.filters[parts[0]]) applyQuery(state.filters[parts[0]], DEFAULTS[parts[0]], query);
     // the scroll position of each tab, restored when it comes back (opened rows stay in state.open)
@@ -649,7 +654,24 @@ import {
     // a share link's page has no shell: just its view
     if (state.shared) { if (state.view) state.view.update(); return; }
     if (!state.view || !shell) return;
-    state.view.update();
+    try {
+      state.view.update();
+    } catch (e) {
+      // A filter value no control offers (from a link, then kept in this browser) or a
+      // node's data in a shape the page doesn't know: the tab's filters go back to their
+      // defaults, and if that isn't it the tab says so; the other tabs stay usable.
+      const tab = state.route[0];
+      if (state.filters[tab]) Object.assign(state.filters[tab], JSON.parse(JSON.stringify(DEFAULTS[tab])));
+      try {
+        shell.main.replaceChildren();
+        state.view = VIEWS[tab](shell.main, tab === "address" ? addressOf(state.route) : state.route[1]);
+        state.view.update();
+      } catch (again) {
+        shell.main.replaceChildren(h("p", { class: "muted" }, `This tab couldn't be drawn (${again.message}). The other tabs still work; reload the page to try again.`));
+        state.view = { update() {} };
+        return;
+      }
+    }
     keepFilters();
     syncUrl();
   }
@@ -678,6 +700,14 @@ import {
     const nodes = (state.data && state.data.nodes) || [];
     return [h("option", { value: "" }, "All nodes"), ...nodes.map((n) => h("option", { value: n.id, selected: n.id === selected }, n.name))];
   }
+
+  // A click on a new row acknowledges it: it stops being new in this browser. Marks older than
+  // the last look go (what they marked is no longer new anyway).
+  for (const [k, t] of Object.entries(state.acked)) if (!(t >= state.lastLook)) delete state.acked[k];
+  const ack = (key) => { state.acked[key] = Date.now() * 1000; setPref("lgw-acked", JSON.stringify(state.acked)); };
+  // a row of the alerts or activity tables
+  const rowKey = (a) => `${a.node_id}:${a.ts}:${a.message}`;
+  const acked = (name, key) => (r) => Boolean(state.acked[`${name}:${key(r)}`]);
 
   // A sortable table. cols: {label, sort?: row => value, cell: row => node, cls?}. Rows with a
   // `detail` function expand on click; what is open survives refreshes (by `key`).
@@ -728,7 +758,8 @@ import {
         tr.tabIndex = 0;
         tr.setAttribute("aria-expanded", state.open.has(key) ? "true" : "false");
         // a click that ends a text selection in the row isn't a toggle
-        const toggle = () => { if (String(window.getSelection() || "")) return; if (state.open.has(key)) state.open.delete(key); else state.open.add(key); update(); };
+        // (and a click on a new row acknowledges it)
+        const toggle = () => { if (String(window.getSelection() || "")) return; if (key && /(^| )fresh( |$)/.test(cls)) ack(key); if (state.open.has(key)) state.open.delete(key); else state.open.add(key); update(); };
         on(tr, "click", toggle);
         on(tr, "keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
         if (state.open.has(key)) body.appendChild(h("tr", { class: "detail", "data-k": key && `${key}:detail` }, h("td", { colspan: cols.length }, opts.detail(r))));
@@ -1137,10 +1168,10 @@ import {
         let rows = d.alerts.filter((a) => (SEV[a.severity] || 0) >= min && (!f.node || a.node_id === f.node) && matches(f.q, a.message, a.target, (a.accounts || []).join(" "), a.topic, (a.evidence || []).join(" ")));
         const all = rows.length;
         if (f.merge) rows = mergeAcross(rows, alertKey);
-        const fresh = newSince(rows, state.lastLook);
+        const fresh = newSince(rows, state.lastLook, acked("alerts", rowKey));
         count.textContent = `${num(rows.length)} alert${rows.length === 1 ? "" : "s"}${f.merge && rows.length < all ? ` (${num(all)} entries)` : ""}${fresh.count ? `, ${num(fresh.count)} new` : ""}`;
         patch(exp, tableExport("alerts", alertCols(), rows));
-        patch(body, table("alerts", alertCols(), rows, { key: (a) => `${a.node_id}:${a.ts}:${a.message}`, detail: actionDetail, empty: "No alerts match.", rowClass: (a) => `sev-${a.severity}${fresh.isNew(a) ? " fresh" : ""}` }));
+        patch(body, table("alerts", alertCols(), rows, { key: rowKey, detail: actionDetail, empty: "No alerts match.", rowClass: (a) => `sev-${a.severity}${fresh.isNew(a) ? " fresh" : ""}` }));
       },
     };
   }
@@ -1175,10 +1206,10 @@ import {
         let rows = d.actions.filter((a) => (!f.kind || a.kind === f.kind) && (!f.node || a.node_id === f.node) && matches(f.q, a.message, a.target, a.category));
         const all = rows.length;
         if (f.merge) rows = mergeAcross(rows, decisionKey);
-        const fresh = newSince(rows, state.lastLook);
+        const fresh = newSince(rows, state.lastLook, acked("activity", rowKey));
         count.textContent = `${num(rows.length)} decision${rows.length === 1 ? "" : "s"}${f.merge && rows.length < all ? ` (${num(all)} entries)` : ""}${fresh.count ? `, ${num(fresh.count)} new` : ""}`;
         patch(exp, tableExport("activity", cols, rows));
-        patch(body, table("activity", cols, rows, { key: (a) => `${a.node_id}:${a.ts}:${a.message}`, detail: actionDetail, empty: "Nothing matches.", rowClass: (a) => `sev-${a.severity}${fresh.isNew(a) ? " fresh" : ""}` }));
+        patch(body, table("activity", cols, rows, { key: rowKey, detail: actionDetail, empty: "Nothing matches.", rowClass: (a) => `sev-${a.severity}${fresh.isNew(a) ? " fresh" : ""}` }));
       },
     };
   }
@@ -1248,7 +1279,10 @@ import {
   // How long a node's hits from its log are shown before they are asked again; what the
   // latest decisions add in between comes with every refresh.
   const HONEYPOTS_EVERY = 60 * 1000;
-  const HONEYPOT_WINDOWS = { "24h": 86400e6, "7d": 7 * 86400e6 };
+  // The Overview's Activity periods. The nodes answer for 24 hours or 7 days: 3 hours is cut
+  // from the 24.
+  const HONEYPOT_PERIODS = [["3h", "Last 3 hours"], ["24h", "Last 24 hours"], ["7d", "Last 7 days"]];
+  const HONEYPOT_WINDOWS = { "3h": 3 * 3600e6, "24h": 86400e6, "7d": 7 * 86400e6 };
 
   async function loadHoneypots(win) {
     const cur = state.honeypots[win];
@@ -1269,22 +1303,55 @@ import {
     const count = h("span", { class: "count" });
     const exp = h("span", { class: "export" });
     const nodeSel = select(nodeOptions(f.node), (v) => { f.node = v; update(); }, "Node");
-    const ports = h("div", { class: "chips ports" });
+    const services = h("div", { class: "chips services", role: "group", "aria-label": "Filter by service" });
+    const ports = h("div", { class: "chips ports", role: "group", "aria-label": "Filter by port" });
+    const morePorts = h("button", { type: "button", class: "btn small", onclick: () => { f.ports = !f.ports; update(); } });
     const notes = h("div", { class: "trap-notes muted" });
-    const q = search(f.q, "Search addresses, places, networks, ports, what was sent", (v) => { f.q = v; update(); });
+    const q = search(f.q, "Search addresses, places, networks, ports, services, what was sent", (v) => { f.q = v; update(); });
     const kindSel = select([["", "Ports and decoy sites"], ["ports", "Honeypot ports"], ["web", "Decoy sites"]].map(([v, l]) => h("option", { value: v, selected: v === f.kind }, l)), (v) => { f.kind = v; update(); }, "Kind");
+    // a port typed whole ("23", "TCP/23") is that port, not every port it is a prefix of
+    const typedPort = () => {
+      const m = /^(?:tcp\/)?(\d+)$/i.exec((f.q || "").trim());
+      return m ? `TCP/${m[1]}` : "";
+    };
     // a chip narrows the table to its port (the decoy sites to their kind); the same chip again widens it
     const pick = (p) => {
       if (p === "web") {
         f.kind = f.kind === "web" ? "" : "web";
         kindSel.value = f.kind;
       } else {
-        f.q = f.q.trim() === p ? "" : p;
+        f.q = typedPort() === p ? "" : p;
         q.value = f.q;
       }
       update();
     };
-    const picked = (p) => (p === "web" ? f.kind === "web" : f.q.trim() === p);
+    const picked = (p) => (p === "web" ? f.kind === "web" : typedPort() === p);
+    // a service narrows the table and the port chips; what can't be in it goes with it
+    const pickService = (s) => {
+      f.service = f.service === s ? "" : s;
+      if (f.service && f.kind === "web" && f.service !== "Web") {
+        f.kind = "";
+        kindSel.value = "";
+      }
+      if (f.service && typedPort() && trapService(typedPort()) !== f.service) {
+        f.q = "";
+        q.value = "";
+      }
+      update();
+    };
+    const chip = (key, label, n, on, click) => h("button", { type: "button", class: `chip${on ? " on" : ""}`, "data-k": key, title: `${num(n)} hit${n === 1 ? "" : "s"}: click to show only these`, "aria-pressed": on ? "true" : "false", onclick: click }, label, " ", h("b", null, num(n)));
+    // Two rows of port chips, or all of them in a box that scrolls; what the fold hides can't
+    // be tabbed to. Says whether the list is longer than the fold.
+    const foldPorts = (open) => {
+      ports.classList.remove("open");
+      ports.classList.add("folded");
+      const over = ports.scrollHeight > ports.clientHeight + 1;
+      ports.classList.toggle("folded", !open);
+      ports.classList.toggle("open", open && over);
+      const bottom = ports.getBoundingClientRect().bottom;
+      for (const c of ports.children) c.inert = !open && over && c.getBoundingClientRect().bottom > bottom + 1;
+      return over;
+    };
     const body = h("section", { class: "card" });
     const cols = [
       { label: "Time", sort: (r) => r.hit_ts, cell: (r) => timeCell(r.hit_ts), csv: (r) => utc(r.hit_ts) },
@@ -1299,34 +1366,44 @@ import {
     root.append(
       h("div", { class: "page-head" }, h("h1", null, "Honeypots"), h("span", { class: "sub" }, "what connected to the honeypot ports and the decoy sites, and what it sent")),
       filterRow(
-        select(WINDOWS.map(([v, l]) => h("option", { value: v, selected: v === f.window }, l)), (v) => { f.window = v; update(); }, "Period"),
+        select(HONEYPOT_PERIODS.map(([v, l]) => h("option", { value: v, selected: v === f.window }, l)), (v) => { f.window = v; update(); }, "Period"),
         kindSel,
         nodeSel,
         q,
         columnChooser("honeypots", cols), count, exp),
       notes,
-      ports);
+      h("div", { class: "trap-filter" }, h("span", { class: "trap-label" }, "Service"), services),
+      h("div", { class: "trap-filter" }, h("span", { class: "trap-label" }, "Port"), ports, morePorts));
     root.appendChild(body);
     return {
       update() {
         patch(nodeSel, nodeOptions(f.node));
         const d = state.data;
         if (!ready("actions")) return;
-        loadHoneypots(f.window);
-        const log = state.honeypots[f.window] || { loading: true };
+        const asked = f.window === "3h" ? "24h" : f.window;
+        loadHoneypots(asked);
+        const log = state.honeypots[asked] || { loading: true };
         // the logs, asked every minute, and the latest decisions, which come with every refresh
         const since = Date.now() * 1000 - HONEYPOT_WINDOWS[f.window];
         const all = trapHits([...((log.data && log.data.hits) || []), ...d.actions.filter((a) => a.ts >= since)], d.nodes).filter((r) => r.hit_ts >= since);
-        // a port typed whole ("23", "TCP/23") is that port, not every port it is a prefix of
-        const portQ = /^(?:tcp\/)?(\d+)$/i.exec((f.q || "").trim());
-        const hit = (r) => (portQ ? r.port === `TCP/${portQ[1]}` : matches(f.q, r.addr, r.target, r.port, r.place, r.network, r.sent));
-        const rows = all.filter((r) => (!f.node || r.node_id === f.node) && (!f.kind || (f.kind === "web") === (r.port === "web")) && hit(r));
-        const by = new Map();
-        for (const r of all.filter((r) => !f.node || r.node_id === f.node)) by.set(r.port, (by.get(r.port) || 0) + 1);
-        const top = [...by.entries()].sort((a, b) => b[1] - a[1]);
-        patch(ports, top.map(([p, n]) => h("button", { type: "button", class: `chip${picked(p) ? " on" : ""}`, "data-k": p, title: `${num(n)} hit${n === 1 ? "" : "s"}: click to show only these`, "aria-pressed": picked(p) ? "true" : "false", onclick: () => pick(p) }, p === "web" ? "decoy site" : p, " ", h("b", null, num(n)))));
-        const fresh = newSince(rows, state.lastLook);
-        const period = WINDOWS.find(([v]) => v === f.window)[1].toLowerCase();
+        const portQ = typedPort();
+        const hit = (r) => (portQ ? r.port === portQ : matches(f.q, r.addr, r.target, r.port, r.service, r.place, r.network, r.sent));
+        const inNode = all.filter((r) => !f.node || r.node_id === f.node);
+        const rows = inNode.filter((r) => (!f.kind || (f.kind === "web") === (r.port === "web")) && (!f.service || r.service === f.service) && hit(r));
+        const byService = tally(inNode, (r) => r.service);
+        // the one in use stays, to be clicked off, in a period or on a node that has none of it
+        if (f.service && !byService.some(([s]) => s === f.service)) byService.push([f.service, 0]);
+        patch(services, byService.map(([s, n]) => chip(s, s, n, f.service === s, () => pickService(s))));
+        const top = tally(inNode.filter((r) => !f.service || r.service === f.service), (r) => r.port);
+        // the chip in use stays in sight when the list is folded
+        if (!f.ports) top.sort((a, b) => picked(b[0]) - picked(a[0]));
+        patch(ports, top.map(([p, n]) => chip(p, p === "web" ? "decoy site" : p, n, picked(p), () => pick(p))));
+        const longer = foldPorts(f.ports);
+        patch(morePorts, f.ports ? "Show fewer" : `Show all ${num(top.length)}`);
+        morePorts.hidden = !longer;
+        morePorts.setAttribute("aria-expanded", f.ports ? "true" : "false");
+        const fresh = newSince(rows, state.lastLook, acked("honeypots", (r) => r.key));
+        const period = HONEYPOT_PERIODS.find(([v]) => v === f.window)[1].toLowerCase();
         count.textContent = `${num(rows.length)} hit${rows.length === 1 ? "" : "s"}${fresh.count ? `, ${num(fresh.count)} new` : ""} in the ${period}${log.loading ? ", reading the nodes' logs…" : ""}`;
         const trouble = [
           log.error ? `The nodes' logs couldn't be read (${log.error}): only their latest decisions are shown.` : null,
@@ -2374,12 +2451,18 @@ import {
 
   async function loadAddress(q) {
     if (!q) return;
+    // an address or a network, nothing else: the hash's text goes into the request's path,
+    // where "x?share=..." or "../" would ask for something other than an address page
+    if (!/^[0-9a-fA-F:.]{2,45}(\/\d{1,3})?$/.test(q)) {
+      state.address[q] = { error: "not an address", at: Date.now() };
+      return;
+    }
     try {
       const share = state.shared ? `?share=${encodeURIComponent(state.shared.token)}` : "";
       state.address[q] = { data: await api(`/api/v1/address/${q}${share}`), at: Date.now() };
     } catch (e) {
       if (e instanceof LoginNeeded) throw e;
-      state.address[q] = { error: e.message, at: Date.now() };
+      state.address[q] = { error: e.message, at: Date.now(), refused: e.status === 403 || e.status === 404 };
     }
   }
 
@@ -2676,8 +2759,14 @@ import {
     app.replaceChildren(h("header", { class: "top" }, h("span", { class: "brand" }, h("img", { src: "/icon.svg", alt: "" }), "vpsfort"),
       h("span", { class: "muted" }, "a shared, read-only view")), main);
     state.view = viewAddress(main, net);
-    const again = async () => { await loadAddress(net).catch(() => {}); state.view.update(); };
-    setInterval(again, 60000);
+    // (a link that ended or ran out isn't asked for again every minute: each refusal is
+    // logged for the firewall, which would ban its reader for keeping the tab open)
+    const again = async () => {
+      await loadAddress(net).catch(() => {});
+      state.view.update();
+      if (state.address[net] && state.address[net].refused) clearInterval(timer);
+    };
+    const timer = setInterval(again, 60000);
   }
 
   (async () => {

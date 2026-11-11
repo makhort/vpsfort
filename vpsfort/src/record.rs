@@ -263,6 +263,9 @@ fn genuine(source: Source, e: &JournalEntry) -> bool {
             None => e.uid.is_none(),
         },
         Source::Ufw | Source::Kernel => e.transport.as_deref().is_none_or(|t| t == "kernel"),
+        // journald's own notices (the lines it dropped): by its driver transport, which no
+        // client's line has. Its pid isn't 1, and `logger -t systemd-journald` is anyone's.
+        Source::Systemd if e.ident.as_deref() == Some("systemd-journald") => e.transport.as_deref().is_none_or(|t| t == "driver"),
         // the system manager, not a user's `systemd --user` or `logger -t systemd`
         Source::Systemd => e.pid.as_deref().is_none_or(|p| p == "1"),
         // su and sudo run set-uid root, so `_UID` may be the invoking user's: the program
@@ -289,15 +292,33 @@ fn genuine(source: Source, e: &JournalEntry) -> bool {
 /// and dropped); 0 at the end of the stream. For text from elsewhere, where a line without
 /// end must not grow without bound.
 pub fn read_line_capped(r: &mut impl std::io::BufRead, buf: &mut Vec<u8>, max: u64) -> std::io::Result<usize> {
+    read_line_capped_all(r, buf, max).map(|(n, _, _)| n)
+}
+
+/// [`read_line_capped`] for a reader that keeps its place in a file: the bytes kept in
+/// `buf`, the bytes read off the stream in all (the dropped rest of a long line included),
+/// and whether the line's end was reached (false: the stream ended inside the line).
+pub fn read_line_capped_all(r: &mut impl std::io::BufRead, buf: &mut Vec<u8>, max: u64) -> std::io::Result<(usize, u64, bool)> {
     use std::io::{BufRead as _, Read as _};
     let n = r.by_ref().take(max).read_until(b'\n', buf)?;
-    if n as u64 == max && buf.last() != Some(&b'\n') {
+    let mut read = n as u64;
+    let mut ended = buf.last() == Some(&b'\n');
+    if n as u64 == max && !ended {
         let mut rest = Vec::new();
-        while r.by_ref().take(max).read_until(b'\n', &mut rest)? > 0 && rest.last() != Some(&b'\n') {
+        loop {
             rest.clear();
+            let m = r.by_ref().take(max).read_until(b'\n', &mut rest)?;
+            read += m as u64;
+            if m == 0 {
+                break;
+            }
+            if rest.last() == Some(&b'\n') {
+                ended = true;
+                break;
+            }
         }
     }
-    Ok(n)
+    Ok((n, read, ended))
 }
 
 /// Lines of an actions log (`actions.jsonl` or a rotated `.gz` copy): a decision is a few
@@ -396,7 +417,7 @@ mod tests {
     fn syslog_ejabberd_line_uses_inner_iso_timestamp() {
         let mut y = YearGuess::new(2020);
         let r = parse_syslog_line(
-            "Aug 16 21:20:19 example.org ejabberdctl[26427]: 2026-08-16 21:20:19.107 [info] (#PID<0.28856.0>) Accepted connection [::ffff:12.223.25.27]:59195 -> [::ffff:11.242.39.236]:5223",
+            "Aug 16 21:20:19 example.org ejabberdctl[26427]: 2026-08-16 21:20:19.107 [info] (#PID<0.28856.0>) Accepted connection [::ffff:12.225.25.27]:59195 -> [::ffff:11.242.39.236]:5223",
             &mut y,
         )
         .unwrap();
@@ -499,6 +520,17 @@ mod tests {
         assert!(parse_journal_json(renamed).0.is_none());
         let real_root = r#"{"SYSLOG_IDENTIFIER":"sshd-session","_EXE":"/usr/lib/openssh/sshd-session","_UID":"0","MESSAGE":"Invalid user admin from 1.2.3.4 port 5555"}"#;
         assert!(parse_journal_json(real_root).0.is_some());
+        // journald's own word that it dropped a unit's lines: by its driver transport (its pid
+        // isn't 1), never a user's `logger -t systemd-journald`
+        let dropped = |fields: &str| {
+            let line =
+                format!(r#"{{"SYSLOG_IDENTIFIER":"systemd-journald",{fields}"MESSAGE":"Suppressed 1431 messages from sshd.service"}}"#);
+            parse_journal_json(&line).0.map(|r| r.source)
+        };
+        assert_eq!(dropped(r#""_TRANSPORT":"driver","_PID":"266","_UID":"0","#), Some(Source::Systemd), "journald itself");
+        assert_eq!(dropped(r#""_TRANSPORT":"syslog","_PID":"4242","_UID":"1000","#), None, "a user's logger");
+        assert_eq!(dropped(r#""_TRANSPORT":"journal","_PID":"1","_UID":"0","#), None, "not journald's own transport");
+        assert_eq!(dropped(""), Some(Source::Systemd), "an export without journald's fields");
         // ejabberd: only from its own unit, whatever the line names (UNIT= is the sender's choice)
         let msg =
             r#""MESSAGE":"2026-10-11 10:00:00.000 [info] (tls|<0.5.0>) Failed c2s PLAIN authentication for a@b from ::ffff:9.9.9.9: x""#;
@@ -514,5 +546,20 @@ mod tests {
         assert!(parse_journal_json(fake_ufw).0.is_none());
         let bytes = r#"{"SYSLOG_IDENTIFIER":"sshd","MESSAGE":[73,110,118,97,108,105,100]}"#;
         assert_eq!(parse_journal_json(bytes).0.unwrap().msg, "Invalid");
+    }
+
+    #[test]
+    fn a_capped_line_says_how_much_was_read() {
+        let text = format!("{}tail of the long line\nnext\n", "x".repeat(10));
+        let mut r = std::io::BufReader::new(text.as_bytes());
+        let mut buf = Vec::new();
+        assert_eq!(read_line_capped_all(&mut r, &mut buf, 10).unwrap(), (10, 32, true), "the dropped rest is counted");
+        buf.clear();
+        assert_eq!(read_line_capped_all(&mut r, &mut buf, 10).unwrap(), (5, 5, true));
+        assert_eq!(buf, b"next\n");
+        // a long line whose end isn't there yet
+        let mut r = std::io::BufReader::new(&b"0123456789abc"[..]);
+        buf.clear();
+        assert_eq!(read_line_capped_all(&mut r, &mut buf, 10).unwrap(), (10, 13, false));
     }
 }

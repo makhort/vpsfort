@@ -21,7 +21,7 @@ depend() {
 
 start_pre() {
     checkpath -d -m 0700 -o root:root /run/vpsfort /var/lib/vpsfort
-    checkpath -d -m 0755 -o root:root /var/log/vpsfort
+    checkpath -d -m 0750 -o root:root /var/log/vpsfort
     # vpsfort's messages name addresses, accounts and decisions: root's and the group's only
     checkpath -f -m 0640 -o root:root /var/log/vpsfort/daemon.log
     /usr/bin/vpsfort --config /etc/vpsfort/vpsfort.toml print-config > /dev/null

@@ -591,10 +591,19 @@ kbd { font-family: var(--mono); font-size: 11.5px; padding: 1px 5px; border: 1px
   .views { display: none; }
 }
 
-/* the Honeypots tab: a chip per port, a button that narrows the table to it */
+/* the Honeypots tab: a chip per service and per port, a button that narrows the table to it */
 button.chip { font: inherit; font-size: 12px; cursor: pointer; }
 button.chip:hover { border-color: var(--accent); }
 .chip.on { background: var(--accent-wash); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); color: var(--ink); }
-.chips.ports { margin: 2px 0 12px; }
+.trap-filter { display: grid; grid-template-columns: 3.4em minmax(0, 1fr) auto; gap: 6px 8px; align-items: start; margin: 2px 0 8px; }
+.trap-filter + .trap-filter { margin-bottom: 12px; }
+.trap-label { font-size: 12px; line-height: 24px; color: var(--ink-2); }
+.trap-filter .btn { justify-self: start; }
+.chips.ports.folded { max-height: 52px; overflow: hidden; }
+.chips.ports.open { max-height: 150px; overflow-y: auto; }
+@media (max-width: 640px) {
+  .trap-filter { grid-template-columns: minmax(0, 1fr); }
+  .trap-label { line-height: 1.2; }
+}
 .trap-notes { font-size: 12.5px; margin: 0 0 8px; }
 .trap-notes:empty { display: none; }

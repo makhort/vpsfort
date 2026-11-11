@@ -327,13 +327,21 @@ fn programs(proc: &Path, ignore: &[String], allow_appimages: bool) -> Vec<Odd> {
         let dir = p.path();
         // kernel threads have no program
         let Ok(exe) = std::fs::read_link(dir.join("exe")) else { continue };
-        let exe = crate::event::clean(&exe.display().to_string(), 300);
-        let Some(why) = odd_exe(&exe) else { continue };
+        // judged as the kernel names it: cut to what is shown, a long path lost its
+        // " (deleted)", and with it the reason to report it
+        let raw = exe.display().to_string();
+        let exe = crate::event::clean(&raw, 300);
+        // runc's memory copy is root's: the same name on another user's is anyone's choice
+        let borrowed_name = || {
+            (raw.starts_with("/memfd:runc") && uid_of(&dir) != 0)
+                .then_some("runs from memory only (memfd), under runc's name but not as root")
+        };
+        let Some(why) = odd_exe(&raw).or_else(borrowed_name) else { continue };
         if allow_appimages && appimage(&dir, &exe) {
             continue;
         }
         let process = comm(&dir);
-        if ignore.contains(&process) {
+        if ignore.contains(&process) && roots_program(&dir) {
             continue;
         }
         let container = own_ns.is_some() && std::fs::read_link(dir.join("ns/mnt")).ok() != own_ns;
@@ -347,6 +355,59 @@ fn programs(proc: &Path, ignore: &[String], allow_appimages: bool) -> Vec<Odd> {
 
 /// Reads outbound connections and odd programs from `/proc` (Linux).
 pub fn scan(cfg: &ProcCfg) -> ProcReport {
+    scan_with(cfg, Path::new(""))
+}
+
+/// The connections this host opened itself, as conntrack-tools' `conntrack` lists them:
+/// (local port, remote address, remote port) of each flow's original direction. None
+/// without the program.
+fn opened_here(conntrack: &Path) -> Option<std::collections::HashSet<(u16, IpAddr, u16)>> {
+    if conntrack.as_os_str().is_empty() || !conntrack.exists() {
+        return None;
+    }
+    // Only the flows that began at one of this host's addresses: a busy server's whole
+    // table is its clients', megabytes of text every minute.
+    let own: Vec<IpAddr> = crate::net::local_addresses()
+        .into_iter()
+        .filter(|ip| match ip {
+            IpAddr::V4(a) => !a.is_loopback(),
+            IpAddr::V6(a) => !a.is_loopback() && a.segments()[0] & 0xffc0 != 0xfe80,
+        })
+        .take(16)
+        .collect();
+    let mut opened = std::collections::HashSet::new();
+    let mut asked = false;
+    for ip in own {
+        let mut cmd = std::process::Command::new(conntrack);
+        cmd.args(["-L", "-p", "tcp", "--orig-src", &ip.to_string()]);
+        if ip.is_ipv6() {
+            cmd.args(["-f", "ipv6"]);
+        }
+        if let Ok(out) = crate::proc::run(cmd, None, std::time::Duration::from_secs(10)) {
+            if out.status.success() {
+                asked = true;
+                opened.extend(parse_conntrack(&String::from_utf8_lossy(&out.stdout)));
+            }
+        }
+    }
+    asked.then_some(opened)
+}
+
+/// `conntrack -L -p tcp`: `tcp 6 85 ESTABLISHED src=A dst=B sport=1 dport=2 src=B dst=A ...`.
+/// The first `dst`, `sport` and `dport` are the original direction's: who opened it.
+pub fn parse_conntrack(text: &str) -> std::collections::HashSet<(u16, IpAddr, u16)> {
+    text.lines()
+        .filter_map(|line| {
+            let first = |key: &str| line.split_whitespace().find_map(|w| w.strip_prefix(key));
+            let remote = first("dst=")?.parse::<IpAddr>().ok()?;
+            Some((first("sport=")?.parse().ok()?, crate::net::normalize(remote), first("dport=")?.parse().ok()?))
+        })
+        .collect()
+}
+
+/// [`scan`], with the direction of connections from a listening port told by `conntrack`
+/// (the path of conntrack-tools' program; empty: as before, they all count as accepted).
+pub fn scan_with(cfg: &ProcCfg, conntrack: &Path) -> ProcReport {
     let proc = Path::new("/proc");
     let mut r = ProcReport { scanned: time::now(), ..Default::default() };
     let Ok(v4) = std::fs::read_to_string(proc.join("net/tcp")) else { return r };
@@ -356,15 +417,27 @@ pub fn scan(cfg: &ProcCfg) -> ProcReport {
     let (c6, l6) = parse_tcp(&v6);
     conns.extend(c6);
     listening.extend(l6);
-    let outward_of = |conns: Vec<Socket>, listening: &BTreeSet<u16>| -> Vec<(IpAddr, u16, u64)> {
+    // A connection from a port that also listens is an accepted one, nearly always. But a
+    // program that listens on a port can connect out from it too, and what it opened that
+    // way used to count as accepted: unseen. `/proc/net/tcp` doesn't say who opened a
+    // connection; conntrack does, so it is asked when there are such connections.
+    let ambiguous = conns.iter().any(|(lp, ip, _, _)| listening.contains(lp) && !is_non_global(*ip));
+    let opened = if ambiguous { opened_here(conntrack) } else { None };
+    let outward_of = |conns: Vec<Socket>,
+                      listening: &BTreeSet<u16>,
+                      opened: Option<&std::collections::HashSet<(u16, IpAddr, u16)>>|
+     -> Vec<(IpAddr, u16, u64)> {
         conns
             .into_iter()
-            .filter(|(lp, ip, _, _)| !listening.contains(lp) && !is_non_global(*ip))
+            .filter(|(lp, ip, rp, _)| {
+                !is_non_global(*ip)
+                    && (!listening.contains(lp) || opened.is_some_and(|o| o.contains(&(*lp, crate::net::normalize(*ip), *rp))))
+            })
             .map(|(_, ip, rp, inode)| (ip, rp, inode))
             .collect()
     };
     let mut outward: Vec<(IpAddr, u16, u64, Option<String>)> =
-        outward_of(conns, &listening).into_iter().map(|(a, p, i)| (a, p, i, None)).collect();
+        outward_of(conns, &listening, opened.as_ref()).into_iter().map(|(a, p, i)| (a, p, i, None)).collect();
     // Containers have network namespaces of their own: their tables are read through one of
     // their processes (`/proc/<pid>/net/tcp` is that namespace's), socket inodes are global.
     for (ns, pid) in container_namespaces(proc) {
@@ -376,14 +449,21 @@ pub fn scan(cfg: &ProcCfg) -> ProcReport {
         conns.extend(c6);
         listening.extend(l6);
         let label = container_id(&dir).unwrap_or(ns);
-        outward.extend(outward_of(conns, &listening).into_iter().map(|(a, p, i)| (a, p, i, Some(label.clone()))));
+        // (a container's flows are in the host's table as the host forwards them: not asked)
+        outward.extend(outward_of(conns, &listening, None).into_iter().map(|(a, p, i)| (a, p, i, Some(label.clone()))));
     }
     if !outward.is_empty() {
         let owners = socket_owners(proc);
         let mut seen = std::collections::HashSet::new();
         for (remote, port, inode, container) in outward {
             let Some((pid, process, uid)) = owners.get(&inode).cloned() else { continue };
-            if ignored(cfg, &process, port) || !seen.insert((process.clone(), remote, port)) {
+            // a name on the list excuses a program root installed, not one that took the name
+            let excused = if named(cfg, &process) {
+                roots_program(&proc.join(pid.to_string())) || ignored_port(cfg, &process, port)
+            } else {
+                ignored_port(cfg, &process, port)
+            };
+            if excused || !seen.insert((process.clone(), remote, port)) {
                 continue;
             }
             r.outbound.push(Conn { process, pid, uid, remote, port, container });
@@ -558,8 +638,26 @@ pub fn parse_wg_dump(text: &str) -> Vec<WgPeer> {
 
 /// Connections not watched: of `ignore_processes`, and to `ignore_ports` unless a shell or
 /// network tool makes them (a reverse shell on port 443 is still one).
+#[cfg(test)]
 fn ignored(cfg: &ProcCfg, process: &str, port: u16) -> bool {
-    cfg.ignore_processes.iter().any(|p| p == process) || (cfg.ignore_ports.contains(&port) && !SHELLS.contains(&process))
+    named(cfg, process) || ignored_port(cfg, process, port)
+}
+
+fn named(cfg: &ProcCfg, process: &str) -> bool {
+    cfg.ignore_processes.iter().any(|p| p == process)
+}
+
+fn ignored_port(cfg: &ProcCfg, process: &str, port: u16) -> bool {
+    cfg.ignore_ports.contains(&port) && !SHELLS.contains(&process)
+}
+
+/// Whether the program of `/proc/<pid>` (`dir`) is a file of root's that only root can
+/// write. A process names itself (`comm`), so a name in `ignore_processes` alone would let
+/// anything called `backup` or `firefox` talk to anyone unreported: the name counts for
+/// what root installed, wherever that is (`/usr`, `/opt`, a Snap), deleted since or not.
+fn roots_program(dir: &Path) -> bool {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    std::fs::metadata(dir.join("exe")).is_ok_and(|m| m.uid() == 0 && m.permissions().mode() & 0o022 == 0)
 }
 
 /// Whether `path` is on a FUSE file system, as `mountinfo` (a process's
@@ -619,7 +717,10 @@ pub fn judge(baseline: &mut Option<ProcBaseline>, r: &ProcReport, cfg: &ProcCfg,
         });
     }
     let (mut more, mut more_uids): (Vec<String>, BTreeSet<u32>) = (Vec::new(), BTreeSet::new());
-    for c in &r.outbound {
+    let daemon = std::process::id();
+    // by process and not by name, which anything can take: vpsfort's own connections (its
+    // cluster peers, feeds, lookups) are short, so a scan may first catch one months in
+    for c in r.outbound.iter().filter(|c| c.pid != daemon) {
         let shell = SHELLS.contains(&c.process.as_str());
         let odd_port = cfg.suspicious_ports.contains(&c.port);
         let pair = (c.process.clone(), c.port);
@@ -1023,6 +1124,11 @@ mod tests {
         assert!(f[0].message.starts_with("new outbound connection: curl (pid 7, uid 0) to 8.8.8.8:8080"));
         assert_eq!(f[1].severity, Severity::High);
         assert!(judge(&mut b, &report(82 * h, vec![conn("curl", 8080)]), &cfg, &none).is_empty(), "learned after its alert");
+        // the daemon's own connection is nobody's business, another program of its name is
+        let own = Conn { pid: std::process::id(), ..conn("vpsfort", 7946) };
+        assert!(judge(&mut b, &report(83 * h, vec![own]), &cfg, &none).is_empty(), "the daemon itself");
+        let f = judge(&mut b, &report(84 * h, vec![conn("vpsfort", 7946)]), &cfg, &none);
+        assert!(f.len() == 1 && f[0].message.starts_with("new outbound connection: vpsfort (pid 7"), "{f:?}");
         assert!(judge(&mut None, &ProcReport::default(), &cfg, &none).is_empty(), "no /proc: nothing");
     }
 
@@ -1045,5 +1151,30 @@ mod tests {
         let owners: Vec<Option<u32>> = f.iter().map(|f| f.owner).collect();
         assert_eq!(owners, [Some(1000), None, None, Some(1000), None], "{f:?}");
         assert_eq!(f[0].files, ["/proc/9/exe"], "the program as it runs, even deleted");
+    }
+
+    #[test]
+    fn a_long_deleted_path_is_still_deleted() {
+        let long = format!("/home/u/{}/tool (deleted)", "d".repeat(400));
+        assert!(odd_exe(&long).unwrap().contains("deleted"));
+        // cut to what is shown, the reason was gone
+        assert_eq!(odd_exe(&crate::event::clean(&long, 300)), None);
+    }
+
+    #[test]
+    fn conntrack_says_who_opened_a_connection() {
+        // (two lines as `conntrack -L -p tcp` printed them on a node, 2026-11-11)
+        let text = "tcp      6 85 TIME_WAIT src=192.0.2.10 dst=203.0.113.80 sport=46438 dport=7946 src=203.0.113.80 dst=192.0.2.10 sport=7946 dport=46438 [ASSURED] mark=0 use=1\n\
+                    tcp      6 431999 ESTABLISHED src=198.51.100.7 dst=192.0.2.10 sport=51234 dport=443 src=192.0.2.10 dst=198.51.100.7 sport=443 dport=51234 [ASSURED] mark=0 use=1\n\
+                    tcp      6 300 ESTABLISHED src=192.0.2.10 dst=198.51.100.99 sport=443 dport=4444 src=198.51.100.99 dst=192.0.2.10 sport=4444 dport=443 [ASSURED] mark=0 use=1\n\
+                    conntrack v1.4.8 (conntrack-tools): 3 flow entries have been shown.\n";
+        let opened = parse_conntrack(text);
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        assert_eq!(opened.len(), 3);
+        // a client of the web server on 443: its flow began at the client
+        assert!(!opened.contains(&(443, ip("198.51.100.7"), 51234)));
+        // a connection made from port 443 by whatever listens there: this host opened it
+        assert!(opened.contains(&(443, ip("198.51.100.99"), 4444)));
+        assert!(opened.contains(&(46438, ip("203.0.113.80"), 7946)));
     }
 }

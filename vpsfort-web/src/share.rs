@@ -1,6 +1,8 @@
 //! A link to one address's page that needs no login: for handing the evidence about an
 //! address to its hosting provider. The link carries a token: the address and an expiry,
-//! signed with the web key (or, on a console without one, a key made at start). It opens
+//! signed with a key of the console's own (`STATE_DIR/share.key`; without a state directory
+//! one made at start). Never the web key: every node holds that one, and could sign a link
+//! to any address's page. A token also has to be one of the links listed here. It opens
 //! nothing but that address's data (`/api/v1/address/<net>?share=<token>`), stays read-only
 //! like everything here, and ends when it expires: at most a week.
 //!
@@ -55,12 +57,8 @@ pub struct Share {
 }
 
 impl Share {
-    pub fn new(web_key: Option<[u8; 32]>, dir: Option<&Path>) -> Share {
-        let key = web_key.unwrap_or_else(|| {
-            let mut k = [0u8; 32];
-            let _ = crate::wire::getrandom(&mut k);
-            k
-        });
+    pub fn new(dir: Option<&Path>) -> Share {
+        let key = own_key(dir);
         let path = dir.map(|d| d.join("share-links.json"));
         let links: Vec<Link> =
             path.as_deref().and_then(crate::store::load).and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
@@ -140,14 +138,58 @@ impl Share {
         if !crate::auth::same(self.mac(net, expires).as_bytes(), mac.as_bytes()) {
             return Err("not a share link of this console");
         }
-        if expires * SEC < now {
+        if expires.saturating_mul(SEC) < now {
             return Err("this share link has expired");
         }
-        if self.links.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|l| l.ended && l.id == Share::id_of(token)) {
-            return Err("this share link was ended");
+        // one of the links made here and still listed: the thousand-and-first oldest is ended
+        // by leaving the list, like one an admin ended
+        match self.links.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|l| l.id == Share::id_of(token)) {
+            Some(l) if l.ended => Err("this share link was ended"),
+            Some(_) => Ok(()),
+            None => Err("this share link is no longer listed"),
         }
-        Ok(())
     }
+}
+
+/// The key share links are signed with: the console's own, kept in `STATE_DIR/share.key`
+/// (0600) from the first start on; without a state directory, or when it can't be kept, one
+/// for this run (a restart then ends the links).
+fn own_key(dir: Option<&Path>) -> [u8; 32] {
+    let fresh = || {
+        let mut k = [0u8; 32];
+        let _ = crate::wire::getrandom(&mut k);
+        k
+    };
+    let Some(path) = dir.map(|d| d.join("share.key")) else { return fresh() };
+    let kept =
+        std::fs::read_to_string(&path).ok().and_then(|t| crate::wire::unhex(t.trim()).ok()).and_then(|b| <[u8; 32]>::try_from(b).ok());
+    if let Some(key) = kept {
+        return key;
+    }
+    let key = fresh();
+    let write = || -> std::io::Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+        if let Some(d) = path.parent().filter(|d| !d.is_dir()) {
+            std::fs::DirBuilder::new().recursive(true).mode(0o700).create(d)?;
+        }
+        let _ = std::fs::remove_file(&path);
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path)?;
+        f.write_all(format!("{}\n", crate::wire::hex(&key)).as_bytes())?;
+        f.sync_all()
+    };
+    if let Err(e) = write() {
+        crate::say!("vpsfort-web: cannot keep the share links' key in {}: {e} (the links end at a restart)", path.display());
+    }
+    key
+}
+
+/// A request over the pace: how long until the window ends, and whether it is the window's
+/// first one refused (the one worth a line in the log).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Refused {
+    pub wait: Duration,
+    pub first: bool,
 }
 
 /// Requests to the shared endpoint from one address within a minute; beyond, 429.
@@ -163,9 +205,9 @@ pub struct Pace {
 }
 
 impl Pace {
-    /// Counts a request from `ip`; `Err(wait)` when it is over the pace, with how long until
-    /// the window ends.
-    pub fn allow(&self, ip: IpAddr, now: Instant) -> Result<(), Duration> {
+    /// Counts a request from `ip`; `Err` when it is over the pace, with how long until the
+    /// window ends.
+    pub fn allow(&self, ip: IpAddr, now: Instant) -> Result<(), Refused> {
         let mut seen = self.seen.lock().unwrap_or_else(|e| e.into_inner());
         if seen.len() >= PACE_TRACKED && !seen.contains_key(&ip) {
             seen.retain(|_, (since, _)| now.duration_since(*since) < PACE_WINDOW);
@@ -174,9 +216,9 @@ impl Pace {
         if now.duration_since(e.0) >= PACE_WINDOW {
             *e = (now, 0);
         }
-        e.1 += 1;
+        e.1 = e.1.saturating_add(1);
         if e.1 > PACE {
-            return Err(PACE_WINDOW.saturating_sub(now.duration_since(e.0)));
+            return Err(Refused { wait: PACE_WINDOW.saturating_sub(now.duration_since(e.0)), first: e.1 == PACE + 1 });
         }
         Ok(())
     }
@@ -201,10 +243,15 @@ pub fn withhold(text: &str) -> String {
 }
 
 fn withhold_line(text: &str) -> String {
-    // a network ban's lines name the member first
+    // a network ban's lines name the member first: one address, not as many as a node cares
+    // to put there (each used to be a call deeper, until the stack ran out)
     if let Some((ip, rest)) = text.split_once(' ').filter(|(ip, _)| ip.parse::<IpAddr>().is_ok()) {
-        return format!("{ip} {}", withhold_line(rest));
+        return format!("{ip} {}", withhold_text(rest));
     }
+    withhold_text(text)
+}
+
+fn withhold_text(text: &str) -> String {
     let cut = |s: &str, at: &str| s.find(at).map(|i| s[..i].to_string());
     let t = if text.contains("canary account") {
         if text.starts_with("login to canary account") {
@@ -262,6 +309,9 @@ mod tests {
             "login (account name withheld) from 203.0.113.9 failed (vsftpd)"
         );
         assert_eq!(withhold("tripwire block TCP/23\u{1b}[0m"), "tripwire block TCP/23[0m", "no control characters");
+        // a line of nothing but addresses, as many as a node cares to send: no call per word
+        let many = ":: ".repeat(200_000);
+        assert!(withhold(&many).len() <= 320, "cut like any other text");
         assert_eq!(
             withhold("ban 203.0.113.9 for 1h (offence #1): burst score fast=100 slow=100 [5x ssh_auth_fail]"),
             "ban 203.0.113.9 for 1h (offence #1): burst score fast=100 slow=100 [5x ssh_auth_fail]"
@@ -277,22 +327,35 @@ mod tests {
         for _ in 0..PACE {
             assert_eq!(p.allow(ip, t0), Ok(()));
         }
-        let wait = p.allow(ip, t0 + Duration::from_secs(10)).unwrap_err();
-        assert!(wait > Duration::from_secs(40) && wait <= Duration::from_secs(50), "{wait:?}");
+        let refused = p.allow(ip, t0 + Duration::from_secs(10)).unwrap_err();
+        assert!(refused.wait > Duration::from_secs(40) && refused.wait <= Duration::from_secs(50), "{refused:?}");
+        assert!(refused.first, "the window's first refusal is the one logged");
+        assert!(!p.allow(ip, t0 + Duration::from_secs(11)).unwrap_err().first, "the next ones are not");
+        // a request stamped before the window another thread just began is counted in it:
+        // refused or let through, never a panic (the handler used to ask twice and unwrap)
+        let late = t0 + Duration::from_secs(70);
+        assert_eq!(p.allow(ip, late), Ok(()), "a new window");
+        assert_eq!(p.allow(ip, t0 + Duration::from_secs(59)), Ok(()), "an older stamp arriving after it");
+        assert_eq!(p.allow(ip, t0 + Duration::from_secs(130)), Ok(()), "and the minute after");
         assert_eq!(p.allow(other, t0), Ok(()), "another address isn't held back");
-        assert_eq!(p.allow(ip, t0 + Duration::from_secs(61)), Ok(()), "the next minute");
+        assert_eq!(p.allow(ip, t0 + Duration::from_secs(200)), Ok(()), "the next minute");
     }
 
     #[test]
     fn a_token_opens_its_address_until_it_expires() {
-        let s = Share::new(Some([7u8; 32]), None);
+        let s = Share::new(None);
         let now = 1_793_300_000 * SEC;
         let (t, expires) = s.token("192.0.2.1", 2, now, "admin");
         assert_eq!(expires, now + 2 * 3600 * SEC);
         assert_eq!(s.check("192.0.2.1", &t, now), Ok(()));
         assert_eq!(s.check("192.0.2.1", &t, now + 3 * 3600 * SEC), Err("this share link has expired"));
         assert!(s.check("192.0.2.2", &t, now).is_err(), "another address");
-        assert!(Share::new(Some([8u8; 32]), None).check("192.0.2.1", &t, now).is_err(), "another console");
+        assert!(Share::new(None).check("192.0.2.1", &t, now).is_err(), "another console");
+        // a token with a good signature that is not a link made here (the key was the web
+        // key once, which every node holds): refused
+        let exp = now / SEC + 3600;
+        let unlisted = format!("{exp}.{}", s.mac("192.0.2.77", exp));
+        assert_eq!(s.check("192.0.2.77", &unlisted, now), Err("this share link is no longer listed"));
         let mut forged = t.clone();
         forged.replace_range(..1, "9");
         assert!(s.check("192.0.2.1", &forged, now).is_err(), "a later expiry is a different signature");
@@ -301,14 +364,18 @@ mod tests {
         assert_eq!(s.check("192.0.2.1", &week, now + (MAX_HOURS as i64) * 3600 * SEC - SEC), Ok(()), "capped at a week");
         assert!(s.check("192.0.2.1", &week, now + (MAX_HOURS as i64 + 1) * 3600 * SEC).is_err());
         assert_ne!(
-            Share::new(None, None).token("a", 1, now, "admin").0,
-            Share::new(None, None).token("a", 1, now, "admin").0,
-            "no web key: a random one"
+            Share::new(None).token("a", 1, now, "admin").0,
+            Share::new(None).token("a", 1, now, "admin").0,
+            "no state directory: a key for each run"
         );
         // listed, ended early, and kept across a restart
         let d = std::env::temp_dir().join(format!("lgw-share-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        let s = Share::new(Some([7u8; 32]), Some(&d));
+        let s = Share::new(Some(&d));
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(d.join("share.key")).unwrap().permissions().mode() & 0o777, 0o600, "the console's own key");
+        }
         let (t, _) = s.token("192.0.2.1", 24, now, "alice");
         let (t2, _) = s.token("192.0.2.2", 1, now + SEC, "bob");
         let list = s.list(now);
@@ -319,8 +386,9 @@ mod tests {
         assert!(!s.end(&list[1].id), "ended once");
         assert_eq!(s.check("192.0.2.1", &t, now), Err("this share link was ended"));
         assert!(s.check("192.0.2.2", &t2, now).is_ok(), "the other link still works");
-        let again = Share::new(Some([7u8; 32]), Some(&d));
+        let again = Share::new(Some(&d));
         assert_eq!(again.check("192.0.2.1", &t, now), Err("this share link was ended"), "read back");
+        assert!(again.check("192.0.2.2", &t2, now).is_ok(), "the key is read back too: the links outlive a restart");
         assert_eq!(again.list(now + 2 * 3600 * SEC).len(), 1, "the expired one is gone from the list");
         let _ = std::fs::remove_dir_all(&d);
     }

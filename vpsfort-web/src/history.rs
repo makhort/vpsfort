@@ -5,7 +5,7 @@
 //! left out of the identity, so a changing count is one problem, not a new one each time.
 //! With a `STATE_DIR`, the list is written there whenever it changes and read back at start.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -75,28 +75,36 @@ impl History {
         let mut list = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let before = list.clone();
         let mut present: HashSet<(String, String)> = HashSet::new();
+        // the open problems by what they are (the latest of each): looking through the list
+        // for every row took seconds, under the lock, once a node listed thousands
+        let mut open: HashMap<(String, String), usize> =
+            list.iter().enumerate().filter(|(_, p)| p.gone.is_none()).map(|(i, p)| ((p.level.clone(), p.text.clone()), i)).collect();
         for a in attention {
             let level = a["level"].as_str().unwrap_or("").to_string();
             let text = without_count(a["text"].as_str().unwrap_or(""));
             let node = a["node"].as_str().unwrap_or("").to_string();
-            let open = list.iter_mut().rev().find(|p| p.gone.is_none() && p.level == level && p.text == text);
-            match open {
-                Some(p) => {
+            let key = (level, text);
+            match open.get(&key) {
+                Some(&i) => {
+                    let p = &mut list[i];
                     p.last = now;
                     if !node.is_empty() && !p.nodes.contains(&node) {
                         p.nodes.push(node);
                     }
                 }
-                None => list.push(Problem {
-                    level: level.clone(),
-                    text: text.clone(),
-                    nodes: if node.is_empty() { vec![] } else { vec![node] },
-                    first: now,
-                    last: now,
-                    gone: None,
-                }),
+                None => {
+                    open.insert(key.clone(), list.len());
+                    list.push(Problem {
+                        level: key.0.clone(),
+                        text: key.1.clone(),
+                        nodes: if node.is_empty() { vec![] } else { vec![node] },
+                        first: now,
+                        last: now,
+                        gone: None,
+                    });
+                }
             }
-            present.insert((level, text));
+            present.insert(key);
         }
         for p in list.iter_mut() {
             if p.gone.is_none() && !present.contains(&(p.level.clone(), p.text.clone())) {

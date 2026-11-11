@@ -160,7 +160,7 @@ fn running_program(path: &str) -> Option<u32> {
 /// following that link takes ptrace access to the process, which vpsfort has (`CAP_SYS_PTRACE`)
 /// and the scan sandbox hasn't (`CAP_DAC_READ_SEARCH` alone: yara's `could not open file`),
 /// and the process may be gone by the time ClamAV is done. The copy's path, or why there is none.
-fn snapshot(path: &str, pid: u32, work: &Path, max: u64) -> Result<String, String> {
+fn snapshot(path: &str, pid: u32, work: &Path, max: u64) -> Result<(String, u64), String> {
     let copy = work.join(format!("file-scan-{pid}.bin"));
     let _ = std::fs::remove_file(&copy);
     let src = std::fs::File::open(path).map_err(|e| match e.kind() {
@@ -169,12 +169,45 @@ fn snapshot(path: &str, pid: u32, work: &Path, max: u64) -> Result<String, Strin
     })?;
     let cannot = |e: std::io::Error| format!("not scanned: cannot copy the running program to {}: {e}", copy.display());
     let mut dst = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&copy).map_err(cannot)?;
-    let n = std::io::copy(&mut src.take(max + 1), &mut dst).map_err(cannot)?;
+    let n = std::io::copy(&mut src.take(max.saturating_add(1)), &mut dst).map_err(cannot)?;
     if n > max {
         let _ = std::fs::remove_file(&copy);
-        return Err(format!("not scanned: larger than {} MB", max >> 20));
+        return Err(format!("{TOO_LARGE} {} MB", max >> 20));
     }
-    Ok(copy.display().to_string())
+    Ok((copy.display().to_string(), n))
+}
+
+const TOO_LARGE: &str = "not scanned: larger than";
+const COPIES_FULL: &str = "not scanned: this scan's copies of running programs are at their limit";
+/// One scan's copies of running programs take at most this many times `scan_max_mb` in all:
+/// any user can start a batch of programs from a temporary directory, each up to that size,
+/// and the copies are on the disk vpsfort's state is on.
+const COPIES_PER_SCAN: u64 = 4;
+
+/// [`snapshot`] within what is left for this scan's copies (`room`, less the copy made).
+fn snapshot_within(path: &str, pid: u32, work: &Path, max: u64, room: &mut u64) -> Result<String, String> {
+    let limit = max.min(*room);
+    match snapshot(path, pid, work, limit) {
+        Ok((copy, size)) => {
+            *room -= size;
+            Ok(copy)
+        }
+        Err(why) if limit < max && why.starts_with(TOO_LARGE) => Err(COPIES_FULL.into()),
+        Err(why) => Err(why),
+    }
+}
+
+/// Removes the copies a scan left when vpsfort was stopped in the middle of it (one scan
+/// runs at a time, so any there are stale).
+fn remove_stale_copies(work: &Path) {
+    let Ok(entries) = std::fs::read_dir(work) else { return };
+    for e in entries.flatten() {
+        let name = e.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("file-scan-") && name.ends_with(".bin") {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
 }
 
 /// The rule files of `yara_rules`: files as they are, directories' `.yar`/`.yara` files.
@@ -333,7 +366,15 @@ fn ready(report: &mut ScanReport, copies: &Copies, names: &mut Vec<String>, max:
     if names.is_empty() {
         return false;
     }
-    if let Err(e) = std::fs::write(list, names.join("\n") + "\n") {
+    // the names of what changed on this host: root's alone
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(list)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, (names.join("\n") + "\n").as_bytes()));
+    if let Err(e) = written {
         report.errors.push(format!("cannot write the list of files to scan ({}): {e}", list.display()));
         names.clear();
     }
@@ -347,6 +388,8 @@ pub fn scan(cfg: &ScanCfg, jobs: Vec<Job>, work: &Path, now: &dyn Fn() -> Micros
     let max = cfg.scan_max_mb.saturating_mul(1 << 20);
     let mut names = Vec::new();
     let mut copies = Copies::new();
+    remove_stale_copies(work);
+    let mut room = max.saturating_mul(COPIES_PER_SCAN);
     for j in jobs {
         if report.files.iter().any(|f| f.path == j.path) {
             continue;
@@ -358,7 +401,7 @@ pub fn scan(cfg: &ScanCfg, jobs: Vec<Job>, work: &Path, now: &dyn Fn() -> Micros
         };
         let mut name = j.path.clone();
         if let Some(pid) = running_program(&j.path).filter(|_| note.is_none()) {
-            match snapshot(&j.path, pid, work, max) {
+            match snapshot_within(&j.path, pid, work, max, &mut room) {
                 Ok(copy) => {
                     copies.insert(copy.clone(), j.path.clone());
                     name = copy;
@@ -524,13 +567,26 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let program = dir.join("program");
         std::fs::write(&program, "ELF program").unwrap();
-        let copy = snapshot(program.to_str().unwrap(), 7, &dir, 1 << 20).unwrap();
+        let (copy, size) = snapshot(program.to_str().unwrap(), 7, &dir, 1 << 20).unwrap();
+        assert_eq!(size, 11);
         assert_eq!(copy, dir.join("file-scan-7.bin").display().to_string());
         assert_eq!(std::fs::read_to_string(&copy).unwrap(), "ELF program");
         assert_eq!(std::fs::metadata(&copy).unwrap().permissions().mode() & 0o777, 0o600);
         assert!(snapshot(program.to_str().unwrap(), 7, &dir, 4).unwrap_err().contains("larger than 0 MB"));
         assert!(!Path::new(&copy).exists(), "an oversized copy is removed");
         assert_eq!(snapshot(dir.join("gone").to_str().unwrap(), 7, &dir, 1 << 20).unwrap_err(), GONE);
+        // one scan's copies have a size in all: a batch of programs started for it can't
+        // fill the disk the state is on
+        let mut room = 15;
+        let first = snapshot_within(program.to_str().unwrap(), 8, &dir, 1 << 20, &mut room).unwrap();
+        assert_eq!(room, 4);
+        assert_eq!(snapshot_within(program.to_str().unwrap(), 9, &dir, 1 << 20, &mut room).unwrap_err(), COPIES_FULL);
+        assert!(Path::new(&first).exists() && !dir.join("file-scan-9.bin").exists());
+        assert!(snapshot_within(program.to_str().unwrap(), 9, &dir, 4, &mut 1000).unwrap_err().starts_with(TOO_LARGE), "its own size");
+        // a copy left by a scan vpsfort was stopped in goes at the next scan
+        let r = scan(&ScanCfg::default(), vec![], &dir, &|| 7);
+        assert!(r.errors.is_empty() && !Path::new(&first).exists(), "{:?}", r.errors);
+        assert!(program.exists(), "only the copies");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -593,6 +649,7 @@ while IFS= read -r f; do head -c 4 "$f" | grep -q ELF && echo "$f: Unix.Self FOU
             "clamscan",
             r#"for a; do case $a in --file-list=*) list=${a#--file-list=};; esac; done
 cp "$list" "$(dirname "$0")/clamscan.list"
+ls -l "$list" | cut -c1-10 > "$(dirname "$0")/list.mode"
 while IFS= read -r f; do grep -q EVIL "$f" && echo "$f: Unix.Trojan.Evil FOUND"; done < "$list"; exit 1"#,
         );
         let yara = script(
@@ -642,6 +699,7 @@ while IFS= read -r f; do grep -q EVIL "$f" && echo "Evil_Rule $f"; done < "$last
         let yara_args = std::fs::read_to_string(bin.join("yara.args")).unwrap();
         assert!(yara_args.contains("--scan-list r0:") && yara_args.contains("rules/a.yar r1:"), "{yara_args}");
         assert!(!dir.join("file-scan.list").exists(), "the list is removed");
+        assert_eq!(std::fs::read_to_string(bin.join("list.mode")).unwrap().trim(), "-rw-------", "it names what changed: root's alone");
 
         // YARA only, with rules that don't compile: the scanner's error, no hits
         let broken = ScanCfg {

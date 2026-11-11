@@ -114,7 +114,8 @@ fn bans_feeds_and_healing_on_a_real_kernel() {
     let mut unban = change(ActionKind::Unban, "198.51.100.7", 0);
     e.apply(&mut unban).unwrap();
     assert!(unban.applied && !set("ban4").contains("198.51.100.7"), "{}", set("ban4"));
-    assert!(e.apply(&mut change(ActionKind::Unban, "198.51.100.7", 0)).is_ok(), "an element already gone is fine");
+    let again = e.apply(&mut change(ActionKind::Unban, "198.51.100.7", 0));
+    assert!(again.is_ok(), "an element already gone is fine, but nft's answer wasn't read as that: {again:?}");
 
     // a blocklist feed
     let feed: vpsfort::net::Net = "198.18.0.0/15".parse().unwrap();

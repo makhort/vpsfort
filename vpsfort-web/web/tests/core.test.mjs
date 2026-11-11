@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   abuseRows, abuseText, abuseSubject, mailto, parseRdap, plainEmail, csv, linkify, parseHash, queryFor, applyQuery,
-  drift, niceMax, duration, mergePlaces, reportedSources, brief, browserName, groupAttention, reoffended, viewTitle, mapMarkers, trapHits, banPlace, hitTime,
+  drift, niceMax, duration, mergePlaces, reportedSources, brief, browserName, groupAttention, reoffended, viewTitle, utc, mapMarkers, trapHits, banPlace, hitTime, trapService, tally,
 } from "../core.js";
 
 const T = 1793000000000000; // 2026-10-26 07:33 UTC (vpsfort's microseconds)
@@ -69,6 +69,16 @@ test("CSV: quoted, and no formulas from strangers", () => {
     'a,"say ""hi""","x,y"\r\n\'=cmd|\' /C calc\'!A0,\'+1,\'-2,\'@SUM(A1),"line\nbreak"\r\n');
 });
 
+test("CSV: a cell isn't split where a spreadsheet separates by ; or tab", () => {
+  assert.equal(csv([["agent;=HYPERLINK(1)", "a\t=1"]]), '"agent;=HYPERLINK(1)","a\t=1"\r\n');
+});
+
+test("times no date holds and stray % in links don't throw", () => {
+  assert.equal(utc(9e18), "unknown time");
+  assert.equal(utc(1_700_000_000_000_000), "2023-11-14 22:13:20 UTC");
+  assert.equal(viewTitle("#/alerts?q=100%"), "alerts · q=100%");
+});
+
 test("addresses in text", () => {
   const parts = linkify("ban 192.0.2.5 at 10:15:30 for 2001:db8::/32; not 300.1.1.1 or x10.0.0.1 or 192.0.2.50x");
   assert.deepEqual(parts.filter((p) => p.addr).map((p) => p.addr), ["192.0.2.5", "2001:db8::/32"]);
@@ -110,7 +120,7 @@ test("a browser's name from its User-Agent", () => {
   assert.equal(browserName("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.167 Safari/537.36"), "Chrome 152 on macOS");
   assert.equal(browserName("Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"), "Firefox 128 on Linux");
   assert.equal(browserName("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"), "Safari 17 on iOS");
-  // full version strings, as Edge sends them (a reduced "12.194.0.0" is shaped like an IPv4 address)
+  // full version strings, as Edge sends them (a reduced "12.196.0.0" is shaped like an IPv4 address)
   assert.equal(browserName("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.6723.92 Safari/537.36 Edg/130.0.2849.68"), "Edge 130 on Windows");
   assert.equal(browserName("curl/8.7.1"), "curl/8.7.1");
 });
@@ -217,6 +227,9 @@ test("new since the last look", () => {
   assert.equal(n.count, 2);
   assert.ok(n.isNew(rows[0]) && !n.isNew(rows[2]));
   assert.equal(newSince(rows, 0).count, 3, "no last look: everything is new");
+  const clicked = newSince(rows, 20, (r) => r === rows[0]);
+  assert.equal(clicked.count, 1, "a clicked row is no longer new");
+  assert.ok(!clicked.isNew(rows[0]) && clicked.isNew(rows[1]));
 });
 
 test("map markers at a spot's coordinates, the rest of the country at its capital", () => {
@@ -334,4 +347,21 @@ test("a ban's place and network, from its message", () => {
   assert.deepEqual(of(undefined), ["", ""]);
   const [row] = trapHits([{ kind: "ban", ts: T, node: "trap", node_id: "2", target: "192.0.2.1", message: "ban 192.0.2.1 [Argentina / Example (AS1)] for 14d", evidence: ["11-09 01:07:00 connected to honeypot TCP/23, sent nothing"] }], []);
   assert.deepEqual([row.place, row.network], ["Argentina", "Example (AS1)"]);
+});
+
+test("honeypot hits: each has its service type, and the counts come out the most first", () => {
+  for (const [port, service] of [
+    ["TCP/22", "SSH"], ["TCP/2222", "SSH"], ["TCP/23", "Telnet"], ["TCP/2323", "Telnet"], ["TCP/21", "FTP"], ["TCP/25", "Mail"], ["TCP/993", "Mail"],
+    ["TCP/3389", "RDP"], ["TCP/5901", "VNC"], ["TCP/445", "File sharing"], ["TCP/3306", "Databases"], ["TCP/2375", "Containers"], ["TCP/34567", "Devices"],
+    ["TCP/8545", "Crypto"], ["TCP/11434", "AI"], ["TCP/5060", "VoIP"], ["TCP/502", "Industrial"], ["TCP/8080", "Web"], ["web", "Web"], ["TCP/9034", "Other"],
+  ]) assert.equal(trapService(port), service, port);
+  const ban = (target, ...evidence) => ({ kind: "ban", category: "tripwire", target, ts: T, evidence, message: `ban ${target}`, node: "n1", node_id: "1" });
+  const hits = trapHits([
+    ban("192.0.2.1", "connected to honeypot TCP/22, sent nothing to the ssh banner"),
+    ban("192.0.2.2", "connected to honeypot TCP/2222, sent nothing to the ssh banner"),
+    ban("192.0.2.3", 'decoy_request: "GET / HTTP/1.1" 404 146 "-" "curl/8"'),
+  ], []);
+  assert.deepEqual(hits.map((r) => r.service), ["SSH", "SSH", "Web"]);
+  assert.deepEqual(tally(hits, (r) => r.service), [["SSH", 2], ["Web", 1]]);
+  assert.deepEqual(tally([{ k: "b" }, { k: "a" }], (r) => r.k), [["a", 1], ["b", 1]], "a tie goes by name");
 });

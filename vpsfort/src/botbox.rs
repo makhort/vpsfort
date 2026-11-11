@@ -164,6 +164,11 @@ pub struct Fallback {
     pub why: Why,
 }
 
+/// Entries of an outbox one sweep looks at.
+const MAX_SWEPT: usize = 10_000;
+/// Stuck files are reported this often at most.
+const STUCK_EVERY: Duration = Duration::from_secs(3600);
+
 /// What a sweep found.
 #[derive(Debug, Default, PartialEq)]
 pub struct Sweep {
@@ -263,6 +268,8 @@ pub struct BotBox {
     seq: u64,
     /// Stuck files already reported, and fallbacks whose failure was already logged.
     reported: HashSet<String>,
+    /// When stuck files were last reported.
+    stuck_told: Option<SystemTime>,
     pub failing: HashSet<PathBuf>,
     /// Signs the names of the messages written, and checks them before a fallback.
     key: Key,
@@ -280,6 +287,7 @@ impl BotBox {
             fallback: true,
             seq: 0,
             reported: HashSet::new(),
+            stuck_told: None,
             failing: HashSet::new(),
             key: Key::random(),
             legacy: unsigned_in(&dir),
@@ -348,7 +356,10 @@ impl BotBox {
     pub fn sweep(&mut self, now: SystemTime) -> io::Result<Sweep> {
         let mut out = Sweep::default();
         let mut present = HashSet::new();
-        let mut entries: Vec<_> = fs::read_dir(&self.dir)?.filter_map(|e| e.ok()).collect();
+        // The bot's user can write here: a sweep takes the first `MAX_SWEPT` entries, not
+        // millions of names into the daemon's memory (the rest wait for the next sweeps,
+        // once these are sent or deleted).
+        let mut entries: Vec<_> = fs::read_dir(&self.dir)?.filter_map(|e| e.ok()).take(MAX_SWEPT).collect();
         entries.sort_by_key(|e| e.file_name());
         if self.legacy.is_none() {
             // the outbox wasn't there when this BotBox was made
@@ -435,6 +446,17 @@ impl BotBox {
         }
         // a file sent (or deleted) and later one of the same name is new again
         self.reported.retain(|n| present.contains(n));
+        // Stuck files are told of once an hour at most (all of them in one message): the
+        // bot's user can make any number of them, each a High message to every admin.
+        if !out.stuck.is_empty() {
+            if self.stuck_told.is_some_and(|t| now.duration_since(t).is_ok_and(|d| d < STUCK_EVERY)) {
+                for (name, _) in out.stuck.drain(..) {
+                    self.reported.remove(&name);
+                }
+            } else {
+                self.stuck_told = Some(now);
+            }
+        }
         Ok(out)
     }
 

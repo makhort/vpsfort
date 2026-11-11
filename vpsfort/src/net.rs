@@ -248,7 +248,7 @@ mod tests {
         for n in ["192.0.2.1", "192.0.2.0/24", "198.51.100.255", "203.0.113.7", "2001:db8::1", "2001:db8:1::/48", "3fff:100::1"] {
             assert!(n.parse::<Net>().unwrap().is_documentation(), "{n}");
         }
-        for n in ["13.142.3.1", "192.0.0.0/16", "13.189.37.1", "13.217.50.1", "2001:db9::1", "10.0.0.1", "8.8.8.8", "::1"] {
+        for n in ["13.144.3.1", "192.0.0.0/16", "13.193.37.1", "13.224.50.1", "2001:db9::1", "10.0.0.1", "8.8.8.8", "::1"] {
             assert!(!n.parse::<Net>().unwrap().is_documentation(), "{n}");
         }
     }
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn mapped_addresses_become_v4() {
         assert_eq!(parse_ip("::ffff:1.2.3.4"), Some("1.2.3.4".parse().unwrap()));
-        assert_eq!(parse_ip_port("[::ffff:12.223.25.27]:59195"), Some(("12.223.25.27".parse().unwrap(), Some(59195))));
+        assert_eq!(parse_ip_port("[::ffff:12.225.25.27]:59195"), Some(("12.225.25.27".parse().unwrap(), Some(59195))));
         assert_eq!(parse_ip_port("11.145.111.110:50735"), Some(("11.145.111.110".parse().unwrap(), Some(50735))));
         assert_eq!(parse_ip_port("[2001:db8::1]:443").unwrap().1, Some(443));
         assert_eq!(parse_ip_port("2001:db8::1").unwrap().1, None);
@@ -264,11 +264,11 @@ mod tests {
 
     #[test]
     fn subnet_math() {
-        let n: Net = "13.46.43.99/24".parse().unwrap();
-        assert_eq!(n.to_string(), "13.46.43.0/24");
-        assert!(n.contains("13.46.43.31".parse().unwrap()));
-        assert!(!n.contains("13.46.44.31".parse().unwrap()));
-        assert!(n.contains_net(&"13.46.43.31".parse().unwrap()));
+        let n: Net = "13.48.43.99/24".parse().unwrap();
+        assert_eq!(n.to_string(), "13.48.43.0/24");
+        assert!(n.contains("13.48.43.31".parse().unwrap()));
+        assert!(!n.contains("13.48.44.31".parse().unwrap()));
+        assert!(n.contains_net(&"13.48.43.31".parse().unwrap()));
         let v6: Net = "2001:db8:1:2::5/64".parse().unwrap();
         assert_eq!(v6.to_string(), "2001:db8:1:2::/64");
         assert!(!v6.contains("1.2.3.4".parse().unwrap()));
@@ -307,11 +307,11 @@ mod tests {
 
     #[test]
     fn collapse_overlaps() {
-        let nets: Vec<Net> = ["127.0.0.0/8", "13.46.43.31", "127.0.0.1", "8.8.8.8", "8.8.8.8", "::1", "2001:db8::/32", "2001:db8::5"]
+        let nets: Vec<Net> = ["127.0.0.0/8", "13.48.43.31", "127.0.0.1", "8.8.8.8", "8.8.8.8", "::1", "2001:db8::/32", "2001:db8::5"]
             .iter()
             .map(|s| s.parse().unwrap())
             .collect();
         let got: Vec<String> = collapse(&nets).iter().map(|n| n.to_string()).collect();
-        assert_eq!(got, vec!["2001:db8::/32", "::1", "127.0.0.0/8", "8.8.8.8", "13.46.43.31"]);
+        assert_eq!(got, vec!["2001:db8::/32", "::1", "127.0.0.0/8", "8.8.8.8", "13.48.43.31"]);
     }
 }

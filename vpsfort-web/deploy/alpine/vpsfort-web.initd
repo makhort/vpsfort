@@ -30,6 +30,8 @@ start_pre() {
     fi
     checkpath -d -m 0700 -o vpsfort-web:vpsfort-web /var/lib/vpsfort-web
     checkpath -d -m 0750 -o root:vpsfort-web /var/log/vpsfort-web
+    # (the service's user can't make a file in root's directory)
+    checkpath -f -m 0640 -o vpsfort-web:vpsfort-web /var/log/vpsfort-web/console.log
     # the file is read by vpsfort-web itself (STATE_DIR defaults to /var/lib/vpsfort-web)
     export VPSFORT_WEB_CONFIG="$config"
 }

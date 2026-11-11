@@ -30,7 +30,7 @@ for p in $PATHS; do
     [ -e "$p" ] && targets+=("$p")
 done
 if [ "$SCANNER" = auto ]; then
-    if command -v clamdscan > /dev/null && { systemctl is-active --quiet clamav-daemon || systemctl is-active --quiet clamd@scan; }; then
+    if command -v clamdscan > /dev/null && command -v systemctl > /dev/null && { systemctl is-active --quiet clamav-daemon || systemctl is-active --quiet clamd@scan; }; then
         SCANNER=clamdscan
     else
         SCANNER=clamscan
@@ -60,7 +60,7 @@ echo "vpsfort-avscan start $(now)" >> "$LOG"
 if command -v "$SCANNER" > /dev/null; then
     # TZ=UTC: the summary's Start/End Date lines are then in UTC too. Indented, so no line of
     # the output (a file name with line breaks in it) can pass for one of the markers.
-    TZ=UTC "$SCANNER" "${args[@]}" "${targets[@]}" 2>&1 | sed -u 's/^/  /' >> "$LOG"
+    TZ=UTC "$SCANNER" "${args[@]}" "${targets[@]}" 2>&1 | awk '{ print "  " $0; fflush() }' >> "$LOG"
     rc=${PIPESTATUS[0]}
 else
     echo "vpsfort-avscan: $SCANNER not found (apt install clamav clamav-freshclam, or dnf install clamav clamav-freshclam, older Fedora and RHEL clamav-update)" >> "$LOG"

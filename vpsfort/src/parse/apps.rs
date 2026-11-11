@@ -857,10 +857,15 @@ pub const APPS: &[App] = &[
                         r"):\d+ TLS Auth Error: Auth Username/Password verification failed for peer"
                     ),
                 ),
+                // 0 points by default, this and `openvpn_hmac`: an OpenVPN server usually
+                // listens on UDP, where the source of a packet is its sender's to write, and
+                // one packet makes each of these lines. With points, three packets banned
+                // any address they named. A TCP server gives them points in
+                // `[sources.app_weights]` (a handshake can't be forged).
                 rule(
                     "openvpn_tls",
                     Probe,
-                    20.0,
+                    0.0,
                     Some(1194),
                     concat!(
                         "^",
@@ -874,7 +879,7 @@ pub const APPS: &[App] = &[
                 rule(
                     "openvpn_hmac",
                     Probe,
-                    40.0,
+                    0.0,
                     Some(1194),
                     concat!(
                         r"(?:tls-crypt unwrapping failed|cannot locate HMAC in incoming packet|Bad encapsulated packet length) from \[AF_INET6?\](?P<ip>",
@@ -915,7 +920,10 @@ pub const APPS: &[App] = &[
                         Failure,
                         25.0,
                         Some(21),
-                        concat!(r"\S+ \((?P<ip>", ip!(), r")\[", ip!(), r"\]\): USER (?P<user>.*?) \(Login failed\)"),
+                        // `host (name[address])`: the name is what the address resolves to,
+                        // the client's own to choose (a name of digits reads as an address);
+                        // the address is in the brackets
+                        concat!(r"\S+ \([^\[\]() ]*\[(?P<ip>", ip!(), r")\]\): USER (?P<user>.*?) \(Login failed\)"),
                     ),
                     rule(
                         "proftpd_user",
@@ -954,7 +962,15 @@ pub const APPS: &[App] = &[
                     Probe,
                     25.0,
                     Some(25),
-                    concat!(r" H=(?:[^ \[(]+ )?(?:\([^)]*\) )?\[(?P<ip>", ip!(), r")\](?::\d+)? .*? rejected RCPT .*: relay not permitted"),
+                    // The HELO name (in parentheses) is the client's, and with
+                    // `helo_accept_junk_hosts` it may hold `) [203.0.113.9] F=<..> rejected
+                    // RCPT ..`: the line then names two addresses, the second the real one. So
+                    // nothing after the address may read `) [` again, up to the line's end.
+                    concat!(
+                        r" H=(?:[^ \[(]+ )?(?:\([^)]*\) )?\[(?P<ip>",
+                        ip!(),
+                        r")\](?::\d+)? (?:[^)]|\)[^ ]|\) [^\[])*? rejected RCPT (?:[^)]|\)[^ ]|\) [^\[])*: relay not permitted\s*$"
+                    ),
                 ),
             ],
         }],
@@ -1130,6 +1146,8 @@ impl Host for System {
             })
             .map(|e| e.path())
             .filter(|p| p.is_file())
+            // (a service's user owns some of these directories: not every name it can make)
+            .take(1024)
             .collect();
         out.sort();
         out
@@ -1567,13 +1585,13 @@ mod tests {
         );
         check(
             "apache",
-            "[Wed Jun 22 03:50:22 2005] [error] [client 13.228.38.17] Invalid method in request get /scripts/root.exe?/c+dir",
-            (P, "13.228.38.17", "apache_badreq"),
+            "[Wed Jun 22 03:50:22 2005] [error] [client 13.232.38.17] Invalid method in request get /scripts/root.exe?/c+dir",
+            (P, "13.232.38.17", "apache_badreq"),
         );
         check(
             "apache",
-            "[Mon Aug 29 06:27:40 2005] [error] [client 13.200.22.150] request failed: URI too long (longer than 8190)",
-            (P, "13.200.22.150", "apache_badreq"),
+            "[Mon Aug 29 06:27:40 2005] [error] [client 13.204.22.150] request failed: URI too long (longer than 8190)",
+            (P, "13.204.22.150", "apache_badreq"),
         );
         // scanners by their user agent (trumb/nginx-hardening's list, the attack tools and
         // survey scanners of it)
@@ -2041,5 +2059,25 @@ mod tests {
         assert_eq!(System.files(&format!("{d}/error.log")), vec![dir.join("error.log")]);
         assert!(System.files(&format!("{d}/missing.log")).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Text a client chooses must not choose the address its line counts against.
+    #[test]
+    fn a_clients_names_do_not_choose_the_address() {
+        // ProFTPD writes the name the address resolves to before it: the client's own DNS
+        let e = hit("ftp", "host (192.0.2.9[203.0.113.5]): USER alice (Login failed): Incorrect password").unwrap();
+        assert_eq!(e.ip.to_string(), "203.0.113.5");
+        // Exim with helo_accept_junk_hosts: a HELO name that reads like the rest of the line
+        none(
+            "exim",
+            "2026-10-25 10:00:00 H=(x) [192.0.2.9] F=<a@b.example> rejected RCPT <c@d.example>: relay not permitted) [203.0.113.5] \
+             F=<a@b.example> rejected RCPT <c@d.example>: relay not permitted",
+        );
+        // OpenVPN over UDP: one packet with any source address makes these lines
+        for line in ["tls-crypt unwrapping failed from [AF_INET]203.0.113.5:51234", "203.0.113.5:51234 TLS Error: TLS handshake failed"] {
+            assert_eq!(hit("openvpn", line).unwrap().points, Some(0.0), "{line}");
+        }
+        let e = hit("openvpn", "203.0.113.5:51234 TLS Auth Error: Auth Username/Password verification failed for peer").unwrap();
+        assert_eq!(e.points, Some(25.0), "after a TLS handshake: not forged");
     }
 }

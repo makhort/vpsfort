@@ -72,7 +72,7 @@ mod tests {
             (Signal::WebProbe, "11.81.32.142".into(), "denied: /var/www/html/config/aws.yml")
         );
         assert_eq!(crate::time::fmt_ts(e[0].ts), "2026-10-05 06:48:49");
-        let e = parse("2026-10-11T17:49:18.123456789Z [Sun Oct 11 17:49:18 2026] [error] [client: 12.195.52.117] [AH10244: invalid URI path (/../.env)] [UA]");
+        let e = parse("2026-10-11T17:49:18.123456789Z [Sun Oct 11 17:49:18 2026] [error] [client: 12.197.52.117] [AH10244: invalid URI path (/../.env)] [UA]");
         assert_eq!(e[0].detail, "path traversal: /../.env");
         let e = parse("[Tue Oct 06 08:27:23.123 2026] [authz_core:error] [pid 9] [client 203.0.113.9:51234] AH01630: client denied by server configuration: /var/www/html/.git");
         assert_eq!(e[0].ip.to_string(), "203.0.113.9");

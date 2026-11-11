@@ -139,7 +139,7 @@ fn setup(name: &str) -> Setup {
         history_days: 7,
         digest_days: 14,
     };
-    let console = console::serve(Arc::new(Console::new(cfg, auth, fleet, None))).unwrap();
+    let console = console::serve(Arc::new(Console::new(cfg, auth, fleet))).unwrap();
     let cert_der =
         rustls_pki_types::pem::PemObject::from_pem_slice(cert.as_bytes()).map(|c: rustls_pki_types::CertificateDer| c.to_vec()).unwrap();
     Setup { dir, console, cert: cert_der, totp: secret, key, agent }

@@ -43,16 +43,18 @@ struct Seen {
 }
 
 impl Seen {
-    /// False when `id` was seen before.
-    fn insert(&mut self, id: &str, now: Micros) -> bool {
-        while self.order.front().is_some_and(|(t, _)| *t < now - wire::MAX_SKEW || self.order.len() > 50_000) {
+    /// False when `id` was seen before. Remembered for as long as a request stamped `sent`
+    /// is accepted (a console whose clock is ahead sends ones that stay valid longer than
+    /// the window counted from when they came).
+    fn insert(&mut self, id: &str, sent: Micros, now: Micros) -> bool {
+        while self.order.front().is_some_and(|(until, _)| *until < now || self.order.len() > 50_000) {
             let (_, old) = self.order.pop_front().expect("not empty");
             self.ids.remove(&old);
         }
         if !self.ids.insert(id.to_string()) {
             return false;
         }
-        self.order.push_back((now, id.to_string()));
+        self.order.push_back((sent.max(now).saturating_add(wire::MAX_SKEW), id.to_string()));
         true
     }
 }
@@ -138,7 +140,7 @@ fn answer(shared: &Shared, mut s: TcpStream, _ip: IpAddr) -> Result<()> {
     let body = wire::read_frame(&mut Deadline { s: &mut s, until: Instant::now() + READ_DEADLINE }, wire::MAX_REQUEST)?;
     let now = time::now();
     let (asked, key) = wire::open_request_any(&shared.cfg.keys, &body, now)?;
-    if !shared.seen.lock().unwrap_or_else(|e| e.into_inner()).insert(&asked.req.id, now) {
+    if !shared.seen.lock().unwrap_or_else(|e| e.into_inner()).insert(&asked.req.id, asked.req.sent, now) {
         bail!("a request sent before (replayed)");
     }
     let mut reply = Reply {
@@ -181,10 +183,13 @@ mod tests {
     #[test]
     fn replays_are_refused() {
         let mut seen = Seen::default();
-        assert!(seen.insert("a", 0));
-        assert!(!seen.insert("a", 1));
-        assert!(seen.insert("b", 1));
+        assert!(seen.insert("a", 0, 0));
+        assert!(!seen.insert("a", 0, 1));
+        assert!(seen.insert("b", 1, 1));
+        // stamped ahead of this clock: kept until it would be refused for its age
+        assert!(seen.insert("c", 200 * crate::time::SEC, 0));
+        assert!(!seen.insert("c", 200 * crate::time::SEC, wire::MAX_SKEW + 100 * crate::time::SEC), "still valid, still remembered");
         // forgotten once out of the window (then the request is too old anyway)
-        assert!(seen.insert("a", wire::MAX_SKEW * 3));
+        assert!(seen.insert("a", wire::MAX_SKEW * 3, wire::MAX_SKEW * 3));
     }
 }

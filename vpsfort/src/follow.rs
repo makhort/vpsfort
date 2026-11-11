@@ -151,6 +151,9 @@ fn open_log(path: &str) -> std::io::Result<(File, fs::Metadata)> {
 pub fn follow(path: &str, positions: &Positions, stop: &AtomicBool, mut line: impl FnMut(String) -> bool) {
     let mut warned = false;
     let mut current: Option<(File, u64, u64)> = None; // (file, inode, offset)
+                                                      // inside a line longer than `MAX_LINE` whose end isn't written yet: the rest of it is
+                                                      // dropped when it comes, not read as a line of its own
+    let mut in_long = false;
     while !stop.load(Ordering::Relaxed) {
         if current.is_none() {
             match open_log(path) {
@@ -160,6 +163,7 @@ pub fn follow(path: &str, positions: &Positions, stop: &AtomicBool, mut line: im
                         eprintln!("vpsfort: {path}: {note}");
                     }
                     current = Some((f, m.ino(), offset));
+                    in_long = false;
                     warned = false;
                 }
                 Err(e) => {
@@ -181,10 +185,19 @@ pub fn follow(path: &str, positions: &Positions, stop: &AtomicBool, mut line: im
         let mut buf = Vec::new();
         loop {
             buf.clear();
-            match crate::record::read_line_capped(&mut reader, &mut buf, MAX_LINE) {
-                Ok(0) => break,
-                Ok(n) if buf.last() == Some(&b'\n') || n as u64 >= MAX_LINE => {
-                    *offset += n as u64;
+            match crate::record::read_line_capped_all(&mut reader, &mut buf, MAX_LINE) {
+                Ok((0, ..)) => break,
+                // the rest of a line already given (cut): dropped, up to its end
+                Ok((_, read, ended)) if in_long => {
+                    *offset += read;
+                    in_long = !ended;
+                }
+                // The position moves past all that was read: after a line longer than
+                // `MAX_LINE` it used to move by the kept part only, and what followed in
+                // that line (text a client chose) was then read as a line of its own.
+                Ok((n, read, ended)) if ended || n as u64 >= MAX_LINE => {
+                    *offset += read;
+                    in_long = !ended;
                     let text = String::from_utf8_lossy(&buf).trim_end_matches(['\r', '\n']).to_string();
                     if !line(text) {
                         return;
@@ -331,6 +344,40 @@ mod tests {
         stop.store(true, Ordering::Relaxed);
         t.join().unwrap();
         assert_eq!(*got.lock().unwrap(), ["partial line", "while down", "after rotation"]);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// The rest of a line longer than `MAX_LINE` used to be read as a line of its own: text
+    /// a client chose (a user agent, a path), in a log whose lines ban addresses.
+    #[test]
+    fn the_rest_of_an_over_long_line_is_not_a_line() {
+        let d = dir("long");
+        let log = d.join("app.log");
+        fs::write(&log, "").unwrap();
+        let positions = Positions::in_memory();
+        let stop = Arc::new(AtomicBool::new(false));
+        let got = Arc::new(Mutex::new(Vec::new()));
+        let t = {
+            let (p, s, g, path) = (Arc::clone(&positions), Arc::clone(&stop), Arc::clone(&got), log.display().to_string());
+            thread::spawn(move || {
+                follow(&path, &p, &s, |l| {
+                    g.lock().unwrap().push(l);
+                    true
+                })
+            })
+        };
+        thread::sleep(Duration::from_millis(1200));
+        let mut f = fs::OpenOptions::new().append(true).open(&log).unwrap();
+        // one line of MAX_LINE + 40 bytes, its end written later, then a real line
+        f.write_all(format!("{} Failed password for root from 192.0.2.1", "a".repeat(MAX_LINE as usize)).as_bytes()).unwrap();
+        thread::sleep(Duration::from_millis(1200));
+        f.write_all(b" port 22 ssh2\nreal line\n").unwrap();
+        thread::sleep(Duration::from_millis(2400));
+        stop.store(true, Ordering::Relaxed);
+        t.join().unwrap();
+        let got = got.lock().unwrap();
+        assert_eq!(got.len(), 2, "{:?}", got.iter().map(|l| l.len()).collect::<Vec<_>>());
+        assert_eq!((got[0].len(), got[1].as_str()), (MAX_LINE as usize, "real line"));
         let _ = fs::remove_dir_all(&d);
     }
 }

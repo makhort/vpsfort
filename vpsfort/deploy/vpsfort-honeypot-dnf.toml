@@ -49,7 +49,12 @@ kernel_tripwire_rate = "60/minute"
 #   ufw allow 5432,5900,5901,5985,5986,6379,7547,8291,9200,11211,27017/tcp comment 'honeypot'
 #   ufw allow 102,111,502,1080,1883,2049,2082,2083,3000,3128,5555,5601,5672,6443,8006/tcp comment 'honeypot'
 #   ufw allow 8086,9000,9090,10000,10250,15672/tcp comment 'honeypot'
+#   ufw allow 9034,5060,5061,34567,9999,4444,990,5000,81,88,6606,8008,6060,8088,9443/tcp comment 'honeypot'
+#   ufw allow 636,554,3390,5902,5903,5904,5905,5038,5984,8983,2379,25565,1717,18789,11434/tcp comment 'honeypot'
+#   ufw allow 8332,8333,8545,9735,18080,18081,8899/tcp comment 'honeypot'
 #   ufw allow 80,443,8000,8080,8081,8443,8888/tcp comment 'HTTP(S) honeypot'
+# With sshd that is 100 open ports. Keep one host at about that: Censys treats a host with more
+# as a "super host" of pseudo services, a sign of a honeypot. More ports belong on a second node.
 honeypot = [
     "21/tcp", "22/tcp", "2222/tcp", "23/tcp", "2323/tcp",             # FTP, SSH, Telnet: with prompts
     "25/tcp", "110/tcp", "143/tcp",                                   # SMTP, POP3, IMAP: with prompts
@@ -64,12 +69,22 @@ honeypot = [
     "6443/tcp", "10250/tcp", "9000/tcp", "10000/tcp", "8006/tcp", "2082/tcp", "2083/tcp", # Kubernetes, Portainer, Webmin, Proxmox, cPanel
     "3000/tcp", "5601/tcp", "9090/tcp", "8086/tcp", "15672/tcp",      # Grafana, Kibana, Prometheus, InfluxDB, RabbitMQ
     "502/tcp", "102/tcp",                                             # Modbus, Siemens S7
+    "5060/tcp", "5061/tcp", "5038/tcp",                               # SIP, SIP over TLS, Asterisk manager
+    "34567/tcp", "554/tcp", "81/tcp",                                 # DVRs, RTSP cameras, their web pages
+    "3390/tcp", "5902/tcp", "5903/tcp", "5904/tcp", "5905/tcp",       # RDP moved, more VNC displays
+    "636/tcp", "88/tcp", "990/tcp",                                   # LDAPS, Kerberos, FTPS
+    "5984/tcp", "8983/tcp", "2379/tcp", "8088/tcp",                   # CouchDB, Solr, etcd, YARN or Spark
+    "5000/tcp", "6060/tcp", "8008/tcp", "9443/tcp",                   # other web ports
+    "9034/tcp", "9999/tcp", "4444/tcp", "1717/tcp", "6606/tcp", "25565/tcp", # much probed: unknown, Metasploit, RATs, Minecraft
+    "11434/tcp", "18789/tcp",                                         # Ollama, OpenClaw gateway
+    "8332/tcp", "8333/tcp", "8545/tcp", "9735/tcp",                   # Bitcoin RPC and P2P, Ethereum JSON-RPC, Lightning
+    "18080/tcp", "18081/tcp", "8899/tcp",                             # Monero P2P and RPC, Solana RPC
 ]
 # Bytes read from each honeypot connection (up to 3 seconds) before it is closed; at most 4096.
 honeypot_capture = 512
 # The ports whose clients wait for the server to speak first show a real server's lines and
 # keep the replies (a Telnet or FTP login, an SMTP AUTH, an SSH or VNC client's own banner, a MySQL login).
-honeypot_prompts = { "23/tcp" = "telnet", "2323/tcp" = "telnet", "21/tcp" = "ftp", "22/tcp" = "ssh", "2222/tcp" = "ssh", "25/tcp" = "smtp", "587/tcp" = "smtp", "110/tcp" = "pop3", "143/tcp" = "imap", "3306/tcp" = "mysql", "5900/tcp" = "vnc", "5901/tcp" = "vnc" }
+honeypot_prompts = { "23/tcp" = "telnet", "2323/tcp" = "telnet", "21/tcp" = "ftp", "22/tcp" = "ssh", "2222/tcp" = "ssh", "25/tcp" = "smtp", "587/tcp" = "smtp", "110/tcp" = "pop3", "143/tcp" = "imap", "3306/tcp" = "mysql", "5900/tcp" = "vnc", "5901/tcp" = "vnc", "5902/tcp" = "vnc", "5903/tcp" = "vnc", "5904/tcp" = "vnc", "5905/tcp" = "vnc" }
 # The greetings are real Debian packages' lines unless set here (the software and version each
 # port is to pass for). Set ssh to what the sshd on this host's real port sends, so a scanner
 # meets one sshd, not two: `nc -w 2 <this host> <ssh port>` prints it.

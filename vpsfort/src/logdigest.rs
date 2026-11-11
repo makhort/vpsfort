@@ -38,10 +38,19 @@ fn line_ts(line: &str) -> Option<Micros> {
 /// SHA-256 over the log's lines of `day` (each with its newline, in file order, the rotated
 /// copies oldest first), and how many there were. A day with no lines hashes to the hash of
 /// nothing, with 0 lines.
+/// The number in a rotated copy's name (`actions.jsonl.12.gz`: 12); 0 for the live log, and
+/// for a copy named another way (by date), which then keeps the order of its name.
+fn rotation(log: &Path, file: &Path) -> (u64, std::path::PathBuf) {
+    let rest = file.to_string_lossy()[log.to_string_lossy().len().min(file.to_string_lossy().len())..].to_string();
+    let n = rest.trim_start_matches('.').split('.').next().and_then(|n| n.parse().ok()).unwrap_or(0);
+    (n, file.to_path_buf())
+}
+
 pub fn hash_day(path: &Path, day: &str) -> Result<(String, u64)> {
     let mut files = crate::abuse::log_files(path, 0);
-    // oldest first: the rotated copies in reverse order, then the live log
-    files.sort_by(|a, b| b.cmp(a));
+    // oldest first: the rotated copies from the highest number down (`.10.gz` before
+    // `.9.gz`, which their names as text don't give), then the live log
+    files.sort_by_key(|f| std::cmp::Reverse(rotation(path, f)));
     let mut hasher = sha2::Sha256::new();
     let mut lines = 0u64;
     for f in files {
@@ -98,5 +107,21 @@ mod tests {
         assert_eq!(yesterday(day2 + 3600 * SEC), "2023-11-14");
         assert!(is_day("2026-11-03") && !is_day("2026-11-3") && !is_day("2026/11/03"));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn rotated_copies_are_read_by_number() {
+        let log = Path::new("/var/log/vpsfort/actions.jsonl");
+        let mut files: Vec<std::path::PathBuf> =
+            ["actions.jsonl", "actions.jsonl.1", "actions.jsonl.2.gz", "actions.jsonl.9.gz", "actions.jsonl.10.gz", "actions.jsonl.11.gz"]
+                .iter()
+                .map(|n| log.with_file_name(n))
+                .collect();
+        files.sort_by_key(|f| std::cmp::Reverse(rotation(log, f)));
+        let names: Vec<String> = files.iter().map(|f| f.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(
+            names,
+            ["actions.jsonl.11.gz", "actions.jsonl.10.gz", "actions.jsonl.9.gz", "actions.jsonl.2.gz", "actions.jsonl.1", "actions.jsonl"]
+        );
     }
 }

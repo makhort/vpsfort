@@ -94,7 +94,7 @@ continue with "Setup".
 The same release has a package per architecture, for the distribution's package manager instead of `install.sh`: `vpsfort-push-bot_<version>-1_<arch>.deb` (`amd64`, `arm64`, `armhf`; Debian, Ubuntu and their derivatives) `vpsfort-push-bot-<version>-1.<arch>.rpm` (`x86_64`, `aarch64`, `armv7hl`; Fedora, RHEL and its rebuilds) and `vpsfort-push-bot-<version>-r0.<arch>.apk` (`x86_64`, `aarch64`, `armv7`; Alpine, with OpenRC: below), each with its `.sha256` and `.sigstore.json`, downloaded and verified as the bundle above (`--pattern "*.deb*"`, `"*.rpm*"` or `"*.apk*"`). CI keeps them for every commit as workflow artifacts, and `scripts/package.sh` builds them locally (`cargo install cargo-deb cargo-generate-rpm --locked` once, and python3 for the `.apk`, which `scripts/apk.py` at the repository's root writes; none needs dpkg, rpm or apk-tools, so it runs on macOS too; `--target aarch64-unknown-linux-musl` or `armv7-unknown-linux-musleabihf` for the ARM ones). Or from the signed apt and dnf repository on GitHub Pages, once it is set up (the repository README, "Deployment"), where `apt upgrade` and `dnf upgrade` then bring new versions.
 
 ```bash
-sudo apt install ./vpsfort-push-bot_0.2.2-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-push-bot-0.2.2-1.x86_64.rpm
+sudo apt install ./vpsfort-push-bot_0.2.3-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-push-bot-0.2.3-1.x86_64.rpm
 sudoedit /opt/vpsfort-push-bot/config.env                 # the first install put the template there
 sudo systemctl enable --now vpsfort-push-bot
 ```

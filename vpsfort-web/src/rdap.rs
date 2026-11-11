@@ -117,7 +117,21 @@ fn host_ok(host: &str) -> bool {
 pub fn public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(a) => {
-            !(a.is_private() || a.is_loopback() || a.is_link_local() || a.is_unspecified() || a.is_multicast() || a.is_broadcast())
+            let o = a.octets();
+            // also carrier NAT (100.64/10), the protocol block (192.0.0/24), benchmarking
+            // (198.18/15) and the reserved top (240/4): no registry's, and reachable inside
+            // some networks
+            let special = (o[0] == 100 && o[1] & 0xc0 == 64)
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0)
+                || (o[0] == 198 && o[1] & 0xfe == 18)
+                || o[0] >= 240;
+            !(a.is_private()
+                || a.is_loopback()
+                || a.is_link_local()
+                || a.is_unspecified()
+                || a.is_multicast()
+                || a.is_broadcast()
+                || special)
         }
         IpAddr::V6(a) => {
             let first = a.segments()[0];
@@ -148,8 +162,13 @@ fn client() -> Result<Arc<rustls::ClientConfig>> {
     .map_err(|e| anyhow!(e))
 }
 
-/// One GET over HTTPS: (status, Location, body).
-fn get(url: &str) -> Result<(u16, Option<String>, Vec<u8>)> {
+/// A whole lookup, redirects and all, takes no longer than this: the timeouts below are per
+/// connect and per read, and a registry that answers a byte at a time would otherwise hold
+/// the one lookup at a time (and every admin waiting behind it) for hours.
+const TOTAL: Duration = Duration::from_secs(40);
+
+/// One GET over HTTPS, done by `until`: (status, Location, body).
+fn get(url: &str, until: Instant) -> Result<(u16, Option<String>, Vec<u8>)> {
     let rest = url.strip_prefix("https://").context("only https")?;
     let (hostport, path) = rest.split_once('/').map_or((rest, "/".to_string()), |(h, p)| (h, format!("/{p}")));
     let (host, port) = match hostport.rsplit_once(':') {
@@ -157,18 +176,24 @@ fn get(url: &str) -> Result<(u16, Option<String>, Vec<u8>)> {
         _ => (hostport, 443),
     };
     if !host_ok(host) {
-        bail!("not a public host name: {host:?}");
+        bail!("not a public host name: {:?}", host.chars().take(80).collect::<String>());
     }
     let mut tcp = None;
     let mut last = None;
     // a registry's redirect names the next server: only one on the internet (never this
     // host's network, whatever a Location header says)
-    let addrs: Vec<_> = (host, port).to_socket_addrs().with_context(|| format!("resolving {host}"))?.filter(|a| public(a.ip())).collect();
+    // (a few of its addresses: a name with a hundred that don't answer is not waited for)
+    let addrs: Vec<_> =
+        (host, port).to_socket_addrs().with_context(|| format!("resolving {host}"))?.filter(|a| public(a.ip())).take(3).collect();
     if addrs.is_empty() {
         bail!("{host} has no public address");
     }
     for addr in addrs {
-        match TcpStream::connect_timeout(&addr, TIMEOUT) {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            bail!("{host}: no answer in {} s", TOTAL.as_secs());
+        }
+        match TcpStream::connect_timeout(&addr, TIMEOUT.min(left)) {
             Ok(s) => {
                 tcp = Some(s);
                 break;
@@ -190,6 +215,9 @@ fn get(url: &str) -> Result<(u16, Option<String>, Vec<u8>)> {
     let mut raw = Vec::new();
     let mut buf = [0u8; 16 * 1024];
     loop {
+        if Instant::now() >= until {
+            bail!("{host}: no whole answer in {} s", TOTAL.as_secs());
+        }
         match tls.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
@@ -242,8 +270,9 @@ fn dechunk(mut b: &[u8]) -> Result<Vec<u8>> {
 /// Asks rdap.org about `ip`, following it to the registry.
 fn ask(ip: IpAddr) -> Result<Contact> {
     let mut url = format!("https://rdap.org/ip/{ip}");
+    let until = Instant::now() + TOTAL;
     for _ in 0..=MAX_REDIRECTS {
-        let (status, location, body) = get(&url)?;
+        let (status, location, body) = get(&url, until)?;
         match status {
             200 => return parse(&String::from_utf8_lossy(&body)).context("not an RDAP answer"),
             301 | 302 | 303 | 307 | 308 => {
@@ -294,7 +323,8 @@ impl Rdap {
             if let Some(wait) = one.map(|t| Duration::from_secs(1).saturating_sub(t.elapsed())) {
                 std::thread::sleep(wait);
             }
-            let r = ask(ip).map_err(|e| format!("{e:#}"));
+            // (cut: an error may quote what a registry sent, and is kept in the cache)
+            let r = ask(ip).map_err(|e| crate::abuse::clean(&format!("{e:#}"), 300));
             *one = Some(Instant::now());
             r
         };
@@ -351,18 +381,35 @@ mod tests {
 
     #[test]
     fn only_public_addresses() {
-        for a in ["10.1.2.3", "192.168.1.1", "127.0.0.1", "169.254.1.1", "::1", "fd00::1", "fe80::1", "::ffff:10.0.0.1", "0.0.0.0"] {
+        let special = [
+            "100.64.0.1",
+            "100.127.255.254",
+            "192.0.0.8",
+            "198.18.0.1",
+            "198.19.255.254",
+            "240.0.0.1",
+            "255.255.255.255",
+            "::ffff:100.64.0.1",
+        ];
+        for a in ["10.1.2.3", "192.168.1.1", "127.0.0.1", "169.254.1.1", "::1", "fd00::1", "fe80::1", "::ffff:10.0.0.1", "0.0.0.0"]
+            .into_iter()
+            .chain(special)
+        {
             assert!(!public(a.parse().unwrap()), "{a}");
         }
-        for a in ["8.8.8.8", "3fff:130::8888", "::ffff:8.8.8.8"] {
+        for a in ["8.8.8.8", "3fff:130::8888", "::ffff:8.8.8.8", "12.82.255.255", "12.83.0.1", "13.191.255.255", "13.192.0.1", "13.144.1.1"]
+        {
             assert!(public(a.parse().unwrap()), "{a}");
         }
         assert!(host_ok("rdap.arin.net") && host_ok("rdap.db.ripe.net"));
         for bad in ["", "10.0.0.1", "[::1]", "a b", "evil.example/x", &"a".repeat(300)] {
             assert!(!host_ok(bad), "{bad:?}");
         }
-        assert!(get("https://10.0.0.1/ip/8.8.8.8").unwrap_err().to_string().contains("not a public host"));
-        assert!(get("https://localhost/ip/8.8.8.8").unwrap_err().to_string().contains("not a public host"), "not a registry");
+        assert!(get("https://10.0.0.1/ip/8.8.8.8", Instant::now() + TOTAL).unwrap_err().to_string().contains("not a public host"));
+        assert!(
+            get("https://localhost/ip/8.8.8.8", Instant::now() + TOTAL).unwrap_err().to_string().contains("not a public host"),
+            "not a registry"
+        );
         let off = Rdap::new(false);
         assert!(off.lookup("8.8.8.8".parse().unwrap()).unwrap_err().contains("RDAP_LOOKUPS=off"));
         assert!(Rdap::new(true).lookup("10.0.0.1".parse().unwrap()).unwrap_err().contains("not a public"));

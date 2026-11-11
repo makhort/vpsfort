@@ -70,8 +70,8 @@ scp target/bundle/vpsfort-*-<arch>.zip fedora@VPS_IP:   # <arch>: x86_64-linux-m
 (Fedora Cloud's user is `fedora`; use yours if the provider made another.)
 
 (Or the package instead of the bundle: `./scripts/package.sh` (`--target aarch64-unknown-linux-musl`
-for arm64) writes `target/package/vpsfort-0.7.8-1.<arch>.rpm`; `scp` it over and on the VPS
-`dnf install ./vpsfort-0.7.8-1.<arch>.rpm`, then `cp /usr/share/vpsfort/templates/vpsfort-standalone-dnf.toml
+for arm64) writes `target/package/vpsfort-0.8.0-1.<arch>.rpm`; `scp` it over and on the VPS
+`dnf install ./vpsfort-0.8.0-1.<arch>.rpm`, then `cp /usr/share/vpsfort/templates/vpsfort-standalone-dnf.toml
 /etc/vpsfort/vpsfort.toml` instead of `install.sh --template`, and `systemctl enable --now vpsfort
 vpsfort-abuse-report.timer` instead of the second `install.sh`. vpsfort is then `/usr/bin/vpsfort`;
 the steps below read the same otherwise.)
@@ -80,7 +80,7 @@ the steps below read the same otherwise.)
 
 ```bash
 cd ~fedora && unzip -q vpsfort-*.zip && cd vpsfort-*-linux-musl
-./install.sh --check                                  # Bundle OK: vpsfort 0.7.8 (...)
+./install.sh --check                                  # Bundle OK: vpsfort 0.8.0 (...)
 cat TARGET                                            # the architecture it was built for
 ./install.sh --template vpsfort-standalone-dnf.toml
 ```
@@ -95,7 +95,7 @@ the VPN host's, with its addresses and ports.
 | top | `package_manager = "dnf"` stays; `mode = "shadow"` stays for now |
 | `[ports]` | `whitelist = []`, `names = {}` (no WireGuard here) |
 | `[[ratelimit]]` | the SSH one: `ports = ["SSH_PORT/tcp"]`; delete the WireGuard block, all four lines (one without ports is refused) |
-| `[allowlist] nets` | replace `13.46.43.31` with `"ADMIN_IP",`: **your own address, never banned**. Without it, enforce mode can lock you out (keep `127.0.0.0/8` and `::1`) |
+| `[allowlist] nets` | replace `13.48.43.31` with `"ADMIN_IP",`: **your own address, never banned**. Without it, enforce mode can lock you out (keep `127.0.0.0/8` and `::1`) |
 | `[cluster]` | `enabled = false` |
 | `[verify]` | add `interval = "1h"` (a second pass within the test; 7 days by default; 1h is the shortest: a shorter one stops vpsfort from starting) |
 

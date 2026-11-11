@@ -234,7 +234,8 @@ iptables = "/usr/sbin/iptables"
 ip6tables = "/usr/sbin/ip6tables"
 iptables_chain = "vpsfort"
 # With firewalld and ufw a ban also ends the address's open connections through conntrack-tools
-# (their own rules accept established traffic first); "" never does.
+# (their own rules accept established traffic first); "" never does. With any backend the
+# process watch asks it who opened a connection from a port that also listens.
 conntrack = "/usr/sbin/conntrack"
 
 [notify]

@@ -416,7 +416,7 @@ fn run(args: &Args) -> Result<()> {
             history_days: args.history_days,
             digest_days: args.digest_days,
         };
-        let console = Arc::new(Console::new(cfg, auth, fleet, key));
+        let console = Arc::new(Console::new(cfg, auth, fleet));
         if let Some(d) = args.state_dir() {
             match fs::create_dir_all(&d).and_then(|()| fs::metadata(&d)) {
                 Ok(_) => said.push(format!("state in {}", d.display())),
@@ -587,6 +587,9 @@ fn write_secret(path: &Path, content: &str, mode: u32, force: bool) -> Result<()
     let mut f =
         OpenOptions::new().write(true).create_new(true).mode(mode).open(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
     f.write_all(content.as_bytes())?;
+    // the mode asked for, whatever the umask of the shell this runs in: under 077 the service
+    // (the group) could not read its own secrets, under 002 others could change them
+    f.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(mode))?;
     f.sync_all()?;
     if let Ok(gid) = fs::metadata(dir).map(|m| m.gid()) {
         // as root; another user's file keeps its own group
@@ -724,7 +727,7 @@ fn passwd(args: &Args, user: &str, stdin: bool) -> Result<()> {
     }
     let new = !a.password_file.exists();
     write_secret(&a.password_file, &format!("{}\n", auth::hash_password(&password)?), 0o640, true)?;
-    println!("password of {} set in {} (logged-in sessions stay until they end)", a.name, a.password_file.display());
+    println!("password of {} set in {} (this admin's sessions end at their next request)", a.name, a.password_file.display());
     if new && a.name != auth::MAIN && args.totp {
         println!("next: the one-time codes:  vpsfort-web totp-setup --user {}", a.name);
     }

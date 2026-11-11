@@ -36,9 +36,12 @@ impl Marks {
         if serde_json::to_vec(&v).map_or(true, |b| b.len() > MAX_BYTES) {
             return Err("the marks are too large");
         }
-        *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = v.clone();
+        // written under the lock: two admins' marks at once would write the same temporary
+        // file, and a mix of the two would be renamed into place
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        *inner = v;
         if let Some(p) = &self.path {
-            crate::store::save(p, &v);
+            crate::store::save(p, &inner);
         }
         Ok(())
     }

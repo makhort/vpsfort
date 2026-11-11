@@ -315,12 +315,18 @@ pub fn open_reply(key: &[u8; 32], pending: Pending, body: &[u8], now: Micros) ->
     let gz = cipher
         .decrypt(XNonce::from_slice(&body[32..56]), Payload { msg: &body[56..], aad: REPLY_INFO })
         .map_err(|_| anyhow!("authentication failed (another web key, or not this request's reply)"))?;
-    let mut plain = Vec::new();
-    flate2::read::GzDecoder::new(gz.as_slice()).take(MAX_REPLY_PLAIN as u64 + 1).read_to_end(&mut plain).context("decompressing")?;
-    if plain.len() > MAX_REPLY_PLAIN {
+    // Read as it is unpacked, one reply at a time: a node (a holder of the web key) may
+    // send up to `MAX_REPLY_PLAIN`, which used to be unpacked whole and then read into a
+    // second copy, for every node asked at once, in a service limited to 128 MB.
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let mut unpacked = flate2::read::GzDecoder::new(gz.as_slice()).take(MAX_REPLY_PLAIN as u64 + 1);
+    let read = serde_json::from_reader::<_, Reply>(std::io::BufReader::with_capacity(64 << 10, &mut unpacked));
+    if unpacked.limit() == 0 {
         bail!("reply larger than {} MB uncompressed", MAX_REPLY_PLAIN >> 20);
     }
-    let reply: Reply = serde_json::from_slice(&plain).context("decoding the reply")?;
+    let reply = read.context("decoding the reply")?;
+    drop(gz);
     if reply.v != 1 {
         bail!("unsupported reply version {}", reply.v);
     }

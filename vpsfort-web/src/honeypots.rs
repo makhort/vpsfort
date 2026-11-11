@@ -19,6 +19,9 @@ const MAX_HITS: usize = 10_000;
 /// Evidence lines kept per ban: vpsfort keeps 8 per address, and a network ban lists its
 /// members' too.
 const MAX_LINES: usize = 200;
+/// Evidence lines taken from one node in all: its 10,000 bans carry a few each. A node that
+/// sent 200 for every ban would have the console hold 800 MB of them.
+const MAX_NODE_LINES: usize = 50_000;
 
 #[derive(Deserialize)]
 struct NodeReport {
@@ -66,16 +69,21 @@ pub struct Parsed {
 /// Reads a node's hits (vpsfort's JSON).
 pub fn parse(text: &str) -> Result<Parsed> {
     let r: NodeReport = serde_json::from_str(text).context("not a list of honeypot hits")?;
-    let mut hits = Vec::new();
+    let (mut hits, mut valid, mut lines) = (Vec::new(), 0usize, 0usize);
     for mut h in r.hits.into_iter().take(MAX_NODE_HITS) {
         if !net_ok(&h.target) {
             continue;
+        }
+        valid += 1;
+        if lines >= MAX_NODE_LINES {
+            continue; // counted, not kept: they come the newest first
         }
         h.kind = clean(&h.kind, 20);
         h.severity = clean(&h.severity, 20);
         h.category = h.category.map(|c| clean(&c, 40));
         h.message = clean(&h.message, 500);
-        h.evidence.truncate(MAX_LINES);
+        h.evidence.truncate(MAX_LINES.min(MAX_NODE_LINES - lines));
+        lines += h.evidence.len();
         for l in &mut h.evidence {
             *l = clean(l, 400);
         }
@@ -84,7 +92,7 @@ pub fn parse(text: &str) -> Result<Parsed> {
         h.node_id.clear();
         hits.push(h);
     }
-    Ok(Parsed { total: r.total.max(hits.len()), hits })
+    Ok(Parsed { total: r.total.max(valid), hits })
 }
 
 /// How asking one node went.
@@ -171,6 +179,17 @@ mod tests {
             (0..60).map(|i| format!(r#""11-09 02:33:{i:02} 192.0.2.{i} connected to honeypot TCP/23, sent nothing""#)).collect();
         let p = parse(&format!(r#"{{"hits":[{{"ts":1,"target":"192.0.2.0/24","evidence":[{}]}}]}}"#, lines.join(","))).unwrap();
         assert_eq!(p.hits[0].evidence.len(), 60);
+    }
+
+    #[test]
+    fn a_nodes_evidence_lines_are_bounded_in_all() {
+        let lines: Vec<String> =
+            (0..MAX_LINES).map(|i| format!(r#""192.0.2.{} connected to honeypot TCP/23, sent nothing""#, i % 250)).collect();
+        let hit = |ts: usize| format!(r#"{{"ts":{ts},"target":"192.0.2.0/24","evidence":[{}]}}"#, lines.join(","));
+        let many: Vec<String> = (0..300).rev().map(hit).collect();
+        let p = parse(&format!(r#"{{"hits":[{}]}}"#, many.join(","))).unwrap();
+        assert_eq!(p.hits.iter().map(|h| h.evidence.len()).sum::<usize>(), MAX_NODE_LINES);
+        assert_eq!((p.hits.len(), p.hits[0].ts, p.total), (MAX_NODE_LINES / MAX_LINES, 299, 300), "the newest are kept, all are counted");
     }
 
     #[test]

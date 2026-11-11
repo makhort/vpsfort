@@ -53,10 +53,11 @@ const ICON: &str = include_str!("../web/icon.svg");
 const WORLD: &str = include_str!("../web/world.json");
 
 /// `connect-src` names RDAP's servers: when the console can't look up an abuse mailbox, the
-/// page asks rdap.org itself, which sends it on to the registry.
+/// page asks rdap.org itself, which sends it on to the registry (Brazil's own for its
+/// addresses, which LACNIC hands them to).
 const CSP: &str = "default-src 'none'; script-src 'self'; worker-src 'self'; style-src 'self'; img-src 'self' data:; \
                    connect-src 'self' https://rdap.org https://*.arin.net https://*.ripe.net https://*.apnic.net \
-                   https://*.lacnic.net https://*.afrinic.net; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+                   https://*.lacnic.net https://*.afrinic.net https://rdap.registro.br; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 pub struct ConsoleCfg {
     pub listen: String,
@@ -96,7 +97,7 @@ pub struct Console {
     pub history: crate::history::History,
     /// The nodes' daily digests (two weeks).
     pub digests: crate::digests::Digests,
-    /// Share links to an address's page (signed with the web key).
+    /// Share links to an address's page (signed with a key of the console's own).
     pub share: crate::share::Share,
     /// The admins' marks: abuse reports mailed, problems seen.
     pub marks: crate::marks::Marks,
@@ -107,12 +108,12 @@ pub struct Console {
 }
 
 impl Console {
-    pub fn new(cfg: ConsoleCfg, auth: Auth, fleet: Arc<Fleet>, web_key: Option<[u8; 32]>) -> Self {
+    pub fn new(cfg: ConsoleCfg, auth: Auth, fleet: Arc<Fleet>) -> Self {
         let rdap = crate::rdap::Rdap::new(cfg.rdap);
         let work = crate::work::Work::new(cfg.login_work);
         let dir = cfg.state_dir.clone();
         let (history_days, digest_days) = (cfg.history_days, cfg.digest_days);
-        let share = crate::share::Share::new(web_key, dir.as_deref());
+        let share = crate::share::Share::new(dir.as_deref());
         Console {
             cfg,
             auth,
@@ -130,10 +131,34 @@ impl Console {
     }
 }
 
-/// A TCP stream whose reads share one deadline (set per request).
+/// A response is given the time of a request, and beyond it a second for each of these
+/// bytes: a client that reads its answer a few bytes at a time holds a connection no longer
+/// than one that sends its request that way.
+const WRITE_FLOOR: usize = 16 * 1024;
+
+/// A TCP stream whose reads share one deadline (set per request), and whose writes another
+/// (set per response).
 struct Timed {
     s: TcpStream,
     until: Instant,
+    write_until: Instant,
+}
+
+/// When a response of `len` bytes must have gone out.
+fn write_deadline(len: usize) -> Instant {
+    Instant::now() + (REQUEST + Duration::from_secs((len / WRITE_FLOOR) as u64)).min(CONNECTION)
+}
+
+/// What a source's connections are counted by: its address, or for IPv6 its /64 (one
+/// customer's network: counted by address, it would have 2^64 times the limit).
+fn source(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V4(_) => ip,
+        IpAddr::V6(a) => {
+            let s = a.segments();
+            IpAddr::V6(std::net::Ipv6Addr::new(s[0], s[1], s[2], s[3], 0, 0, 0, 0))
+        }
+    }
 }
 
 impl Read for Timed {
@@ -149,6 +174,11 @@ impl Read for Timed {
 
 impl Write for Timed {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let left = self.write_until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "too slow"));
+        }
+        self.s.set_write_timeout(Some(left.min(REQUEST)))?;
         self.s.write(buf)
     }
 
@@ -174,9 +204,10 @@ pub fn serve(console: Arc<Console>) -> Result<SocketAddr> {
             if active.load(Ordering::Relaxed) >= MAX_CONNECTIONS {
                 continue;
             }
+            let from = source(ip);
             {
                 let mut open = per_source.lock().unwrap_or_else(|e| e.into_inner());
-                let n = open.entry(ip).or_default();
+                let n = open.entry(from).or_default();
                 if *n >= MAX_PER_SOURCE {
                     continue;
                 }
@@ -187,10 +218,10 @@ pub fn serve(console: Arc<Console>) -> Result<SocketAddr> {
             std::thread::spawn(move || {
                 connection(&console, s, ip);
                 let mut open = per_source.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(n) = open.get_mut(&ip) {
+                if let Some(n) = open.get_mut(&from) {
                     *n -= 1;
                     if *n == 0 {
-                        open.remove(&ip);
+                        open.remove(&from);
                     }
                 }
                 active.fetch_sub(1, Ordering::Relaxed);
@@ -203,7 +234,8 @@ pub fn serve(console: Arc<Console>) -> Result<SocketAddr> {
 fn connection(console: &Console, s: TcpStream, ip: IpAddr) {
     let _ = s.set_write_timeout(Some(REQUEST));
     let Ok(conn) = rustls::ServerConnection::new(Arc::clone(&console.cfg.tls)) else { return };
-    let mut tls = rustls::StreamOwned::new(conn, Timed { s, until: Instant::now() + HANDSHAKE });
+    let handshake = Instant::now() + HANDSHAKE;
+    let mut tls = rustls::StreamOwned::new(conn, Timed { s, until: handshake, write_until: handshake });
     while tls.conn.is_handshaking() {
         if let Err(e) = tls.conn.complete_io(&mut tls.sock) {
             log_tls_failure(console, ip, &e);
@@ -221,6 +253,7 @@ fn connection(console: &Console, s: TcpStream, ip: IpAddr) {
             Ok(r) => r,
             Err(ReadError::Closed) | Err(ReadError::Io(_)) => break,
             Err(ReadError::Bad(status, why)) => {
+                reader.get_mut().sock.write_until = write_deadline(0);
                 let _ = http::write_response(reader.get_mut(), headers(Response::error(status, why)), false, false, false);
                 break;
             }
@@ -229,11 +262,13 @@ fn connection(console: &Console, s: TcpStream, ip: IpAddr) {
         let head = req.method == "HEAD";
         let gzip = http::takes_gzip(&req);
         let resp = headers(handle(console, &req, ip));
+        reader.get_mut().sock.write_until = write_deadline(resp.body.len());
         if http::write_response(reader.get_mut(), resp, keep, head, gzip).is_err() || !keep {
             break;
         }
     }
     let tls = reader.get_mut();
+    tls.sock.write_until = Instant::now() + Duration::from_secs(5);
     tls.conn.send_close_notify();
     let _ = tls.conn.complete_io(&mut tls.sock);
 }
@@ -241,7 +276,9 @@ fn connection(console: &Console, s: TcpStream, ip: IpAddr) {
 fn log_tls_failure(console: &Console, ip: IpAddr, e: &std::io::Error) {
     let mut logged = console.tls_logged.lock().unwrap_or_else(|e| e.into_inner());
     let now = Instant::now();
-    if logged.len() > 1000 {
+    // at the size where nothing more is taken, not one above it: there neither this nor the
+    // insert below would ever run again, and no failed handshake would be logged until a restart
+    if logged.len() >= 1000 {
         logged.retain(|_, t| now - *t < Duration::from_secs(3600));
     }
     if logged.len() < 1000 && logged.get(&ip).is_none_or(|t| now - *t >= Duration::from_secs(3600)) {
@@ -482,13 +519,13 @@ fn share_link(console: &Console, req: &Request) -> Response {
 /// logged with the address first, like the login's: vpsfort bans one that keeps trying.
 fn shared_address(console: &Console, req: &Request, path: &str, ip: IpAddr) -> Response {
     let now = Instant::now();
-    if let Err(wait) = console.shared_pace.allow(ip, now) {
+    if let Err(refused) = console.shared_pace.allow(ip, now) {
         // once per window, not once per request: a loop would fill the journal
-        if console.shared_pace.allow(ip, now).unwrap_err() == wait {
+        if refused.first {
             say!("share link refused from {ip}: more than {} requests a minute", crate::share::PACE);
         }
         return Response::error(429, "too many requests for shared pages from this address: wait a minute")
-            .with("Retry-After", wait.as_secs().max(1).to_string());
+            .with("Retry-After", refused.wait.as_secs().max(1).to_string());
     }
     let q = &path["/api/v1/address/".len()..];
     let Ok(net) = q.parse::<crate::netlist::Net>() else { return Response::error(400, "not an address or network") };
@@ -511,10 +548,13 @@ pub fn unname_nodes(v: &mut Value, names: &[(String, String)]) {
         Value::Object(map) => {
             for (k, x) in map.iter_mut() {
                 if k == "node" || k == "origin" {
-                    if let Some(name) = x.as_str() {
-                        if let Some((_, id)) = names.iter().find(|(n, _)| n == name) {
-                            *x = Value::String(format!("node {id}"));
-                        }
+                    if let Some(name) = x.as_str().filter(|n| !n.is_empty()) {
+                        // a name the console doesn't go by (a peer not in NODES, a node known
+                        // by its address so far) is a node's name all the same
+                        *x = Value::String(match names.iter().find(|(n, _)| n == name) {
+                            Some((_, id)) => format!("node {id}"),
+                            None => "another node".to_string(),
+                        });
                     }
                 } else {
                     unname_nodes(x, names);
@@ -526,6 +566,16 @@ pub fn unname_nodes(v: &mut Value, names: &[(String, String)]) {
             for (name, id) in names {
                 if !name.is_empty() && s.contains(name.as_str()) {
                     *s = replace_word(s, name, &format!("node {id}"));
+                }
+            }
+            // "(from peer vpn)" in a ban's text, whoever the peer is
+            const FROM: &str = "(from peer ";
+            if let Some(at) = s.find(FROM) {
+                let name_at = at + FROM.len();
+                if let Some(len) = s[name_at..].find(')') {
+                    if !s[name_at..name_at + len].starts_with("node ") {
+                        s.replace_range(name_at..name_at + len, "another node");
+                    }
                 }
             }
         }
@@ -772,7 +822,7 @@ fn api(console: &Console, req: &Request, rest: &str) -> Response {
     };
     if let Some(window) = rest.strip_prefix("honeypots/") {
         return match crate::wire::Want::honeypots(window).map(|want| console.fleet.honeypots(want)) {
-            Some(Ok(r)) => Response::json(200, &serde_json::to_value(r).unwrap_or_default()),
+            Some(Ok(json)) => Response::new(200, "application/json", json.to_vec()),
             Some(Err(e)) => Response::error(404, &format!("{e:#}")),
             None => Response::error(404, "honeypot hits are of 24h or 7d"),
         };

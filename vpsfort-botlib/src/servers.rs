@@ -232,7 +232,7 @@ mod tests {
             other addresses: 2001:db8::7:5223 2001:db8::70\n\
             64:ff9b::11.242.39.236 2001:db8::7:ad:12.37.48.86\n\
             2001:db8::7.example.org 1.11.242.39.236 11.242.39.236.5 a:11.242.39.236:12.37.48.86\n\
-            not ours: example.org.evil.example, notexample.org, 78.40.199.2366, 13.54.39.236, 10:00:01";
+            not ours: example.org.evil.example, notexample.org, 78.40.199.2366, 13.56.39.236, 10:00:01";
         let out = n.replace(digest);
         assert_eq!(
             out,
@@ -246,7 +246,7 @@ mod tests {
             other addresses: 2001:db8::7:5223 2001:db8::70\n\
             xmpp vpn\n\
             xmpp.xmpp 1.xmpp xmpp.5 a:xmpp:vpn\n\
-            not ours: example.org.evil.example, notexample.org, 78.40.199.2366, 13.54.39.236, 10:00:01"
+            not ours: example.org.evil.example, notexample.org, 78.40.199.2366, 13.56.39.236, 10:00:01"
         );
         assert_eq!(ServerNames::default().replace(digest), digest, "nothing configured: unchanged");
     }

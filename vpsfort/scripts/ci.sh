@@ -48,7 +48,10 @@ bin=target/$TARGET/release/vpsfort
 ls -l "$bin"
 step "bundled configs parse"
 for c in deploy/*.toml; do
-    cargo run --quiet -- --config "$c" print-config > /dev/null && echo "ok  $c"
+    # (not `&& echo`: a failure on the left of `&&` doesn't stop the script)
+    cargo run --quiet -- --config "$c" print-config > /dev/null
+    echo "ok  $c"
 done
 step "template variants (dnf, Alpine) up to date"
-./scripts/template-variants.sh --check && echo ok
+./scripts/template-variants.sh --check
+echo ok

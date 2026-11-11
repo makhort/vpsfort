@@ -39,6 +39,10 @@ const MAX_ACCOUNTS: usize = 50_000;
 const MAX_ACCOUNT_IPS: usize = 1000;
 /// Alert rate-limit entries kept besides the system ones (see `Engine::gc`).
 const MAX_ALERT_GATE: usize = 50_000;
+/// Addresses and networks whose earlier bans are remembered (for the ladder).
+const MAX_OFFENDERS: usize = 200_000;
+/// Addresses trusted for a service after a login there.
+const MAX_TRUSTED: usize = 100_000;
 /// Integrity alerts about one local user's own files and processes sent per hour (see
 /// `Engine::findings`).
 const USER_ALERTS_PER_HOUR: usize = 5;
@@ -586,6 +590,12 @@ pub struct SshKeys {
 
 /// Keys remembered per account, and accounts with keys.
 const MAX_KEYS: usize = 32;
+/// Accounts remembered per address as the targets of its failed logins (for their owners'
+/// notices), and the longest name kept there (bytes).
+const MAX_TARGETED: usize = 8;
+const MAX_TARGETED_NAME: usize = 64;
+/// Origins whose relayed messages are counted on their own; the rest share one count.
+const MAX_RELAY_ORIGINS: usize = 64;
 const MAX_KEY_ACCOUNTS: usize = 1000;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1129,6 +1139,8 @@ pub struct Engine {
     auth_fails: HashMap<String, (u32, Micros, Micros)>,
     /// When integrity alerts about each local user's own things were sent, the last hour.
     user_alerts: HashMap<u32, VecDeque<Micros>>,
+    /// When each origin's relayed messages of the last hour went to the admins.
+    relayed_sent: HashMap<String, VecDeque<Micros>>,
     /// The same for each local user's files sent to the scan of changed files.
     user_scans: HashMap<u32, VecDeque<Micros>>,
     /// Set by the daemon after each `[patches]` reading.
@@ -1225,6 +1237,7 @@ impl Engine {
             auth_fails: HashMap::new(),
             scan_queue: Vec::new(),
             user_alerts: HashMap::new(),
+            relayed_sent: HashMap::new(),
             user_scans: HashMap::new(),
             patches: None,
             verify: None,
@@ -1616,14 +1629,34 @@ impl Engine {
     }
 
     fn net_protected(&self, net: &Net) -> bool {
+        self.net_hard_protected(net) || self.net_has_login(net)
+    }
+
+    /// Networks never banned, whatever comes from them: the allowlists, the peers, this host.
+    fn net_hard_protected(&self, net: &Net) -> bool {
         self.cfg.allowlist.nets.iter().any(|n| n.overlaps(net))
             || self.peer_nets.iter().any(|n| n.overlaps(net))
             || self.own_nets.iter().any(|n| n.overlaps(net))
             || self.allow_hosts.iter().any(|n| n.overlaps(net))
             || self.allowed.values().any(|a| a.until > self.now && a.net.overlaps(net))
-            // a user's login keeps their neighbours' subnet from being banned wholesale, but
-            // never shields the address itself (host bans are decided by `shield`)
-            || (!net.is_host() && self.trusted.keys().any(|ip| net.contains(*ip) && self.is_trusted(*ip)))
+    }
+
+    /// A user's login keeps their neighbours' subnet from being banned wholesale, but never
+    /// shields the address itself (host bans are decided by `shield`), and gives way when
+    /// the subnet shows twice what a ban needs (`evaluate_subnets`).
+    fn net_has_login(&self, net: &Net) -> bool {
+        !net.is_host() && self.trusted.keys().any(|ip| net.contains(*ip) && self.is_trusted(*ip))
+    }
+
+    /// Whether `who` (qualified, `acct` its bare name) has logged in from `ip`'s network
+    /// before, as far as the new-network watch remembers; without that watch nothing is
+    /// known, and the answer is yes.
+    fn known_network(&self, who: &str, acct: &str, ip: IpAddr) -> bool {
+        let net = Net::new(ip, if ip.is_ipv4() { 16 } else { 48 });
+        match self.account_nets.get(who) {
+            Some(nets) => nets.contains(&net),
+            None => !self.cfg.accounts.new_network_alerts || self.cfg.accounts.new_network_ignore.iter().any(|a| a == acct),
+        }
     }
 
     /// The active ban covering `net` (itself or any wider prefix), if any.
@@ -1836,12 +1869,13 @@ impl Engine {
             }
             ActionKind::Unban | ActionKind::Allow | ActionKind::Disallow => {}
         }
-        if self.recent.len() == RECENT_ACTIONS {
+        // `>=`: a list restored longer than the bound (an older version's state) shrinks
+        while self.recent.len() >= RECENT_ACTIONS {
             self.recent.pop_front();
         }
         self.recent.push_back(a.clone());
         if a.kind == ActionKind::Alert {
-            if self.alerts.len() == RECENT_ALERTS {
+            while self.alerts.len() >= RECENT_ALERTS {
                 self.alerts.pop_front();
             }
             self.alerts.push_back(a.clone());
@@ -2052,6 +2086,7 @@ impl Engine {
                     | Signal::XmppTokenFail
                     | Signal::SshPreauth
                     | Signal::FwBlock
+                    | Signal::FwLimit
                     | Signal::FwTripwire
                     | Signal::TripwireConnect
             )
@@ -2109,9 +2144,12 @@ impl Engine {
         if points > 0.0 {
             st.note(ev.ts, &ev.detail);
         }
-        if let (true, Some(acct)) = (ev.signal.is_auth_failure(), &ev.account) {
+        // The names are the client's to choose: 32 of 200 characters each, for every address
+        // of a botnet (or of one IPv6 /64), were far more than the service's memory. A real
+        // account's name is short, and an address is banned long before its ninth.
+        if let (true, Some(acct)) = (ev.signal.is_auth_failure(), ev.account.as_ref().filter(|a| a.len() <= MAX_TARGETED_NAME)) {
             let key = format!("{}:{acct}", ev.signal.source().name());
-            if st.targeted.len() < 32 || st.targeted.contains_key(&key) {
+            if st.targeted.len() < MAX_TARGETED || st.targeted.contains_key(&key) {
                 *st.targeted.entry(key).or_default() += 1;
             }
         }
@@ -2222,10 +2260,17 @@ impl Engine {
                 self.unban(*net, &format!("lifted by peer {origin}: {reason}"), Severity::Info, &mut out);
             }
             FactBody::Report { ip, points, signals, forgeable } => {
+                // the address as this node writes it: `::ffff:10.0.0.5` isn't in any
+                // protected range as written, and would be banned as 10.0.0.5
+                let ip = &crate::net::normalize(*ip);
                 // NaN is rejected too; one report can't add more than a ban's worth.
                 // (`min` would turn NaN into the threshold, so check first)
                 let points = points * ccfg.report_factor;
                 if points.is_nan() || points <= 0.0 || self.hard_protection(*ip).is_some() || (*forgeable && self.is_trusted(*ip)) {
+                    return out;
+                }
+                // a peer's reports don't fill this node's table: known addresses only then
+                if self.ips.len() >= self.cfg.scoring.max_tracked_ips && !self.ips.contains_key(ip) {
                     return out;
                 }
                 let points = points.min(self.cfg.scoring.fast_threshold);
@@ -2263,6 +2308,17 @@ impl Engine {
                 if !crate::logdigest::is_day(day) || sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
                     return out;
                 }
+                // A day that is over, and not long: a node sends yesterday's. Days far ahead
+                // (or behind) used to be kept like any other, and 120 of them pushed out
+                // every real one this node held for that peer.
+                let day_s = 86_400 * crate::time::SEC;
+                if *day > crate::logdigest::day_of(now) || *day < crate::logdigest::day_of(now - 8 * day_s) {
+                    return out;
+                }
+                // (and a name not heard of doesn't push out a known one's)
+                if self.peer_log_digests.len() >= 64 && !self.peer_log_digests.contains_key(origin.as_str()) {
+                    return out;
+                }
                 let list = self.peer_log_digests.entry(origin.to_string()).or_default();
                 if list.iter().any(|d| d.day == *day) {
                     return out; // the first word about a day stands: a later one can't rewrite it
@@ -2270,9 +2326,6 @@ impl Engine {
                 list.push(LogDigest { day: day.clone(), sha256: sha256.clone(), lines: *lines, received: now });
                 if list.len() > LOG_DIGESTS_KEPT {
                     list.remove(0);
-                }
-                if self.peer_log_digests.len() > 64 {
-                    self.peer_log_digests.pop_first();
                 }
                 self.changes += 1;
             }
@@ -2296,6 +2349,12 @@ impl Engine {
                 } else {
                     String::new()
                 };
+                // One node's messages take half of the hour's relayed messages at most: a
+                // node flooded with alerts (or broken into) used up all of them, and the
+                // other nodes' weren't passed on.
+                let sent = self.relay_allowed(origin, now);
+                let late =
+                    if sent { late } else { format!("{late} [only logged: this node's share of the hour's relayed messages is used up]") };
                 let a = Action {
                     ts: now,
                     kind: ActionKind::Alert,
@@ -2306,7 +2365,7 @@ impl Engine {
                     evidence: vec![],
                     superseded: vec![],
                     applied: false,
-                    topic: Some(Topic::Relayed),
+                    topic: sent.then_some(Topic::Relayed),
                     accounts: vec![],
                     user_note: Some(body.clone()),
                     notice: None,
@@ -2317,6 +2376,28 @@ impl Engine {
             }
         }
         out
+    }
+
+    /// Whether one more message of `origin`'s may go to the admins this hour (and counts it).
+    fn relay_allowed(&mut self, origin: &str, now: Micros) -> bool {
+        let hour = 3600 * crate::time::SEC;
+        let admins = self.cfg.notify.admin_recipients().len().max(1);
+        let limit = (self.cfg.notify.max_per_hour / admins / 2).max(3);
+        let known = self.relayed_sent.contains_key(origin);
+        if !known && self.relayed_sent.len() >= MAX_RELAY_ORIGINS {
+            self.relayed_sent.retain(|_, t| t.back().is_some_and(|t| now - *t < hour));
+        }
+        // (names beyond the bound share one count: they are a key holder's to invent)
+        let key = if known || self.relayed_sent.len() < MAX_RELAY_ORIGINS { origin } else { "" };
+        let times = self.relayed_sent.entry(key.to_string()).or_default();
+        while times.front().is_some_and(|t| now - *t >= hour) {
+            times.pop_front();
+        }
+        if times.len() >= limit {
+            return false;
+        }
+        times.push_back(now);
+        true
     }
 
     /// Whether a peer's notice is to be delivered. The cluster's memory of what it has seen
@@ -2827,17 +2908,26 @@ impl Engine {
         // a file a scanner could not read counts as not scanned, like one skipped
         let scanned = r.files.iter().filter(|f| !f.hits.is_empty() || f.note.is_none()).count();
         let with = if r.scanners.is_empty() { String::new() } else { format!(" with {}", r.scanners) };
-        let result = match (infected, skipped) {
+        let mut result = match (infected, skipped) {
             (0, 0) => "nothing found".to_string(),
             (0, s) => format!("nothing found, {s} not scanned or unreadable"),
             (i, 0) => format!("{i} infected"),
             (i, s) => format!("{i} infected, {s} not scanned or unreadable"),
         };
+        // A scanner that failed as a whole (killed, timed out, rules that don't compile) is an
+        // alert once a day; every scan's own line says so, so that a file isn't on record as
+        // clean when nothing, or only the other scanner, looked at it.
+        let failed = !r.errors.is_empty();
+        if failed {
+            result +=
+                &format!("; a scanner failed ({}): files without a finding were not fully checked", crate::event::clean(&r.errors[0], 120));
+        }
         let evidence = r
             .files
             .iter()
             .take(50)
             .map(|f| match (&f.hits[..], &f.note) {
+                ([], None) if failed => format!("{}: no finding, but a scanner failed", f.path),
                 ([], None) => format!("{}: clean", f.path),
                 ([], Some(n)) => format!("{}: {n}", f.path),
                 (h, _) => format!("{}: {}", f.path, h.join("; ")),
@@ -3023,7 +3113,10 @@ impl Engine {
             if fast >= cfg.scoring.compromise_score
                 && st.auth_failures() > 0
                 && self.hard_protection(ev.ip).is_none()
-                && !self.trusted_for(ev.ip, ev.signal.source())
+                // an address someone logged in from lately is excused its typos, but only
+                // for an account that has come from its network before: the login may have
+                // been to an account of the attacker's own, before guessing this one's password
+                && !(self.trusted_for(ev.ip, ev.signal.source()) && self.known_network(&who, &acct, ev.ip))
             {
                 let note = UserNotice::Compromise { ip: ev.ip, place: self.place(ev.ip), at: ev.ts };
                 self.alert_about(
@@ -3132,7 +3225,7 @@ impl Engine {
             }
         }
 
-        if cfg.allowlist.trust_authenticated && ev.verified {
+        if cfg.allowlist.trust_authenticated && ev.verified && (self.trusted.len() < MAX_TRUSTED || self.trusted.contains_key(&ev.ip)) {
             // Only for this service, and never shared with peers (see `apply_peer_fact`).
             let previous = self.trusted.entry(ev.ip).or_default().insert(ev.signal.source(), now);
             // Refreshing a trust that is less than an hour old isn't worth a save.
@@ -3365,6 +3458,10 @@ impl Engine {
             self.unban(net, "ban expired", Severity::Info, &mut out);
             let now = self.now;
             for b in inner.into_iter().filter(|b| b.until > now) {
+                // (allowed, or a peer's or this host's address since: not banned again)
+                if self.net_hard_protected(&b.net) || (b.net.is_host() && self.hard_protection(b.net.addr).is_some()) {
+                    continue;
+                }
                 // Still inside another (wider) ban: wait for that one to end too.
                 if let Some(cover) = self.covering_ban(&b.net).map(|c| c.net) {
                     if let Some(c) = self.bans.get_mut(&cover).filter(|c| c.until < b.until) {
@@ -3403,6 +3500,8 @@ impl Engine {
             score: f64,
             /// (slow score, address) of every contributor, for the ban's evidence.
             members: Vec<(f64, IpAddr)>,
+            /// When a contributor was last heard of.
+            latest: Micros,
         }
         let mut narrow: BTreeMap<Net, Group> = BTreeMap::new();
         for (ip, st) in &self.ips {
@@ -3419,6 +3518,7 @@ impl Engine {
             g.contributors += 1;
             g.score += slow;
             g.members.push((slow, *ip));
+            g.latest = g.latest.max(st.last_seen);
             if slow >= sc.suspect_score || self.bans.contains_key(&Net::host(*ip)) {
                 g.bad.push(*ip);
             }
@@ -3427,14 +3527,33 @@ impl Engine {
         for (net, g) in narrow {
             let concentrated = g.bad.len() >= sc.min_bad_ips;
             let distributed = g.contributors >= sc.min_contributors && g.score >= sc.score_sum_threshold;
-            if !(concentrated || distributed) || self.covering_ban(&net).is_some() || self.net_protected(&net) {
+            if !(concentrated || distributed) || self.covering_ban(&net).is_some() || self.net_hard_protected(&net) {
                 continue;
             }
-            let reason = if concentrated {
+            // A subnet whose ban ended (or was lifted) is banned again for what comes from it
+            // after that ban began, not for the scores its addresses still have: those fade
+            // over days, and each new ban on them alone was a step up the ladder for nothing.
+            if self.offenders.get(&net).is_some_and(|o| g.latest <= o.last_ban) {
+                continue;
+            }
+            // A login from inside keeps the subnet open for its neighbours, until it shows
+            // twice what a ban needs: one account (any, where anyone can register) and one
+            // login would otherwise keep a whole /64 or /24 of attacking addresses unbanned.
+            let login_inside = self.net_has_login(&net);
+            if login_inside
+                && g.bad.len() < 2 * sc.min_bad_ips
+                && !(g.contributors >= 2 * sc.min_contributors && g.score >= 2.0 * sc.score_sum_threshold)
+            {
+                continue;
+            }
+            let mut reason = if concentrated {
                 format!("{} bad addresses in subnet", g.bad.len())
             } else {
                 format!("distributed probing: {} addresses, combined score {:.0}", g.contributors, g.score)
             };
+            if login_inside {
+                reason += " (twice what a ban needs: a recent login from inside no longer keeps it open)";
+            }
             let mut sample: Vec<String> = g.bad.iter().map(|ip| ip.to_string()).collect();
             sample.sort();
             // the worst members' latest lines
@@ -3514,7 +3633,7 @@ impl Engine {
     }
 
     /// The latest lines of what these addresses did, so the actions log keeps proof for a
-    /// network ban too: "10-11 05:03:08 13.204.29.77 block TCP/23".
+    /// network ban too: "10-11 05:03:08 13.208.29.77 block TCP/23".
     fn members_evidence(&self, ips: impl Iterator<Item = IpAddr>) -> Vec<String> {
         let mut out = Vec::new();
         for ip in ips {
@@ -3584,6 +3703,15 @@ impl Engine {
         let forgive = cfg.bans.forgive_after.micros();
         let bans = &self.bans;
         self.offenders.retain(|net, o| now - o.last_ban < forgive || bans.contains_key(net));
+        // Forged packets to a tripwire port ban (for a while) the addresses they name, and
+        // each ban is remembered for `forgive_after`: a month of them is millions of
+        // entries. Beyond the bound those banned longest ago are forgotten early.
+        if self.offenders.len() > MAX_OFFENDERS {
+            let mut times: Vec<Micros> = self.offenders.values().map(|o| o.last_ban).collect();
+            let cut = times.len() - MAX_OFFENDERS;
+            let keep_from = *times.select_nth_unstable(cut).1;
+            self.offenders.retain(|net, o| o.last_ban >= keep_from || bans.contains_key(net));
+        }
     }
 
     // ---------------------------------------------------------------- views
@@ -3929,6 +4057,9 @@ impl Engine {
         self.allowed = st.allowed.into_iter().map(|a| (a.net, a)).collect();
         if let Some(d) = st.digest {
             self.digest = d;
+            // the event counters start at zero in a new process: the saved base was taken
+            // from the old one's, and the digest showed no events until they passed it
+            self.digest.events_base.clear();
         }
         self.digest_last_sent = st.digest_last_sent;
         self.alert_gate = st.alert_gate.into_iter().collect();
@@ -4073,7 +4204,7 @@ mod tests {
 
     fn engine() -> Engine {
         let mut cfg = Config::default();
-        cfg.allowlist.nets.push("13.46.43.31".parse().unwrap());
+        cfg.allowlist.nets.push("13.48.43.31".parse().unwrap());
         Engine::new(Arc::new(cfg), 0)
     }
 
@@ -4173,9 +4304,17 @@ mod tests {
         let warn = a.iter().find(|a| a.severity == Severity::Warning).unwrap();
         assert!(warn.message.contains("syntax error") && warn.topic == Some(Topic::Integrity));
         let rec = a.iter().find(|a| a.severity == Severity::Info).unwrap();
-        assert_eq!(rec.message, "scanned 2 of 3 changed files with ClamAV (clamd): 1 infected, 1 not scanned or unreadable");
+        assert_eq!(
+            rec.message,
+            "scanned 2 of 3 changed files with ClamAV (clamd): 1 infected, 1 not scanned or unreadable; a scanner failed \
+             (YARA (1 rule file) failed: syntax error): files without a finding were not fully checked"
+        );
         assert_eq!(rec.topic, None, "on record, not sent");
-        assert_eq!(rec.evidence, ["/tmp/x: ClamAV: Unix.Trojan.Mirai-1", "/opt/y: clean", "/opt/z: not scanned: no longer there"]);
+        // (a file one scanner passed isn't "clean" while the other failed)
+        assert_eq!(
+            rec.evidence,
+            ["/tmp/x: ClamAV: Unix.Trojan.Mirai-1", "/opt/y: no finding, but a scanner failed", "/opt/z: not scanned: no longer there"]
+        );
         assert!(e.on_file_scan(&report).iter().all(|a| a.severity == Severity::Info), "the same hit and error: once a day");
     }
 
@@ -4403,7 +4542,7 @@ mod tests {
         assert!(a.iter().any(|a| a.severity == Severity::Critical && a.topic == Some(Topic::Compromise)), "{a:?}");
         assert!(e.protection("11.141.9.8".parse().unwrap()).is_none(), "a canary login earns no trust");
         // your own (allowlisted) address mistyping a name: alert, no ban
-        let a = e.on_event(&ev(3, "13.46.43.31", Signal::SshCanary).account(Some("root")));
+        let a = e.on_event(&ev(3, "13.48.43.31", Signal::SshCanary).account(Some("root")));
         assert!(bans(&a).is_empty());
         assert!(a.iter().any(|a| a.topic == Some(Topic::Protected)));
     }
@@ -4774,7 +4913,7 @@ mod tests {
         assert!(e.take_outbox(10.0).is_empty());
 
         // protected addresses: home (allowlist) and cluster peers are never banned by peers
-        for ip in ["13.46.43.31", "12.37.48.86"] {
+        for ip in ["13.48.43.31", "12.37.48.86"] {
             assert!(e
                 .apply_peer_fact(
                     &fact(FactBody::Ban {
@@ -5000,13 +5139,13 @@ mod tests {
     #[test]
     fn three_tls_failures_ban() {
         let mut e = engine();
-        assert!(e.on_event(&ev(0, "13.236.40.218", Signal::XmppTlsFail)).is_empty());
-        assert!(e.on_event(&ev(5, "13.236.40.218", Signal::XmppTlsFail)).is_empty());
-        let a = e.on_event(&ev(9, "13.236.40.218", Signal::XmppTlsFail));
-        assert_eq!(bans(&a), vec!["13.236.40.218"]);
+        assert!(e.on_event(&ev(0, "13.240.40.218", Signal::XmppTlsFail)).is_empty());
+        assert!(e.on_event(&ev(5, "13.240.40.218", Signal::XmppTlsFail)).is_empty());
+        let a = e.on_event(&ev(9, "13.240.40.218", Signal::XmppTlsFail));
+        assert_eq!(bans(&a), vec!["13.240.40.218"]);
         assert_eq!(a[0].until, Some(9 * SEC + 3600 * SEC));
         // no duplicate ban while active
-        assert!(e.on_event(&ev(10, "13.236.40.218", Signal::XmppTlsFail)).is_empty());
+        assert!(e.on_event(&ev(10, "13.240.40.218", Signal::XmppTlsFail)).is_empty());
     }
 
     #[test]
@@ -5029,7 +5168,7 @@ mod tests {
         let mut e = engine();
         let mut all = vec![];
         for i in 0..10 {
-            all.extend(e.on_event(&ev(i, "13.46.43.31", Signal::XmppTlsFail)));
+            all.extend(e.on_event(&ev(i, "13.48.43.31", Signal::XmppTlsFail)));
         }
         assert!(bans(&all).is_empty());
         assert!(all.iter().any(|a| a.kind == ActionKind::Alert));
@@ -5074,6 +5213,10 @@ mod tests {
         let mut all = e.on_event(&ev(5, "5.5.5.3", Signal::FwTripwire).port(Some(23)));
         for port in 1000..1020 {
             all.extend(e.on_event(&ev(6, "5.5.5.3", Signal::FwBlock).port(Some(port))));
+        }
+        // (`ufw limit` logs forged SYNs the same way)
+        for i in 0..200 {
+            all.extend(e.on_event(&ev(7 + i, "5.5.5.3", Signal::FwLimit).port(Some(22))));
         }
         assert!(bans(&all).is_empty(), "{all:?}");
         let facts = e.take_outbox(1.0);
@@ -5138,7 +5281,7 @@ mod tests {
     #[test]
     fn port_spread_scanner() {
         let mut e = engine();
-        let ip = "13.35.253.221";
+        let ip = "13.37.253.221";
         let mut all = vec![];
         for (i, port) in [5222u16, 5269, 5280, 5443].iter().enumerate() {
             all.extend(e.on_event(&ev(i as i64, ip, Signal::XmppConn).port(Some(*port))));
@@ -5609,11 +5752,11 @@ mod tests {
         let a = e.operator_ban(net, 200 * SEC, "shorter".into()).unwrap();
         assert_eq!(a.iter().map(|a| a.kind).collect::<Vec<_>>(), vec![ActionKind::Unban, ActionKind::Ban]);
         // refused: protected addresses, ones inside a wider ban, networks wider than own bans
-        for (target, why) in [("13.46.43.31", "allowlisted"), ("203.0.113.9", "cluster peer"), ("10.0.0.1", "private")] {
+        for (target, why) in [("13.48.43.31", "allowlisted"), ("203.0.113.9", "cluster peer"), ("10.0.0.1", "private")] {
             let err = e.operator_ban(target.parse().unwrap(), 300 * SEC, "x".into()).unwrap_err();
             assert!(err.contains(why), "{target}: {err}");
         }
-        assert!(e.operator_ban("13.46.43.0/24".parse().unwrap(), 300 * SEC, "x".into()).unwrap_err().contains("protected"));
+        assert!(e.operator_ban("13.48.43.0/24".parse().unwrap(), 300 * SEC, "x".into()).unwrap_err().contains("protected"));
         assert!(e.operator_ban("11.134.0.0/12".parse().unwrap(), 300 * SEC, "x".into()).unwrap_err().contains("wider"));
         e.operator_ban("11.141.9.0/24".parse().unwrap(), 300 * SEC, "range".into()).unwrap();
         assert!(e
@@ -5640,7 +5783,7 @@ mod tests {
         let mut decisions = vec![
             d("11.141.9.9", ten_hours, "crowdsecurity/http-probing"),
             d("198.51.100.0/24", None, ""),
-            d("13.46.43.31", ten_hours, "allowlisted"),
+            d("13.48.43.31", ten_hours, "allowlisted"),
             d("11.134.0.0/12", ten_hours, "too wide"),
             d("11.141.9.9", Some(200 * SEC), "a shorter one for the same address"),
         ];
@@ -5814,5 +5957,116 @@ mod tests {
         let user = "11.140.8.9";
         e.on_event(&ev(2, user, Signal::SshAuthOk).account(Some("gw")));
         assert!(bans(&e.on_event(&ev(3, user, Signal::TripwireConnect).port(Some(2323)))).is_empty());
+    }
+
+    /// One login from inside kept a subnet open whatever came from the rest of it: an
+    /// account of the attacker's own (where anyone can register) and a /64 to pick from.
+    #[test]
+    fn a_login_keeps_a_subnet_open_only_up_to_twice_the_evidence() {
+        let mut e = engine();
+        e.on_event(&Event::new(0, "11.217.76.5".parse().unwrap(), Signal::XmppAuthOk).account(Some("a@b")).verified(true));
+        let mut all = vec![];
+        for host in 10..16 {
+            for i in 0..3 {
+                all.extend(e.on_event(&ev(i + 1, &format!("11.217.76.{host}"), Signal::XmppTlsFail)));
+            }
+        }
+        all.extend(e.tick(120 * SEC));
+        let sub = all.iter().find(|a| a.kind == ActionKind::Ban && a.target.map(|t| t.prefix) == Some(24)).expect("banned");
+        assert!(sub.message.contains("twice what a ban needs"), "{}", sub.message);
+    }
+
+    /// A subnet whose ban ended was banned again at once, for the scores its addresses kept,
+    /// and again after that: a step up the ladder each time without one new line.
+    #[test]
+    fn a_subnet_is_banned_again_for_new_activity_only() {
+        let mut e = engine();
+        let mut all = vec![];
+        for host in [10, 11, 12] {
+            for i in 0..3 {
+                all.extend(e.on_event(&ev(i, &format!("11.145.59.{host}"), Signal::XmppTlsFail)));
+            }
+        }
+        all.extend(e.tick(120 * SEC));
+        let until = all.iter().find(|a| a.kind == ActionKind::Ban && a.target.map(|t| t.prefix) == Some(24)).unwrap().until.unwrap();
+        let mut after = e.tick(until + SEC);
+        after.extend(e.tick(until + 600 * SEC));
+        after.extend(e.tick(until + 1200 * SEC));
+        assert!(after.iter().any(|a| a.kind == ActionKind::Unban) && bans(&after).iter().all(|b| !b.contains('/')), "{after:?}");
+        // one of them is back
+        let t = until / SEC + 1300;
+        let mut again = e.on_event(&ev(t, "11.145.59.10", Signal::XmppTlsFail));
+        again.extend(e.tick((t + 120) * SEC));
+        assert!(bans(&again).contains(&"11.145.59.0/24".to_string()), "{again:?}");
+    }
+
+    /// The login that makes an address trusted may be to an account of the attacker's own.
+    #[test]
+    fn a_trusted_address_guessing_another_accounts_password_is_a_compromise() {
+        let ok =
+            |t: i64, ip: &str, who: &str| Event::new(t * SEC, ip.parse().unwrap(), Signal::XmppAuthOk).account(Some(who)).verified(true);
+        let compromise = |a: &[Action]| a.iter().any(|a| a.message.contains("possible compromise"));
+        let mut e = engine();
+        let mut all = e.on_event(&ok(0, "7.7.7.7", "mallory@x"));
+        for i in 1..4 {
+            all.extend(e.on_event(&ev(i, "7.7.7.7", Signal::XmppAuthFail).account(Some("bob@x"))));
+        }
+        all.extend(e.on_event(&ok(5, "7.7.7.7", "bob@x")));
+        assert!(compromise(&all), "{all:?}");
+        // the user's own typos, from where they logged in before, stay excused
+        let mut e = engine();
+        let mut all = e.on_event(&ok(0, "9.9.9.9", "carol@x"));
+        for i in 1..4 {
+            all.extend(e.on_event(&ev(i, "9.9.9.9", Signal::XmppAuthFail).account(Some("carol@x"))));
+        }
+        all.extend(e.on_event(&ok(5, "9.9.9.9", "carol@x")));
+        assert!(!compromise(&all), "{all:?}");
+    }
+
+    #[test]
+    fn an_address_remembers_a_few_short_account_names() {
+        let mut e = engine();
+        let long = "x".repeat(MAX_TARGETED_NAME + 1);
+        e.on_event(&ev(0, "5.9.9.9", Signal::SshInvalidUser).account(Some(&long)));
+        for i in 0..40 {
+            e.on_event(&ev(1, "5.9.9.9", Signal::SshInvalidUser).account(Some(&format!("user{i}"))));
+        }
+        let st = &e.ips[&"5.9.9.9".parse::<IpAddr>().unwrap()];
+        assert_eq!(st.targeted.len(), MAX_TARGETED);
+        assert!(st.targeted.keys().all(|k| k.len() <= MAX_TARGETED_NAME + 8), "{:?}", st.targeted);
+    }
+
+    /// One node's alerts used up the hour's relayed messages, and the other nodes' weren't
+    /// passed on; days far ahead pushed out the log digests really held.
+    #[test]
+    fn a_peers_notices_and_digests_stay_within_their_share() {
+        use crate::cluster::{ClusterCfg, Fact, FactBody};
+        let ccfg = ClusterCfg::default();
+        let mut e = engine();
+        e.now = 1_700_000_000 * SEC; // 2023-11-14
+        let mut seq = 0;
+        let mut fact = |origin: &str, body| {
+            seq += 1;
+            Fact { origin: origin.into(), seq, created: 1_700_000_000 * SEC, hops: 0, body, sig: String::new() }
+        };
+        let notice = |i: usize| FactBody::Notice { subject: format!("vpsfort: alert {i}"), body: "x".into() };
+        let mut sent = 0;
+        for i in 0..40 {
+            let a = e.apply_peer_fact(&fact("noisy", notice(i)), &ccfg);
+            sent += a.iter().filter(|a| a.topic == Some(Topic::Relayed)).count();
+            assert_eq!(a.len(), 1, "logged either way");
+        }
+        let share = (e.cfg.notify.max_per_hour / 2).max(3);
+        assert_eq!(sent, share, "half of the hour's messages");
+        let a = e.apply_peer_fact(&fact("quiet", notice(99)), &ccfg);
+        assert_eq!(a[0].topic, Some(Topic::Relayed), "another node's still go out");
+
+        let digest = |day: &str| FactBody::LogDigest { day: day.into(), sha256: "a".repeat(64), lines: 1 };
+        e.apply_peer_fact(&fact("peer", digest("2023-11-13")), &ccfg);
+        for day in ["2023-11-15", "2031-01-01", "2023-10-01"] {
+            e.apply_peer_fact(&fact("peer", digest(day)), &ccfg);
+        }
+        let kept: Vec<&str> = e.peer_log_digests["peer"].iter().map(|d| d.day.as_str()).collect();
+        assert_eq!(kept, ["2023-11-13"], "days that are over, and not long");
     }
 }

@@ -16,6 +16,7 @@ ExecStart=/usr/local/sbin/vpsfort-avscan
 # its Unix socket; a clamd on TCP needs PrivateNetwork=no and AF_INET added).
 # An AVSCAN_LOG outside /var/log/vpsfort needs  ReadWritePaths=<its directory>  (systemctl edit).
 LogsDirectory=vpsfort
+LogsDirectoryMode=0750
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateNetwork=yes

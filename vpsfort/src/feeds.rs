@@ -123,6 +123,11 @@ pub(crate) const BOGONS: &[&str] = &[
 pub fn parse_feed(text: &str) -> Vec<Net> {
     let mut out = Vec::new();
     for line in text.lines() {
+        // (a download of `MAX_DOWNLOAD` is two million short lines: more than `max_entries`
+        // can ever accept, and with the copies made of them more than the service's memory)
+        if out.len() >= MAX_PARSED {
+            break;
+        }
         let line = line.trim();
         let token = if line.starts_with('{') {
             // {"cidr":"11.1.16.0/20","sblid":"SBL256894","rir":"apnic"}
@@ -194,6 +199,9 @@ fn cache_path(dir: &Path, url: &str) -> PathBuf {
 /// Largest blocklist (or RDAP answer) accepted: the lists in use are well under 1 MB, and
 /// the download is held in memory, inside the service's memory limit.
 pub const MAX_DOWNLOAD: u64 = 16 << 20;
+/// Networks read from one list: beyond any real one, and what a list gone wrong (or a
+/// feed's server broken into) is cut to before it is copied and sorted.
+pub const MAX_PARSED: usize = 500_000;
 
 /// Runs a fetch command (`curl ... <url>`), streaming its output into `out` and stopping
 /// at `max` bytes, so a huge or endless answer can't exhaust memory or disk.
@@ -269,7 +277,7 @@ pub fn fetch_into_with(cmd: &[String], url: &str, input: Option<&[u8]>, out: &mu
 
 /// SIGKILL to every process in the group `fetch_into` started. Only while the group's id can't
 /// have been reused: its leader not yet reaped, or members still holding its pipes.
-fn kill_group(group: u32) {
+pub(crate) fn kill_group(group: u32) {
     extern "C" {
         fn kill(pid: i32, sig: i32) -> i32;
     }
@@ -603,5 +611,14 @@ mod tests {
         list("11.1.16.0/20\n100.0.0.0/12\n");
         assert_eq!(refresh(&FeedsCfg { max_growth: 0.0, ..cfg.clone() }, &[], &|_| None).0.len(), 2);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_list_of_millions_is_cut_while_it_is_read() {
+        let mut text = String::new();
+        for i in 0..(MAX_PARSED as u32 + 1000) {
+            text.push_str(&format!("10.{}.{}.{}\n", i >> 16 & 255, i >> 8 & 255, i & 255));
+        }
+        assert_eq!(parse_feed(&text).len(), MAX_PARSED);
     }
 }

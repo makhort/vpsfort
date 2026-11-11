@@ -134,6 +134,13 @@ if [ "$replace" = replace ]; then
     if [ "$was_active" = yes ]; then
         echo "  vpsfort keeps running with the old config until then."
     fi
+    # The units that were enabled on the bundle's files (removed above) are enabled on the
+    # package's here too: without this the daemon was gone after the next reboot.
+    if systemd; then
+        for u in $enabled; do
+            sc enable -q "$u"
+        done
+    fi
     rm -rf /run/vpsfort-package
     exit 0
 fi

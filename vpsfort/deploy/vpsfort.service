@@ -17,7 +17,11 @@ RuntimeDirectory=vpsfort
 # the control socket's directory: root only, whatever the socket's mode while it is created
 RuntimeDirectoryMode=0700
 StateDirectory=vpsfort
+# root's alone: the message key, the cluster inbox, the lists and copies of what is scanned
+StateDirectoryMode=0700
 LogsDirectory=vpsfort
+# decisions, scan results and the daemon's own word name addresses, accounts and files
+LogsDirectoryMode=0750
 
 # Runs as root: needs the journal, CAP_NET_ADMIN for nftables and /etc/ufw for the ufw fallback.
 NoNewPrivileges=yes

@@ -342,7 +342,8 @@ pub struct PortsCfg {
     /// (also `pop3`, `imap`, `ssh` and `vnc`: the identification line alone, which brings out
     /// the client's, and `mysql`: a server's first packet, which brings out its login).
     /// Nothing the client sends changes what goes out, but for the first word the second
-    /// line of POP3 and FTP goes by. Off by default: for dedicated honeypot nodes.
+    /// line of POP3 and FTP goes by, and the tag IMAP's answer to `CAPABILITY` repeats. Off
+    /// by default: for dedicated honeypot nodes.
     pub honeypot_prompts: BTreeMap<String, crate::honeypot::Prompts>,
     /// The greeting each prompted protocol opens with, by default a real server's as its
     /// Debian package writes it (vsftpd, Postfix, Dovecot, OpenSSH, MariaDB; Debian's issue
@@ -786,7 +787,8 @@ pub struct EnforceCfg {
     pub ipset: PathBuf,
     /// conntrack-tools' `conntrack`: with firewalld and ufw, whose own rules accept
     /// established traffic before vpsfort's, a ban also ends the address's open connections
-    /// with it (see the README, "Firewall backends"). Empty: never.
+    /// with it (see the README, "Firewall backends"). With any backend the process watch
+    /// asks it who opened a connection from a port that also listens. Empty: never.
     pub conntrack: PathBuf,
 }
 
@@ -1121,8 +1123,16 @@ impl Config {
             bail!("notify needs ejabberd (ejabberdctl) on this host; disable [notify], enable sources.ejabberd, or set [notify] xmpp = false with a copy bot (tg_outbox, mail_outbox, signal_outbox, matrix_outbox, push_outbox or xmpp_outbox)");
         }
         let s = &self.scoring;
-        if s.fast_threshold <= 0.0 || s.slow_threshold <= 0.0 {
-            bail!("scoring thresholds must be positive");
+        // (`nan` and `inf` are numbers to TOML: a threshold of either is never reached, and
+        // a weight of either makes a score that is)
+        if !s.fast_threshold.is_finite() || !s.slow_threshold.is_finite() || s.fast_threshold <= 0.0 || s.slow_threshold <= 0.0 {
+            bail!("scoring thresholds must be positive numbers");
+        }
+        if let Some((signal, w)) = s.weights.iter().find(|(_, w)| !w.is_finite()) {
+            bail!("[scoring.weights] {} = {w}: not a number", signal.name());
+        }
+        if let Some((name, w)) = self.sources.app_weights.iter().find(|(_, w)| !w.is_finite()) {
+            bail!("[sources.app_weights] {name} = {w}: not a number");
         }
         if s.max_tracked_ips < 1000 {
             bail!("scoring.max_tracked_ips must be at least 1000");
@@ -1132,6 +1142,15 @@ impl Config {
         }
         if self.bans.ladder.is_empty() {
             bail!("bans.ladder must not be empty");
+        }
+        // a number without a unit skips the check a text ("7d") gets: seconds times a million
+        // must stay in range, and a step of nothing is a ban lifted as it is made
+        const LONGEST: u64 = 100 * 365 * 86_400;
+        if self.bans.ladder.iter().any(|d| d.0 == 0 || d.0 > LONGEST) {
+            bail!("bans.ladder: each step must be between 1 second and 100 years");
+        }
+        if self.bans.forgive_after.0 > LONGEST || s.fast_half_life.0 > LONGEST || s.slow_half_life.0 > LONGEST {
+            bail!("durations must be at most 100 years");
         }
         if !(8..=32).contains(&self.subnets.v4_prefix) || !(8..=32).contains(&self.subnets.v4_wide_prefix) {
             bail!("IPv4 subnet prefixes must be within 8..=32");
@@ -1451,7 +1470,7 @@ mod tests {
             r#"
             mode = "enforce"
             [allowlist]
-            nets = ["13.46.43.31", "12.37.48.86/32"]
+            nets = ["13.48.43.31", "12.37.48.86/32"]
             [scoring.weights]
             fw_block = 0.5
             "#,
@@ -1487,5 +1506,19 @@ mod tests {
         assert!(Config::from_toml("package_manager = \"pacman\"\n").is_err());
         assert!(toml::to_string(&cfg).unwrap().starts_with("mode = \"shadow\"\npackage_manager = \"dnf\"\n"), "print-config shows it once");
         assert!(Config::from_toml("[verify]\npackage_manager = \"dnf\"\n").is_err(), "top-level only");
+    }
+
+    #[test]
+    fn numbers_that_are_none_and_empty_steps_are_refused() {
+        for bad in [
+            "[scoring]\nfast_threshold = nan",
+            "[scoring]\nslow_threshold = inf",
+            "[scoring.weights]\nssh_auth_fail = nan",
+            "[bans]\nladder = [0]",
+            "[bans]\nladder = [\"1h\", 99999999999999]",
+        ] {
+            assert!(Config::from_toml(bad).is_err(), "{bad}");
+        }
+        assert!(Config::from_toml("[bans]\nladder = [600, \"1d\"]").is_ok());
     }
 }

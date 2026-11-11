@@ -29,8 +29,13 @@ pub fn expand(pattern: &str) -> Vec<PathBuf> {
         for dir in &current {
             if part.contains(['*', '?']) {
                 if let Ok(rd) = std::fs::read_dir(dir) {
+                    // (counted as they come: a user's directory can hold millions of names)
+                    let room = 4097usize.saturating_sub(next.len());
                     next.extend(
-                        rd.flatten().filter(|e| e.file_name().to_str().is_some_and(|n| crate::sshaudit::glob(part, n))).map(|e| e.path()),
+                        rd.flatten()
+                            .filter(|e| e.file_name().to_str().is_some_and(|n| crate::sshaudit::glob(part, n)))
+                            .map(|e| e.path())
+                            .take(room),
                     );
                 }
             } else {

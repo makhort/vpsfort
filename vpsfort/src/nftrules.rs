@@ -331,7 +331,10 @@ fn parse_exprs(exprs: &[Value]) -> Vec<NftRule> {
                     _ => rule.unsure = true,
                 }
             }
-        } else if e.get("counter").is_some() || e.get("log").is_some() || e.get("notrack").is_some() || e.get("meter").is_some() {
+        } else if e.get("meter").is_some() {
+            // a rate per source inside: the verdict applies to some packets only
+            rule.limit = true;
+        } else if e.get("counter").is_some() || e.get("log").is_some() || e.get("notrack").is_some() {
             // says nothing about what gets in
         } else {
             rule.unsure = true;
@@ -431,7 +434,8 @@ fn match_expr(rule: &mut NftRule, m: &Value) {
             }
             ("tcp", "flags") => {
                 // `tcp flags syn` is a new connection; anything else is odd
-                if !(right_strings().iter().any(|f| f == "syn") || right["&"].is_array() || right.as_str() == Some("syn")) {
+                // (`tcp flags != syn` is everything but one)
+                if negated || !(right_strings().iter().any(|f| f == "syn") || right["&"].is_array() || right.as_str() == Some("syn")) {
                     rule.unsure = true;
                 }
             }

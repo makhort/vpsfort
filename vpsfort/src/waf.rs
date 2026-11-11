@@ -360,6 +360,12 @@ impl Parsed {
             self.bad += 1;
             return;
         };
+        // far beyond `max_entries` and `max_bans`, which refuse the source then: the rest of
+        // a download of millions of lines isn't kept in memory first
+        if self.decisions.len() >= MAX_DECISIONS {
+            self.bad += 1;
+            return;
+        }
         // a duration is relative, so it doesn't depend on the WAF host's clock
         let until = match (present(&f.duration), present(&f.until)) {
             (Some(d), _) => parse_duration(&d).map(|d| now.saturating_add(d)),
@@ -378,6 +384,9 @@ impl Parsed {
         self.decisions.push(Decision { net, until, kind: clean(&f.kind), origin: clean(&f.origin), reason: clean(&f.reason) });
     }
 }
+
+/// Decisions kept of one source's download.
+const MAX_DECISIONS: usize = 250_000;
 
 /// A Go duration as CrowdSec writes it (`3h59m56.9s`, `-1m`, `300ms`), a number of seconds,
 /// or `7d`: microseconds, negative for one already over.

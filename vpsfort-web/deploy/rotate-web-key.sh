@@ -123,7 +123,7 @@ for h in "${hosts[@]}"; do
         for f in "$stage"/*; do echo "put \"$f\" $remote/"; done
     } | sftp -q -o BatchMode=no -b - "$h" >/dev/null
     echo "Copied to $h:$remote"
-    cmds+=("$h:" "d=\$(mktemp -d /root/vpsfort-web-rotate.XXXXXX) && cp -R $remote/. \"\$d\" && cd \"\$d\" && echo '$MANIFEST  SHA256SUMS' | sha256sum -c --quiet && sha256sum -c --quiet --strict SHA256SUMS && bash rotate.sh $step; cd /; rm -rf \"\$d\" $remote" "")
+    cmds+=("$h:" "d=\$(mktemp -d /root/vpsfort-web-rotate.XXXXXX) && cp -R $remote/. \"\$d\" && [ -z \"\$(find \"\$d\" -mindepth 1 ! -type f)\" ] && cd \"\$d\" && echo '$MANIFEST  SHA256SUMS' | sha256sum -c --quiet && sha256sum -c --quiet --strict SHA256SUMS && bash rotate.sh $step; cd /; rm -rf \"\$d\" $remote" "")
 done
 echo
 echo "Now paste into a root shell on each node:"

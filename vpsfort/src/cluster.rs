@@ -1376,7 +1376,7 @@ impl Cluster {
                 if self.unsigned_logged.len() < 100 && self.unsigned_logged.insert(f.origin.clone()) {
                     eprintln!("vpsfort: cluster: facts from '{}' (received from '{}') refused: {why}", f.origin, env.from);
                 }
-                if self.refusals.len() < 100 && !self.refusals.iter().any(|(o, _, _)| *o == f.origin) {
+                if self.refusals.len() < 100 && !self.refusals.iter().any(|(_, via, _)| *via == env.from) {
                     self.refusals.push((f.origin.clone(), env.from.clone(), why.to_string()));
                 }
                 continue;
@@ -1396,6 +1396,8 @@ impl Cluster {
             fresh.push(f);
         }
         self.view.facts_received += fresh.len() as u64;
+        // (applied in the order they were made, whatever order they were sent in)
+        fresh.sort_by(|a, b| (a.created, &a.origin, a.seq).cmp(&(b.created, &b.origin, b.seq)));
         fresh
     }
 
@@ -1445,12 +1447,16 @@ impl Cluster {
             let full = now - peer.last_full >= full_every;
             let since = if full { Micros::MIN } else { peer.watermark };
             let share = &self.cfg.share;
-            let facts: Vec<Fact> = self
+            let mut facts: Vec<Fact> = self
                 .known
                 .values()
                 .filter(|s| s.learned > since && s.fact.hops < self.cfg.max_hops && share.contains(&s.fact.body.kind()))
                 .map(|s| s.fact.clone())
                 .collect();
+            // In the order they were made: a full sync sends all that is held, a ban and the
+            // unban that lifted it alike, and a node that has just started applies them as
+            // they come. In the table's order the ban could come last and stand again.
+            facts.sort_by(|a, b| (a.created, &a.origin, a.seq).cmp(&(b.created, &b.origin, b.seq)));
             if full {
                 peer.last_full = now;
             }
@@ -1497,7 +1503,11 @@ impl Cluster {
                     );
                 }
                 p.forward_secret = Some(forward_secret);
-                p.lgc1_since = if forward_secret { None } else { Some(now) };
+                // The fallback lasts `LGC1_FALLBACK_FOR` from its start, then the key
+                // exchange is tried again. Each plain delivery used to start it anew, so a
+                // peer that once failed to answer (or whose answer someone on the path
+                // dropped once) was spoken to without forward secrecy for good.
+                p.lgc1_since = if forward_secret { None } else { p.lgc1_since.filter(|t| now - *t < LGC1_FALLBACK_FOR).or(Some(now)) };
                 None
             }
             Err(e) => {
@@ -2598,5 +2608,45 @@ mod tests {
         assert!(ClusterCfg { key: "c2hvcnQ=".into(), ..ok.clone() }.validate().is_err(), "short key");
         assert!(ClusterCfg { peers: vec!["nohost".into()], ..ok.clone() }.validate().is_err());
         assert!(ClusterCfg { listen: "7946".into(), ..ok }.validate().is_err());
+    }
+
+    /// The fallback to plain frames lasts ten minutes from its start: each plain delivery
+    /// used to start it anew, and the key exchange was never tried again.
+    #[test]
+    fn the_plain_fallback_ends_though_deliveries_go_on() {
+        let k = generate_key();
+        let mut a = cluster("a", &k, vec!["127.0.0.1:1".into()]);
+        let now = time::now();
+        assert!(a.delivered(0, Ok(false), now).is_none());
+        // a sync a minute, each delivered as a plain frame
+        for m in 1..10 {
+            assert!(!a.view.peers[0].try_forward_secrecy(ForwardSecrecy::Prefer, now + m * time::MIN));
+            a.delivered(0, Ok(false), now + m * time::MIN);
+        }
+        assert!(a.view.peers[0].try_forward_secrecy(ForwardSecrecy::Prefer, now + 10 * time::MIN), "tried again after ten minutes");
+        // still no answer: ten more minutes of plain frames from then
+        a.delivered(0, Ok(false), now + 10 * time::MIN);
+        assert!(!a.view.peers[0].try_forward_secrecy(ForwardSecrecy::Prefer, now + 15 * time::MIN));
+        assert!(a.view.peers[0].try_forward_secrecy(ForwardSecrecy::Prefer, now + 20 * time::MIN));
+        // an answer: forward secrecy from then on
+        a.delivered(0, Ok(true), now + 20 * time::MIN);
+        assert!(a.view.peers[0].try_forward_secrecy(ForwardSecrecy::Prefer, now + 21 * time::MIN));
+    }
+
+    /// A full sync sends a ban and the unban that lifted it; a node that has just started
+    /// applies them as they come, so they come in the order they were made.
+    #[test]
+    fn facts_go_out_in_the_order_they_were_made() {
+        let k = generate_key();
+        let mut a = cluster("a", &k, vec!["127.0.0.1:1".into()]);
+        let now = time::now();
+        for i in 0..40i64 {
+            let net: Net = format!("198.51.100.{i}").parse().unwrap();
+            a.originate(FactBody::Unban { net, reason: "x".into() }, now + i * time::SEC);
+        }
+        let envs = a.outgoing_envelopes(now + 60 * time::SEC);
+        let made: Vec<Micros> = envs.iter().flat_map(|(_, e)| e.facts.iter().map(|f| f.created)).collect();
+        assert_eq!(made.len(), 40);
+        assert!(made.windows(2).all(|w| w[0] <= w[1]), "{made:?}");
     }
 }

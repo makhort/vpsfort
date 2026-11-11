@@ -5,6 +5,7 @@
 //! and output read by their own threads, so neither side can block on a full pipe.
 
 use std::io::{Read, Write};
+use std::os::unix::process::CommandExt;
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -45,8 +46,12 @@ pub fn run(mut cmd: Command, input: Option<&[u8]>, limit: Duration) -> Result<Ou
         .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        // a group of its own, so that what it started stops with it after `limit` (a
+        // wrapper script's child would otherwise run on, holding the pipes)
+        .process_group(0)
         .spawn()
         .map_err(|e| format!("running {program}: {e}"))?;
+    let group = child.id();
     if let (Some(data), Some(mut stdin)) = (input, child.stdin.take()) {
         let data = data.to_vec();
         thread::spawn(move || {
@@ -65,6 +70,7 @@ pub fn run(mut cmd: Command, input: Option<&[u8]>, limit: Duration) -> Result<Ou
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if start.elapsed() >= limit => {
+                crate::feeds::kill_group(group);
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(format!("{program} did not finish within {} s; killed", limit.as_secs()));

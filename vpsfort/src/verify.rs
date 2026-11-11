@@ -118,6 +118,9 @@ pub struct VerifyReport {
     pub origins: BTreeMap<String, Origin>,
     /// Set-uid/set-gid files found beyond what a pass keeps (`MAX_SUID_ROOT`, `MAX_SUID_OTHER`).
     pub suid_overflow: usize,
+    /// The search for set-uid files stopped before its end (too many entries, or vpsfort
+    /// stopping): what it didn't reach isn't gone.
+    pub suid_stopped: bool,
     pub errors: Vec<String>,
 }
 
@@ -363,6 +366,10 @@ fn note_error(r: &mut VerifyReport, e: String) {
 /// Most entries visited looking for set-uid programs (a pass over a server's system
 /// directories is a few hundred thousand).
 const MAX_WALK: usize = 3_000_000;
+/// Of those, the entries of directories that aren't root's alone (a user's, or one everyone
+/// writes to, like /tmp): any account can make millions of files there, and the search used
+/// to stop on them before it reached the system's directories.
+const MAX_WALK_USERS: usize = 500_000;
 
 /// Set-uid/set-gid files kept per pass. Only root makes one owned by root (a system has a few
 /// dozen); any user can make thousands of their own in /tmp or their home, which must not
@@ -385,6 +392,26 @@ fn host_root() -> Option<PathBuf> {
 
 /// Set-uid and set-gid regular files under `cfg.suid_roots`.
 fn find_suid(cfg: &VerifyCfg, r: &mut VerifyReport, stop: &dyn Fn() -> bool) {
+    find_suid_within(cfg, r, stop, MAX_WALK, MAX_WALK_USERS)
+}
+
+/// The search left entries of users' directories out: said once, and the pass is incomplete.
+fn users_left_out(r: &mut VerifyReport, max_users: usize) {
+    if !r.suid_stopped {
+        note_error(
+            r,
+            format!(
+                "set-uid search: more than {max_users} entries in users' and shared directories, the rest of those were left out \
+                 (root's directories are read in full)"
+            ),
+        );
+    }
+    r.suid_stopped = true;
+}
+
+/// [`find_suid`] with its bounds: `max_walk` entries in all, `max_users` of them in
+/// directories that aren't root's alone.
+fn find_suid_within(cfg: &VerifyCfg, r: &mut VerifyReport, stop: &dyn Fn() -> bool, max_walk: usize, max_users: usize) {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let base = host_root();
     let real = |p: &Path| base.as_ref().map_or_else(|| p.to_path_buf(), |b| b.join(p.strip_prefix("/").unwrap_or(p)));
@@ -392,10 +419,12 @@ fn find_suid(cfg: &VerifyCfg, r: &mut VerifyReport, stop: &dyn Fn() -> bool) {
     let mut stack: Vec<PathBuf> = cfg.suid_roots.iter().map(|p| real(p)).collect();
     let mut seen_dirs: BTreeSet<(u64, u64)> = BTreeSet::new();
     let mut visited = 0usize;
+    let mut visited_users = 0usize;
     let mut others = 0usize;
     while let Some(dir) = stack.pop() {
-        if visited >= MAX_WALK || stop() {
+        if visited >= max_walk || stop() {
             note_error(r, format!("set-uid search stopped after {visited} entries"));
+            r.suid_stopped = true;
             return;
         }
         if cfg.suid_exclude.iter().any(|x| shown(&dir).starts_with(x)) {
@@ -406,9 +435,22 @@ fn find_suid(cfg: &VerifyCfg, r: &mut VerifyReport, stop: &dyn Fn() -> bool) {
         if !meta.is_dir() || !seen_dirs.insert((meta.dev(), meta.ino())) {
             continue;
         }
+        let users = meta.uid() != 0 || meta.permissions().mode() & 0o022 != 0;
+        if users && visited_users >= max_users {
+            users_left_out(r, max_users);
+            continue;
+        }
         let Ok(rd) = std::fs::read_dir(&dir) else { continue };
         for e in rd.flatten() {
             visited += 1;
+            if users {
+                visited_users += 1;
+                if visited_users > max_users {
+                    // (the rest of this very directory too: said, not passed over)
+                    users_left_out(r, max_users);
+                    break;
+                }
+            }
             let Ok(m) = e.metadata() else { continue }; // DirEntry::metadata doesn't follow links
             let path = e.path();
             if m.is_dir() {
@@ -584,7 +626,7 @@ pub fn judge(baseline: &mut Option<VerifyBaseline>, r: &VerifyReport) -> Vec<Fin
             more_files,
         ));
     }
-    if r.suid_overflow > 0 {
+    if r.suid_overflow > 0 || r.suid_stopped {
         // an incomplete pass: what it didn't reach isn't gone
         for (p, s) in &r.suid {
             if b.suid.len() < MAX_SUID_ROOT + MAX_SUID_OTHER || b.suid.contains_key(p) {
@@ -792,5 +834,32 @@ mod tests {
         let f = judge(&mut b, &scan(&cfg, &|| false));
         assert!(f.iter().any(|x| x.severity == Severity::High && x.message.contains("dnf reinstall <package>")), "{f:?}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Millions of files in a home or /tmp stopped the search before the system's
+    /// directories, and the set-uid programs it hadn't reached counted as gone.
+    #[test]
+    fn a_search_that_stops_keeps_what_was_known() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("vpsfort-suid-budget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("many")).unwrap();
+        for i in 0..40 {
+            std::fs::write(dir.join("many").join(format!("f{i}")), "").unwrap();
+        }
+        let cfg =
+            VerifyCfg { dirs: vec![], suid_roots: vec![dir.clone()], suid_exclude: vec![], dpkg_db: PathBuf::new(), ..Default::default() };
+        let mut r = VerifyReport::default();
+        // (a temporary directory is a user's: 10 of its entries, then it is left)
+        find_suid_within(&cfg, &mut r, &|| false, 1000, 10);
+        assert!(r.suid_stopped && r.errors.iter().any(|e| e.contains("more than 10 entries")), "{:?}", r.errors);
+        // what an earlier, complete pass knew stays known
+        let known = Suid { mode: 0o104755, uid: 0, sha256: "a".repeat(64) };
+        let mut b = Some(VerifyBaseline { suid: [("/usr/bin/sudo".to_string(), known)].into(), ..Default::default() });
+        let f = judge(&mut b, &r);
+        assert!(!f.iter().any(|x| x.key.starts_with("suid-gone:")), "{f:?}");
+        assert!(b.unwrap().suid.contains_key("/usr/bin/sudo"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::Permissions::from_mode(0o644);
     }
 }

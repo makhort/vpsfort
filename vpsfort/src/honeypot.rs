@@ -16,8 +16,10 @@
 //! follow; VNC's version line likewise; for MySQL, a server's first packet, which brings out
 //! the client's login. Nothing the client sends acts on what goes out: the same lines go out
 //! whatever arrives, but for the second line of POP3 and FTP, which depends on the first word
-//! of the reply ([`Prompts::reply_to`]).
+//! of the reply, and IMAP's answer to `CAPABILITY`, which repeats the client's tag
+//! ([`Prompts::reply_to`]).
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpListener, TcpStream};
@@ -144,21 +146,26 @@ impl Prompts {
     }
 
     /// What goes out in place of `line`, given what the client has said so far: `line`, except
-    /// for the reply of POP3 and FTP to the first thing said. A real server refuses anything
-    /// but a command it knows, and scanners test for that: fingerprintx sends a bogus command
-    /// and takes the port for POP3 only if `-ERR` comes back. So only `USER` gets the reply
-    /// that brings out the password. The first word is all that is looked at.
-    fn reply_to<'a>(self, line: &'a [u8], said: &[u8]) -> &'a [u8] {
+    /// for the reply of POP3, FTP and IMAP to the first thing said; `None` ends the
+    /// conversation. A real server refuses anything but a command it knows, and scanners test
+    /// for that: fingerprintx sends a bogus command and takes the port for POP3 only if `-ERR`
+    /// comes back. So only `USER` gets the reply that brings out the password, and the first
+    /// word is all that is looked at. IMAP answers `CAPABILITY` alone ([`imap_capability`]).
+    fn reply_to<'a>(self, line: &'a [u8], said: &[u8]) -> Option<Cow<'a, [u8]>> {
+        if said.is_empty() {
+            return Some(line.into());
+        }
+        if self == Prompts::Imap {
+            return imap_capability(line, said).map(Cow::Owned);
+        }
         let user = said.split(u8::is_ascii_whitespace).next().is_some_and(|w| w.eq_ignore_ascii_case(b"USER"));
-        if said.is_empty() || user {
-            return line;
-        }
-        match self {
-            Prompts::Pop3 => b"-ERR Unknown command.\r\n", // Dovecot's words, as the greeting's
+        let reply: &[u8] = match self {
+            Prompts::Pop3 if !user => b"-ERR Unknown command.\r\n", // Dovecot's words, as the greeting's
             // vsftpd's words before a login, also to `AUTH TLS` when it has no TLS configured
-            Prompts::Ftp => b"530 Please login with USER and PASS.\r\n",
+            Prompts::Ftp if !user => b"530 Please login with USER and PASS.\r\n",
             _ => line,
-        }
+        };
+        Some(reply.into())
     }
 
     /// The lines sent, in turn: after each, the reply is read up to its line end. `first` is
@@ -177,14 +184,45 @@ impl Prompts {
             Prompts::Smtp => vec![first, b"250 mail\r\n"],
             // `USER x`, then `PASS y`
             Prompts::Pop3 => vec![first, b"+OK\r\n"],
-            // `a1 LOGIN user pass` in one line
-            Prompts::Imap => vec![first],
+            // `a1 LOGIN user pass` in one line, perhaps after `a1 CAPABILITY`; the second entry
+            // isn't a line but the list [`Prompts::reply_to`] answers that with
+            Prompts::Imap => vec![first, imap_capabilities(first)],
             // the client's version line; the security types that would come next are not sent
             Prompts::Vnc => vec![first],
             // the client's login: the account by name, the password as a salted hash
             Prompts::Mysql => vec![first],
         }
     }
+}
+
+/// What an IMAP server lists when a greeting set in `[ports] honeypot_banners` lists nothing.
+const IMAP_CAPABILITIES: &[u8] = b"IMAP4rev1 AUTH=PLAIN AUTH=LOGIN";
+
+/// The capabilities an IMAP greeting lists (`* OK [CAPABILITY ...] ...`). A server's answer to
+/// `CAPABILITY` is the same list.
+fn imap_capabilities(greeting: &[u8]) -> &[u8] {
+    const CODE: &[u8] = b"[CAPABILITY ";
+    greeting
+        .windows(CODE.len())
+        .position(|w| w == CODE)
+        .map(|at| &greeting[at + CODE.len()..])
+        .and_then(|rest| rest.iter().position(|&b| b == b']').map(|end| &rest[..end]))
+        .unwrap_or(IMAP_CAPABILITIES)
+}
+
+/// A server's answer to `<tag> CAPABILITY`, in Dovecot's words: the list, then the client's
+/// tag at the start of the next line, which is what fingerprintx looks for. `None` for
+/// anything else, and for a tag RFC 3501 wouldn't take: the tag is the only thing a client
+/// says that ever goes back out.
+fn imap_capability(capabilities: &[u8], said: &[u8]) -> Option<Vec<u8>> {
+    let mut words = said.split(u8::is_ascii_whitespace).filter(|word| !word.is_empty());
+    let (tag, command) = (words.next()?, words.next()?);
+    let tag_ok = tag.len() <= 64 && tag.iter().all(|b| b.is_ascii_graphic() && !b"(){%*\"\\+".contains(b));
+    if !tag_ok || !command.eq_ignore_ascii_case(b"CAPABILITY") || words.next().is_some() {
+        return None;
+    }
+    let ok = b" OK Pre-login capabilities listed, post-login capabilities have more.\r\n";
+    Some([&b"* CAPABILITY "[..], capabilities, b"\r\n", tag, ok].concat())
 }
 
 /// `N` bytes from the system. If it has none to give the bytes stay zero: this is only a
@@ -269,7 +307,7 @@ pub struct Hit {
 /// A source is reported once a minute per port, however often it connects.
 const REPEAT_AFTER: Duration = Duration::from_secs(60);
 /// Sources remembered per port for that (real addresses only, but a botnet has many).
-const MAX_SOURCES: usize = 10_000;
+const MAX_SOURCES: usize = 2_000;
 /// How long a connection is held for the sender's first bytes. Scanners that complete a
 /// handshake write at once (Mirai's Telnet login, an HTTP request) or wait for a banner
 /// that never comes.
@@ -303,6 +341,9 @@ fn read_first(mut s: TcpStream, capture: usize) -> Vec<u8> {
         }
     }
     out.truncate(n);
+    // a hit waits in the daemon's queue with what was read, not with the whole capture's
+    // room (4 KB at most, times the thousands of hits a flood queues)
+    out.shrink_to_fit();
     out
 }
 
@@ -310,6 +351,10 @@ fn read_first(mut s: TcpStream, capture: usize) -> Vec<u8> {
 /// reads for a prompt: `IAC DO ECHO`, `IAC DO NAWS`, `IAC WILL ECHO`, `IAC WILL SGA`. Nine
 /// of the first ten Telnet connections to a honeypot node sat silent at a greeting without it.
 const TELNET_OPTIONS: &[u8] = b"\xff\xfd\x01\xff\xfd\x1f\xff\xfb\x01\xff\xfb\x03";
+
+/// The longest Telnet subnegotiation waited for: a window size is 9 bytes, a terminal type or
+/// an environment a few dozen.
+const TELNET_SUBNEGOTIATION: usize = 256;
 
 /// Removes the Telnet option negotiation a client sends back (`IAC WONT ECHO`, a window
 /// size `IAC SB NAWS ... IAC SE`) from `buf`, leaving the text; a sequence cut short at the
@@ -332,6 +377,13 @@ fn strip_telnet_options(buf: &mut Vec<u8>) -> usize {
             // subnegotiation, up to IAC SE
             Some(0xfa) => match buf[i + 2..].windows(2).position(|w| w == [0xff, 0xf0]) {
                 Some(end) => i += 2 + end + 2,
+                // one that doesn't end isn't negotiation: its bytes are text, which the capture
+                // bounds. Left to wait for their end, they would pile up (and be gone through
+                // again at every read) for as long as the client sent them.
+                None if buf.len() - i > TELNET_SUBNEGOTIATION => {
+                    out.extend_from_slice(&buf[i..]);
+                    i = buf.len();
+                }
                 None => break,
             },
             // WILL, WONT, DO, DONT: one option byte
@@ -430,9 +482,9 @@ fn converse(mut s: TcpStream, capture: usize, prompts: Prompts, banner: &str) ->
     let first = prompts.first_line(banner);
     let (mut out, mut pending) = (Vec::new(), Vec::new());
     for line in prompts.lines(&first) {
-        let line = prompts.reply_to(line, &out);
+        let Some(line) = prompts.reply_to(line, &out) else { break };
         let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() || s.set_write_timeout(Some(left)).is_err() || s.write_all(line).is_err() || s.flush().is_err() {
+        if left.is_zero() || s.set_write_timeout(Some(left)).is_err() || s.write_all(&line).is_err() || s.flush().is_err() {
             break;
         }
         if prompts == Prompts::Mysql {
@@ -475,6 +527,20 @@ struct HttpRequest<'a> {
     request: &'a [u8],
     host: Option<&'a [u8]>,
     agent: Option<&'a [u8]>,
+    /// The method its JSON-RPC body calls, if it has one ([`rpc_method`]).
+    rpc: Option<&'a [u8]>,
+}
+
+/// The method a JSON-RPC body calls (`{"jsonrpc":"2.0","method":"eth_accounts"}`): what a
+/// probe of a cryptocurrency node's RPC port is after, which its request line, a bare
+/// `POST /`, doesn't say. A plain name or nothing: the name is what a stranger chose.
+fn rpc_method(body: &[u8]) -> Option<&[u8]> {
+    const KEY: &[u8] = b"\"method\"";
+    let after = body.windows(KEY.len()).position(|w| w == KEY)? + KEY.len();
+    let name = body[after..].trim_ascii_start().strip_prefix(b":")?.trim_ascii_start().strip_prefix(b"\"")?;
+    let name = &name[..name.iter().position(|&b| b == b'"')?];
+    let plain = !name.is_empty() && name.len() <= 64 && name.iter().all(|b| b.is_ascii_alphanumeric() || b"_.:/-".contains(b));
+    plain.then_some(name)
 }
 
 /// The request line, `Host` and `User-Agent` of what looks like an HTTP request: a method in
@@ -502,11 +568,17 @@ fn http_request(sent: &[u8]) -> Option<HttpRequest<'_>> {
             agent.get_or_insert(value);
         }
     }
-    Some(HttpRequest { request, host, agent })
+    // what follows the blank line, whichever line ends the client uses
+    let body = (0..sent.len()).find_map(|i| match &sent[i..] {
+        [b'\n', b'\n', body @ ..] | [b'\n', b'\r', b'\n', body @ ..] => Some(body),
+        _ => None,
+    });
+    Some(HttpRequest { request, host, agent, rpc: body.and_then(rpc_method) })
 }
 
 /// The captured bytes as one line of plain ASCII (see [`ascii`]), cut to [`SHOWN`]
-/// characters; an HTTP request by its request line, host and user agent; the replies to
+/// characters; an HTTP request by its request line, the method its JSON-RPC body calls, its
+/// host and user agent; the replies to
 /// prompts named as such. The abuse report quotes it after "connected to our decoy service
 /// on port ... and".
 pub fn describe(sent: &[u8], prompts: Option<Prompts>) -> String {
@@ -534,8 +606,11 @@ pub fn describe(sent: &[u8], prompts: Option<Prompts>) -> String {
         (None, true) => return "sent nothing".to_string(),
         (None, false) => {}
     }
-    if let Some(HttpRequest { request, host, agent }) = http_request(sent) {
+    if let Some(HttpRequest { request, host, agent, rpc }) = http_request(sent) {
         let mut text = format!("sent HTTP request \"{}\"", ascii(request, SHOWN_FIELD));
+        if let Some(m) = rpc {
+            text += &format!(" calling \"{}\"", ascii(m, SHOWN_FIELD));
+        }
         if let Some(h) = host {
             text += &format!(" for host \"{}\"", ascii(h, SHOWN_FIELD));
         }
@@ -598,6 +673,8 @@ fn protocol(s: &[u8]) -> Option<&'static str> {
     let whole = |len: Option<usize>| len.is_some_and(|l| l >= n && l <= MAX_CAPTURE * 4);
     let first_line = s.split(|&b| b == b'\n').next().unwrap_or(s);
     let first_line = first_line.strip_suffix(b"\r").unwrap_or(first_line);
+    // how an FTP client asks for TLS: the same first word as a Redis login
+    let ftp_tls = [&b"AUTH TLS"[..], b"AUTH SSL", b"AUTH TLS-C", b"AUTH TLS-P"].contains(&first_line);
     Some(if s.starts_with(b"SSH-") {
         "an SSH client banner"
     } else if s.starts_with(b"RFB 0") {
@@ -611,14 +688,15 @@ fn protocol(s: &[u8]) -> Option<&'static str> {
     } else if s.starts_with(b"JRMI") {
         "a Java RMI handshake"
     } else if (s.starts_with(b"*") && has(b"\r\n$"))
-        || [&b"INFO"[..], b"PING", b"CONFIG ", b"AUTH ", b"EVAL "].iter().any(|c| s.starts_with(c))
+        || (!ftp_tls && [&b"INFO"[..], b"PING", b"CONFIG ", b"AUTH ", b"EVAL "].iter().any(|c| s.starts_with(c)))
         || first_line == b"info"
         || first_line == b"ping"
     {
         "a Redis command"
     } else if s.starts_with(b"stats") || s.starts_with(b"version\r\n") {
         "a memcached command"
-    } else if at(0) == Some(0xff) {
+    } else if at(0) == Some(0xff) && at(1).is_some_and(|command| (0xf0..=0xfe).contains(&command)) {
+        // the byte after IAC is what says Telnet: other protocols open with 0xff too (DVRs on 34567)
         "Telnet option negotiation"
     } else if at(0) == Some(0x16) && at(1) == Some(0x03) && at(2).is_some_and(|v| v <= 0x03) && at(5) == Some(0x01) {
         "a TLS client hello"
@@ -636,6 +714,9 @@ fn protocol(s: &[u8]) -> Option<&'static str> {
         } else {
             "an SMB1 request"
         }
+    } else if at(0) == Some(0x81) && at(1) == Some(0) && at(4) == Some(0x20) && whole(be16(2).map(|l| l + 4)) {
+        // port 139's opening before SMB: the header, then the called name's length (always 32)
+        "a NetBIOS session request"
     } else if at(0) == Some(3) && at(1) == Some(0) && whole(be16(2)) && at(5) == Some(0xe0) {
         // by its cookie, or without one by the RDP negotiation request right after the header
         if has(b"mstshash") || s.get(11..15) == Some(b"\x01\x00\x08\x00") {
@@ -957,6 +1038,39 @@ mod tests {
         assert_eq!(strip(b""), b"");
     }
 
+    /// A subnegotiation that never ends was held for more, read after read, and grew for as
+    /// long as the client sent it: megabytes a connection, gone through again at every read.
+    #[test]
+    fn an_endless_telnet_subnegotiation_is_text_not_a_wait() {
+        let mut v = [&b"\xff\xfa\x18"[..], &[b'A'; 300]].concat();
+        assert_eq!(strip_telnet_options(&mut v), 0, "nothing is left waiting");
+        assert_eq!(v.len(), 303, "its bytes are text, for the capture to bound");
+        // a short one cut by the read still waits for its end
+        let mut v = b"root\xff\xfa\x1f\x00\x50".to_vec();
+        assert_eq!(strip_telnet_options(&mut v), 5);
+    }
+
+    /// Needs to bind 127.0.0.1 too.
+    #[test]
+    fn an_endless_telnet_subnegotiation_fills_the_capture_and_ends() {
+        let port = free_port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        assert!(
+            start(&[port], 64, &prompting(port, Prompts::Telnet), move |h| tx.send(h).is_ok(), Arc::new(AtomicBool::new(false))).is_empty()
+        );
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let mut buf = [0u8; 64];
+        let n = s.read(&mut buf).unwrap();
+        assert!(buf[..n].ends_with(b"login: "));
+        let began = Instant::now();
+        let flood = [&b"\xff\xfa\x18"[..], &[b'A'; 4000]].concat();
+        let _ = s.write_all(&flood);
+        let hit = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(hit.sent.len(), 64, "the capture, not what the client cared to send");
+        assert!(began.elapsed() < PROMPT_WAIT, "closed when the capture is full, not at the deadline");
+    }
+
     /// Needs to bind 127.0.0.1 too.
     #[test]
     fn a_bot_that_answers_both_prompts_at_once_loses_nothing() {
@@ -1113,6 +1227,18 @@ mod tests {
         assert_eq!(name(b"INFO\r\n"), "sent a Redis command");
         assert_eq!(name(b"info\n"), "sent a Redis command");
         assert_eq!(name(b"ping\r\n"), "sent a Redis command");
+        assert_eq!(name(b"AUTH hunter2\r\n"), "sent a Redis command");
+        // an FTP client asking for TLS, seen after the honeypot's FTP greeting
+        assert_eq!(describe(b"AUTH TLS\r\n", None), "sent 10 bytes: \"AUTH TLS\\r\\n\"");
+        assert_eq!(
+            describe(b"AUTH TLS\r\nAUTH SSL\r\n", Some(Prompts::Ftp)),
+            "answered the ftp prompts with 20 bytes: \"AUTH TLS\\r\\nAUTH SSL\\r\\n\""
+        );
+        let netbios = b"\x81\x00\x00D CKFDENECFDEFFCFGEFFCCACACACACACA\x00 CKFDENECEDEMEJEFEOFECACACACACAAA\x00";
+        assert_eq!(netbios.len(), 72);
+        assert_eq!(name(netbios), "sent a NetBIOS session request");
+        assert_eq!(name(&netbios[..40]), "sent a NetBIOS session request", "cut by the capture");
+        assert!(!name(b"\x81\x00\x00\x01 xy").contains("NetBIOS"), "a length shorter than what came");
         assert_eq!(describe(b"information\n", None), "sent 12 bytes: \"information\\n\"", "lower case: only the whole command");
         assert_eq!(name(b"stats\r\n"), "sent a memcached command");
         // as seen on the honeypot node
@@ -1151,6 +1277,7 @@ mod tests {
         assert_eq!(name(b"OPTIONS sip:100@203.0.113.9 SIP/2.0\r\nVia: SIP/2.0/TCP x\r\n"), "sent a SIP request");
         assert_eq!(name(b"JRMI\x00\x02\x4b"), "sent a Java RMI handshake");
         assert_eq!(name(b"\xff\xfd\x01\xff\xfb\x1f"), "sent Telnet option negotiation");
+        assert!(!name(b"\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xe8\x03").contains("Telnet"), "a DVR's opening");
         // not one of them: the plain form, as before
         assert_eq!(describe(b"root\r\n1234\r\n", None), "sent 12 bytes: \"root\\r\\n1234\\r\\n\"");
         assert_eq!(describe(b"\x01\x02\x03", None), "sent 3 bytes: \"\\x01\\x02\\x03\"");
@@ -1424,9 +1551,147 @@ mod tests {
         assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap().sent, b"AUTH TLS\r\nQUIT\r\n");
         // a login still gets its password prompt, in any case
         for user in [&b"USER root\r\n"[..], b"user root\r\n"] {
-            assert_eq!(Prompts::Ftp.reply_to(b"331 Please specify the password.\r\n", user), b"331 Please specify the password.\r\n");
+            assert_eq!(reply(Prompts::Ftp, b"331 Please specify the password.\r\n", user), b"331 Please specify the password.\r\n");
         }
-        assert_eq!(Prompts::Ftp.reply_to(b"220 x\r\n", b""), b"220 x\r\n", "the greeting comes first");
+        assert_eq!(reply(Prompts::Ftp, b"220 x\r\n", b""), b"220 x\r\n", "the greeting comes first");
+    }
+
+    #[test]
+    fn an_rpc_call_is_shown_by_the_method_it_calls() {
+        let post =
+            |body: &str| format!("POST / HTTP/1.1\r\nHost: example.org:8545\r\nUser-Agent: Go-http-client/1.1\r\n\r\n{body}").into_bytes();
+        let shown = |body: &str| describe(&post(body), None);
+        let eth = r#"{"jsonrpc":"2.0","method":"eth_accounts","params":[],"id":1}"#;
+        assert_eq!(
+            shown(eth),
+            format!(
+                "sent HTTP request \"POST / HTTP/1.1\" calling \"eth_accounts\" for host \"example.org:8545\" with user agent \"Go-http-client/1.1\" ({} bytes)",
+                post(eth).len()
+            )
+        );
+        for (body, method) in [
+            (r#"{"jsonrpc":"1.0","id":"x","method":"getblockchaininfo","params":[]}"#, "getblockchaininfo"),
+            ("{ \"method\" :\n \"get_info\" }", "get_info"),
+            (r#"[{"method":"getVersion"},{"method":"getSlot"}]"#, "getVersion"),
+            (r#"{"method":"tools/list"}"#, "tools/list"),
+        ] {
+            assert!(shown(body).contains(&format!(" calling \"{method}\" for host")), "{}", shown(body));
+        }
+        // no method, or none worth trusting: the request is shown as before
+        for body in [
+            "",
+            "user=admin&pass=admin",
+            r#"{"id":1}"#,
+            r#"{"method":""}"#,
+            r#"{"method":"two words"}"#,
+            r#"{"method":"eth_acc"#,
+            r#"{"method":1}"#,
+            "{\"method\":\"a\x1b[2Jb\"}",
+        ] {
+            assert!(!shown(body).contains(" calling "), "{body:?}: {}", shown(body));
+        }
+        assert!(!shown(&format!(r#"{{"method":"{}"}}"#, "a".repeat(65))).contains(" calling "), "too long");
+        // a header is not the body, and bare line feeds end the headers too
+        assert!(!describe(b"POST / HTTP/1.1\r\nX-A: \"method\":\"x\"\r\n\r\n{}", None).contains(" calling "));
+        assert!(describe(b"POST / HTTP/1.0\nHost: a\n\n{\"method\":\"x\"}", None).contains(" calling \"x\""));
+        // no HTTP around it: not a call
+        assert!(!describe(br#"{"method":"x"}"#, None).contains(" calling "));
+    }
+
+    /// Needs to bind 127.0.0.1 too.
+    #[test]
+    fn an_rpc_body_sent_after_its_headers_is_kept() {
+        let port = free_port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        assert!(start(&[port], 512, &silent(), move |h| tx.send(h).is_ok(), Arc::new(AtomicBool::new(false))).is_empty());
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.write_all(b"POST / HTTP/1.1\r\nHost: example.org\r\nContent-Length: 25\r\n\r\n").unwrap();
+        s.flush().unwrap();
+        thread::sleep(Duration::from_millis(100));
+        s.write_all(br#"{"method":"eth_accounts"}"#).unwrap();
+        drop(s);
+        let hit = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(describe(&hit.sent, None).contains(" calling \"eth_accounts\""), "{}", describe(&hit.sent, None));
+    }
+
+    fn reply(p: Prompts, line: &[u8], said: &[u8]) -> Vec<u8> {
+        p.reply_to(line, said).unwrap().into_owned()
+    }
+
+    /// Needs to bind 127.0.0.1 too.
+    #[test]
+    fn imap_answers_capability_with_the_clients_tag_and_keeps_the_login_after_it() {
+        // writes each of `sends` after reading what the listener has said; what it heard, what
+        // it heard after the last write (nothing if the connection just closed), and the hit
+        let run = |sends: &[&[u8]]| {
+            let port = free_port();
+            let (tx, rx) = std::sync::mpsc::channel();
+            assert!(start(&[port], 256, &prompting(port, Prompts::Imap), move |h| tx.send(h).is_ok(), Arc::new(AtomicBool::new(false)))
+                .is_empty());
+            let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            let mut heard = Vec::new();
+            let mut buf = [0u8; 512];
+            for said in sends {
+                let n = s.read(&mut buf).unwrap();
+                heard.push(String::from_utf8_lossy(&buf[..n]).into_owned());
+                s.write_all(said).unwrap();
+            }
+            let n = s.read(&mut buf).unwrap_or(0);
+            let last = String::from_utf8_lossy(&buf[..n]).into_owned();
+            drop(s);
+            (heard, last, rx.recv_timeout(Duration::from_secs(5)).unwrap())
+        };
+        let list = "IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN AUTH=LOGIN";
+        // what fingerprintx reads: `* OK` first, then two lines, `* CAPABILITY` and its own tag
+        let (heard, last, hit) = run(&[b"7FYWU8I4 CAPABILITY\r\n"]);
+        assert!(heard[0].starts_with("* OK") && heard[0].contains(list), "{heard:?}");
+        let answer: Vec<&str> = last.split("\r\n").collect();
+        assert_eq!(answer[0], format!("* CAPABILITY {list}"));
+        assert_eq!(answer[1], "7FYWU8I4 OK Pre-login capabilities listed, post-login capabilities have more.");
+        assert_eq!(answer[2], "");
+        assert_eq!(hit.sent, b"7FYWU8I4 CAPABILITY\r\n");
+        // a client that asks first still hands over its login, then the connection ends
+        let (heard, last, hit) = run(&[b"a1 capability\r\n", b"a2 LOGIN root 1234\r\n"]);
+        assert!(heard[1].starts_with("* CAPABILITY ") && heard[1].contains("\r\na1 OK "), "{heard:?}");
+        assert_eq!(last, "");
+        assert_eq!(hit.sent, b"a1 capability\r\na2 LOGIN root 1234\r\n");
+        // the login in the same packet is kept too
+        let (_, last, hit) = run(&[b"a1 CAPABILITY\r\na2 LOGIN root 1234\r\n"]);
+        assert!(last.starts_with("* CAPABILITY "), "{last:?}");
+        assert_eq!(hit.sent, b"a1 CAPABILITY\r\na2 LOGIN root 1234\r\n");
+        // anything else ends it at once, as before
+        let (_, last, hit) = run(&[b"a1 LOGIN root 1234\r\n"]);
+        assert_eq!(last, "");
+        assert_eq!(hit.sent, b"a1 LOGIN root 1234\r\n");
+    }
+
+    #[test]
+    fn imap_answers_only_a_well_formed_capability_and_repeats_its_greetings_list() {
+        let ok = b"a1 OK Pre-login capabilities listed, post-login capabilities have more.\r\n";
+        assert_eq!(imap_capability(b"X", b"a1 CAPABILITY\r\n").unwrap(), [&b"* CAPABILITY X\r\n"[..], ok].concat());
+        assert_eq!(imap_capability(b"X", b"a1\tCapability\n").unwrap(), [&b"* CAPABILITY X\r\n"[..], ok].concat());
+        let long = format!("{} CAPABILITY\r\n", "a".repeat(65));
+        for said in [
+            &b"CAPABILITY\r\n"[..],
+            b"\r\n",
+            b"a1 NOOP\r\n",
+            b"a1 CAPABILITY now\r\n",
+            b"+ CAPABILITY\r\n",
+            b"a* CAPABILITY\r\n",
+            b"a\"1 CAPABILITY\r\n",
+            b"\x16\x03\x01 CAPABILITY\r\n",
+            long.as_bytes(),
+        ] {
+            assert_eq!(imap_capability(b"X", said), None, "{}", String::from_utf8_lossy(said));
+        }
+        // nothing a tag can hold starts another line
+        let answer = imap_capability(b"X", b"a]b. CAPABILITY\r\n").unwrap();
+        assert_eq!(answer.iter().filter(|&&b| b == b'\n').count(), 2);
+
+        assert_eq!(imap_capabilities(b"* OK [CAPABILITY IMAP4rev1 IDLE] ready\r\n"), b"IMAP4rev1 IDLE");
+        assert_eq!(imap_capabilities(b"* OK IMAP4rev1 ready\r\n"), IMAP_CAPABILITIES);
+        assert_eq!(imap_capabilities(b"* OK [CAPABILITY cut short\r\n"), IMAP_CAPABILITIES);
     }
 
     /// Needs to bind 127.0.0.1 too.
@@ -1466,9 +1731,9 @@ mod tests {
             assert_eq!(hit.sent, [user, b"PASS 1234\r\n"].concat());
         }
         // only the first word counts, and only for POP3
-        assert_eq!(Prompts::Pop3.reply_to(b"+OK\r\n", b"USERNAME x\r\n"), b"-ERR Unknown command.\r\n");
-        assert_eq!(Prompts::Pop3.reply_to(b"+OK Dovecot\r\n", b""), b"+OK Dovecot\r\n", "the greeting comes first");
-        assert_eq!(Prompts::Smtp.reply_to(b"250 mail\r\n", b"Not a command\r\n"), b"250 mail\r\n");
+        assert_eq!(reply(Prompts::Pop3, b"+OK\r\n", b"USERNAME x\r\n"), b"-ERR Unknown command.\r\n");
+        assert_eq!(reply(Prompts::Pop3, b"+OK Dovecot\r\n", b""), b"+OK Dovecot\r\n", "the greeting comes first");
+        assert_eq!(reply(Prompts::Smtp, b"250 mail\r\n", b"Not a command\r\n"), b"250 mail\r\n");
     }
 
     /// Needs to bind 127.0.0.1 too.

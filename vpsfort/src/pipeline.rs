@@ -21,7 +21,13 @@ pub struct Pipeline {
     /// Watched services that failed, waiting `service_restart_grace` to see whether they
     /// are started again: (when, what failed).
     failed: std::collections::HashMap<String, (Micros, String)>,
+    /// The programs whose out-of-memory kills were reported in the hour since `.0`.
+    oom_names: (Micros, Vec<String>),
 }
+
+/// Programs that get an out-of-memory alert of their own within an hour; the kills of all
+/// the others share one.
+const OOM_NAMES_PER_HOUR: usize = 8;
 
 impl Pipeline {
     pub fn new(cfg: Arc<Config>, now: Micros) -> Self {
@@ -33,6 +39,7 @@ impl Pipeline {
             hidden_seen: 0,
             exits: Default::default(),
             failed: Default::default(),
+            oom_names: (0, Vec::new()),
         }
     }
 
@@ -54,7 +61,22 @@ impl Pipeline {
                 k.process, k.pid, k.rss_mb
             )
         };
-        self.engine.system_alert(&format!("oom:{}:{}", k.process, k.pid), 3600 * crate::time::SEC, severity, message)
+        // One alert an hour per program, for a few programs: a local user chooses the names
+        // of the processes they make the kernel kill (a memory-limited scope of their own),
+        // and a key per name and pid was an alert per kill, kept for eight days each.
+        let now = crate::time::now();
+        if now - self.oom_names.0 >= 3600 * crate::time::SEC {
+            self.oom_names = (now, Vec::new());
+        }
+        let key = if self.oom_names.1.contains(&k.process) {
+            format!("oom:{}", k.process)
+        } else if self.oom_names.1.len() < OOM_NAMES_PER_HOUR {
+            self.oom_names.1.push(k.process.clone());
+            format!("oom:{}", k.process)
+        } else {
+            "oom:more".to_string()
+        };
+        self.engine.system_alert(&key, 3600 * crate::time::SEC, severity, message)
     }
 
     /// A watched service ended unsuccessfully and nobody started it again (High: it is
@@ -568,5 +590,25 @@ mod tests {
         // services not listed are ignored
         feed(&mut p, "Oct 14 15:00:00 h systemd[1]: cron.service: Failed with result 'exit-code'.");
         assert!(p.tick(t0 + 400 * min).is_empty());
+    }
+
+    /// A local user names the processes the kernel kills for them: an alert per name and pid
+    /// was any number of High alerts, each remembered for days.
+    #[test]
+    fn oom_alerts_are_bounded_by_name() {
+        let mut p = Pipeline::new(std::sync::Arc::new(crate::config::Config::default()), 0);
+        let mut sent = 0;
+        for pid in 0..200u32 {
+            let rec = Record {
+                ts: 1_000 * crate::time::SEC,
+                source: Source::Kernel,
+                pid: 0,
+                msg: format!("Memory cgroup out of memory: Killed process {pid} (job{pid}) total-vm:1kB, anon-rss:2048kB"),
+                cursor: None,
+                sender: None,
+            };
+            sent += p.feed(&rec).len();
+        }
+        assert_eq!(sent, OOM_NAMES_PER_HOUR + 1, "a few names and one alert for all the others");
     }
 }

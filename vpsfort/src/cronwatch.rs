@@ -555,12 +555,21 @@ fn hashed_bytes(uid: u32) -> u64 {
 /// SHA-256 of a file's content (the start of bigger ones, plus their size: see
 /// [`hashed_bytes`]).
 pub fn fingerprint(path: &Path) -> std::io::Result<String> {
+    fingerprint_stamped(path).map(|(_, fp)| fp)
+}
+
+/// [`fingerprint`], with the identity of the file that was read, taken from the open file
+/// itself (None: it changed while it was read). The scanner used to take it from the path
+/// before opening it: a user who swapped the directory above their script between the two
+/// (which changes nothing about the files inside) had another file's hash kept under this
+/// one's identity, and the script in place was never read again.
+fn fingerprint_stamped(path: &Path) -> std::io::Result<(Option<Stamp>, String)> {
     use std::os::unix::fs::MetadataExt;
     let f = open_regular(path)?;
     let meta = f.metadata()?;
     let (len, max) = (meta.len(), hashed_bytes(meta.uid()));
     let mut h = Sha256::new();
-    let mut r = f.take(max);
+    let mut r = (&f).take(max);
     let mut buf = vec![0u8; 64 << 10];
     loop {
         let n = r.read(&mut buf)?;
@@ -572,7 +581,9 @@ pub fn fingerprint(path: &Path) -> std::io::Result<String> {
     if len > max {
         h.update(len.to_le_bytes());
     }
-    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    let read = stamp(&meta);
+    let same = f.metadata().is_ok_and(|after| stamp(&after) == read);
+    Ok((same.then_some(read), h.finalize().iter().map(|b| format!("{b:02x}")).collect()))
 }
 
 fn read_small(path: &Path) -> std::io::Result<String> {
@@ -584,6 +595,7 @@ fn read_small(path: &Path) -> std::io::Result<String> {
 /// Paths matching `pattern`, with `*` allowed in any component (`/home/*/.ssh/authorized_keys`).
 /// A `*` doesn't match names starting with a dot unless the pattern part does.
 pub fn expand_glob(pattern: &str) -> Vec<PathBuf> {
+    const MAX_GLOB: usize = 10_000;
     let mut paths = vec![PathBuf::from("/")];
     for part in pattern.split('/').filter(|p| !p.is_empty()) {
         let mut next = Vec::new();
@@ -597,11 +609,21 @@ pub fn expand_glob(pattern: &str) -> Vec<PathBuf> {
                 let name = e.file_name().to_string_lossy().into_owned();
                 if (part.starts_with('.') || !name.starts_with('.')) && crate::digest::wildcard_match(part, &name) {
                     next.push(e.path());
+                    // Counted as they come: a watched directory in a user's home
+                    // (`/home/*/.config/autostart/*`) can hold millions of names, which
+                    // used to be collected first, in a daemon limited to 128 MB.
+                    if next.len() > MAX_GLOB {
+                        break;
+                    }
                 }
+            }
+            if next.len() > MAX_GLOB {
+                break;
             }
         }
         paths = next;
-        if paths.len() > 10_000 {
+        if paths.len() > MAX_GLOB {
+            paths.truncate(MAX_GLOB);
             break; // a pattern like /*/*/* is a configuration mistake
         }
     }
@@ -641,8 +663,11 @@ impl Scanner {
         if let Some((_, fp)) = self.hashes.get(&key).filter(|(s, _)| *s == st) {
             return Ok(fp.clone());
         }
-        let fp = fingerprint(path)?;
-        self.hashes.insert(key, (st, fp.clone()));
+        let (read, fp) = fingerprint_stamped(path)?;
+        match read {
+            Some(read) => self.hashes.insert(key, (read, fp.clone())),
+            None => self.hashes.remove(&key),
+        };
         Ok(fp)
     }
 
@@ -1031,13 +1056,29 @@ pub fn judge(baseline: &mut Option<Baseline>, r: &CronReport, learn: Dur) -> Vec
     let now = r.scanned;
     let mut out = Vec::new();
     let day = 86_400 * time::SEC;
-    for e in &r.errors {
+    // A few by name, the rest in one message: what can't be read is often a user's doing (a
+    // pipe or a device where their crontab names a script), and each was a message of its
+    // own out of the hour's few about the host's integrity.
+    const NAMED: usize = 3;
+    for e in r.errors.iter().take(NAMED) {
         out.push(Finding {
             key: format!("cron-unreadable:{}", e.split(':').next().unwrap_or("")),
             every: day,
             severity: Severity::Warning,
             message: format!("cron watch cannot read {e}"),
             evidence: vec![],
+            notify: true,
+            owner: None,
+            files: vec![],
+        });
+    }
+    if r.errors.len() > NAMED {
+        out.push(Finding {
+            key: "cron-unreadable:more".to_string(),
+            every: day,
+            severity: Severity::Warning,
+            message: format!("cron watch cannot read {} more files (`vpsfort cron` lists them)", r.errors.len() - NAMED),
+            evidence: r.errors.iter().skip(NAMED).take(10).map(|e| crate::event::clean(e, 200)).collect(),
             notify: true,
             owner: None,
             files: vec![],
@@ -1751,5 +1792,53 @@ mod tests {
         let missing = package_origins(crate::config::PackageManager::Dnf, Path::new(""), Path::new("/nonexistent/rpm"), &[path("conf")]);
         assert!(missing.is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unreadable_files_share_a_message_beyond_a_few() {
+        let mut baseline = None;
+        let mut r = CronReport { scanned: 1_000 * time::SEC, ..Default::default() };
+        r.errors = (0..500).map(|i| format!("/home/u/job{i}: not a regular file")).collect();
+        let f = judge(&mut baseline, &r, Dur(0));
+        let unreadable: Vec<_> = f.iter().filter(|f| f.key.starts_with("cron-unreadable:")).collect();
+        assert_eq!(unreadable.len(), 4, "three by name and one for the rest");
+        assert!(unreadable[3].message.contains("497 more"), "{}", unreadable[3].message);
+    }
+
+    #[test]
+    fn a_glob_stops_at_its_bound() {
+        let d = std::env::temp_dir().join(format!("lg-cron-glob-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        for i in 0..10_050 {
+            std::fs::write(d.join(format!("f{i}")), "").unwrap();
+        }
+        assert_eq!(expand_glob(&format!("{}/*", d.display())).len(), 10_000);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The identity kept with a hash is the hashed file's own, whatever the path names by then.
+    #[test]
+    fn a_hash_is_kept_under_the_identity_of_the_file_read() {
+        let d = std::env::temp_dir().join(format!("lg-cron-stamp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("a")).unwrap();
+        std::fs::create_dir_all(d.join("b")).unwrap();
+        std::fs::write(d.join("a/job.sh"), "evil\n").unwrap();
+        std::fs::write(d.join("b/job.sh"), "fine\n").unwrap();
+        let path_stamp = stamp(&std::fs::metadata(d.join("a/job.sh")).unwrap());
+        // the directories change places after the path was looked at, before the file is opened
+        std::fs::rename(d.join("a"), d.join("x")).unwrap();
+        std::fs::rename(d.join("b"), d.join("a")).unwrap();
+        let (read, fp) = fingerprint_stamped(&d.join("a/job.sh")).unwrap();
+        assert_eq!(fp, fingerprint(&d.join("a/job.sh")).unwrap());
+        assert_ne!(read, Some(path_stamp), "the file read is not the one the path named before");
+        // and back: the scanner reads the file in place again, as its identity isn't the cached one
+        let mut s = Scanner::default();
+        let fine = s.fingerprint(&d.join("a/job.sh")).unwrap();
+        std::fs::rename(d.join("a"), d.join("b")).unwrap();
+        std::fs::rename(d.join("x"), d.join("a")).unwrap();
+        assert_ne!(s.fingerprint(&d.join("a/job.sh")).unwrap(), fine);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

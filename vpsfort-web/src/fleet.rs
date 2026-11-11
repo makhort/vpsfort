@@ -30,6 +30,8 @@ const ABUSE_DEADLINE: Duration = Duration::from_secs(120);
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// A node's abuse report is asked again after this long (vpsfort keeps it a minute too).
 const ABUSE_FRESH: Duration = Duration::from_secs(60);
+/// How long the merged honeypot hits are handed out again while a node hasn't answered.
+const HONEYPOTS_RETRY: Duration = Duration::from_secs(10);
 
 /// One node as the console last saw it.
 #[derive(Clone, Debug, Default)]
@@ -82,9 +84,14 @@ pub struct Fleet {
     done: Condvar,
     /// Each node's latest abuse reports: (address, which) → (when, report).
     abuse: Mutex<HashMap<(String, Want), (Instant, Parsed)>>,
-    /// Each node's latest honeypot hits: (address, which) → (when, hits).
-    honeypots: Mutex<HashMap<(String, Want), (Instant, honeypots::Parsed)>>,
+    /// The nodes' honeypot hits of each window, merged, as the page gets them: (when, whether
+    /// every node answered, the JSON).
+    honeypots: Mutex<HashMap<Want, HoneypotsAnswer>>,
+    /// Held while one is built: a second request waits for the first one's answer.
+    honeypots_building: Mutex<()>,
 }
+
+type HoneypotsAnswer = (Instant, bool, Arc<Vec<u8>>);
 
 /// A node name as an agent may send it.
 pub fn name_ok(n: &str) -> bool {
@@ -111,6 +118,7 @@ impl Fleet {
             done: Condvar::new(),
             abuse: Mutex::default(),
             honeypots: Mutex::default(),
+            honeypots_building: Mutex::default(),
         }
     }
 
@@ -221,11 +229,12 @@ impl Fleet {
         Ok(Got {
             name,
             snapshot,
-            digest: reply.digest,
+            // as the local one: a digest is a page of text, whatever a node sends as one
+            digest: reply.digest.map(|d| d.chars().take(256 * 1024).collect()),
             abuse: reply.abuse.map(|r| r.get().to_string()),
             honeypots: reply.honeypots.map(|r| r.get().to_string()),
             version: Some(reply.version.chars().take(40).collect()),
-            error: reply.error,
+            error: reply.error.map(|e| abuse::clean(&e, 500)),
             can: reply.can.into_iter().take(20).collect(),
         })
     }
@@ -294,9 +303,25 @@ impl Fleet {
 }
 
 impl Fleet {
-    /// The honeypot hits `want` of every node, from their actions logs, merged.
-    pub fn honeypots(&self, want: Want) -> Result<honeypots::Report> {
+    /// The honeypot hits `want` of every node, from their actions logs, merged: the answer's
+    /// JSON. Built once and kept a minute (ten seconds while a node hasn't answered), by one
+    /// request at a time: a week of a busy honeypot node is 10,000 bans, and every request
+    /// used to copy each node's, merge them and build the answer twice over in memory, which
+    /// two tabs asking at once took past the service's memory limit.
+    pub fn honeypots(&self, want: Want) -> Result<Arc<Vec<u8>>> {
         let window = want.window().context("not honeypot hits")?;
+        let kept = || {
+            let cache = self.honeypots.lock().unwrap_or_else(|e| e.into_inner());
+            let (at, complete, json) = cache.get(&want)?;
+            (at.elapsed() < if *complete { ABUSE_FRESH } else { HONEYPOTS_RETRY }).then(|| Arc::clone(json))
+        };
+        if let Some(json) = kept() {
+            return Ok(json);
+        }
+        let _building = self.honeypots_building.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(json) = kept() {
+            return Ok(json);
+        }
         let nodes: Vec<Node> = {
             let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             dedupe_names(inner.nodes.clone())
@@ -309,7 +334,12 @@ impl Fleet {
                 .map(|(n, a)| (n.id.clone(), n.name.clone(), a.join().unwrap_or_else(|_| Err("failed".into()))))
                 .collect()
         });
-        Ok(honeypots::merge(window, parts, time::now()))
+        let report = honeypots::merge(window, parts, time::now());
+        let complete = report.nodes.iter().all(|n| n.error.is_none());
+        let json = Arc::new(serde_json::to_vec(&report).context("the honeypot hits as JSON")?);
+        drop(report);
+        self.honeypots.lock().unwrap_or_else(|e| e.into_inner()).insert(want, (Instant::now(), complete, Arc::clone(&json)));
+        Ok(json)
     }
 
     fn honeypots_of(&self, n: &Node, want: Want) -> Result<honeypots::Parsed, String> {
@@ -321,22 +351,12 @@ impl Fleet {
             Some(false) => return Err("its vpsfort-web is older: update it for the honeypot history".into()),
             None => return Err(n.error.clone().map_or_else(|| "not asked yet".into(), |e| format!("no answer yet: {e}"))),
         }
-        let key = (n.addr.clone(), want);
-        if let Some((at, p)) = self.honeypots.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
-            if at.elapsed() < ABUSE_FRESH {
-                return Ok(p.clone());
-            }
-        }
         let got = self.ask(&n.addr, want).map_err(|e| format!("{e:#}"))?;
-        let parsed = match (got.honeypots, got.error) {
-            (Some(text), _) => honeypots::parse(&text).map_err(|e| format!("{e:#}"))?,
-            (None, Some(e)) => return Err(e),
-            (None, None) => return Err("no honeypot hits in the answer".into()),
-        };
-        let mut cache = self.honeypots.lock().unwrap_or_else(|e| e.into_inner());
-        cache.retain(|_, (at, _)| at.elapsed() < ABUSE_FRESH);
-        cache.insert(key, (Instant::now(), parsed.clone()));
-        Ok(parsed)
+        match (got.honeypots, got.error) {
+            (Some(text), _) => honeypots::parse(&text).map_err(|e| format!("{e:#}")),
+            (None, Some(e)) => Err(e),
+            (None, None) => Err("no honeypot hits in the answer".into()),
+        }
     }
 }
 

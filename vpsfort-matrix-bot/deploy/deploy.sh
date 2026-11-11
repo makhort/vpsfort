@@ -33,6 +33,9 @@ REMOTE=/tmp/vpsfort-matrix-bot-deploy.$(openssl rand -hex 8)
     echo "chmod 700 $REMOTE"
     for f in "$STAGE"/*; do echo "put \"$f\" $REMOTE/"; done
 } | sftp -q -o BatchMode=no -b - "$HOST" >/dev/null
+# (Root's copy must hold regular files only: a link left in the staging directory by its
+# owner, the SSH user, would pass the hash check through its target and could be pointed
+# elsewhere before install.sh is run.)
 echo "Copied to $HOST:$REMOTE. Now paste this into a root shell there:"
 echo
-echo "d=\$(mktemp -d /root/vpsfort-matrix-bot-deploy.XXXXXX) && cp -R $REMOTE/. \"\$d\" && cd \"\$d\" && echo '$MANIFEST  SHA256SUMS' | sha256sum -c --quiet && sha256sum -c --quiet --strict SHA256SUMS && bash install.sh; cd /; rm -rf \"\${d:?}\" $REMOTE"
+echo "d=\$(mktemp -d /root/vpsfort-matrix-bot-deploy.XXXXXX) && cp -R $REMOTE/. \"\$d\" && [ -z \"\$(find \"\$d\" -mindepth 1 ! -type f)\" ] && cd \"\$d\" && echo '$MANIFEST  SHA256SUMS' | sha256sum -c --quiet && sha256sum -c --quiet --strict SHA256SUMS && bash install.sh; cd /; rm -rf \"\${d:?}\" $REMOTE"

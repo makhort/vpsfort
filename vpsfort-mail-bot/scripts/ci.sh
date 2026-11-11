@@ -26,11 +26,11 @@ elif ! cargo audit --quiet --deny unsound --deny yanked > /dev/null 2>&1; then
 fi
 step "licenses, duplicate crates and sources (cargo deny)"
 # Permissive licenses only, two versions of one crate reported, crates from crates.io only
-# (../deny.toml). VPSFORT_SKIP_AUDIT=1 skips this step too.
-if [ "${VPSFORT_SKIP_AUDIT:-}" = 1 ]; then
-    echo "skipped (VPSFORT_SKIP_AUDIT=1)"
+# (../deny.toml). VPSFORT_MAIL_BOT_SKIP_AUDIT=1 skips this step too.
+if [ "${VPSFORT_MAIL_BOT_SKIP_AUDIT:-}" = 1 ]; then
+    echo "skipped (VPSFORT_MAIL_BOT_SKIP_AUDIT=1)"
 elif ! cargo deny --version > /dev/null 2>&1; then
-    echo "cargo-deny is not installed:  cargo install cargo-deny --locked   (or VPSFORT_SKIP_AUDIT=1)" >&2
+    echo "cargo-deny is not installed:  cargo install cargo-deny --locked   (or VPSFORT_MAIL_BOT_SKIP_AUDIT=1)" >&2
     exit 1
 else
     cargo deny --config ../deny.toml check --hide-inclusion-graph licenses bans sources

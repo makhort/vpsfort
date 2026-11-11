@@ -96,11 +96,18 @@ export function reoffended(p, marks) {
 // ("alerts · level=high q=ssh").
 export function viewTitle(hash) {
   const [path, query] = (hash || "").replace(/^#\//, "").split("?");
-  const parts = decodeURIComponent(query || "").split("&").filter(Boolean).map((kv) => kv.replace("=", "="));
+  // (a stray "%" in a link isn't an error)
+  let text = query || "";
+  try { text = decodeURIComponent(text); } catch (_) { /* as it is */ }
+  const parts = text.split("&").filter(Boolean);
   return `${path || "overview"}${parts.length ? ` · ${parts.join(" ")}` : ""}`;
 }
 
-export const utc = (t) => `${new Date(ms(t)).toISOString().slice(0, 19).replace("T", " ")} UTC`;
+// (a time no date holds, which a node gone wrong can send, is said so, not thrown)
+export const utc = (t) => {
+  const d = new Date(ms(t));
+  return Number.isNaN(d.getTime()) ? "unknown time" : `${d.toISOString().slice(0, 19).replace("T", " ")} UTC`;
+};
 
 export const providerName = (p) => p.name || (p.asn ? `AS${p.asn}` : "Unknown network");
 
@@ -193,7 +200,9 @@ export function csv(rows) {
   const cell = (v) => {
     let t = v === null || v === undefined ? "" : String(v);
     if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`;
-    return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    // (";" and a tab too: where a spreadsheet takes those for the separator, what follows
+    // one in an unquoted cell would start a cell of its own, a formula if it likes)
+    return /[",;\t\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
   };
   return rows.map((r) => r.map(cell).join(",")).join("\r\n") + "\r\n";
 }
@@ -454,11 +463,12 @@ export function sparkPath(values, w, h) {
 
 // ------------------------------------------------------------------ seen marks
 
-// Entries newer than `since` (the admin's last look, microseconds): their count, and whether
-// a given one is new.
-export function newSince(rows, since) {
+// Entries newer than `since` (the admin's last look, microseconds) and not acknowledged since
+// (`acked(r)`: the admin clicked the row): their count, and whether a given one is new.
+export function newSince(rows, since, acked) {
   const s = since || 0;
-  return { count: rows.filter((r) => (r.ts || r.since || 0) > s).length, isNew: (r) => (r.ts || r.since || 0) > s };
+  const isNew = (r) => (r.ts || r.since || 0) > s && !(acked && acked(r));
+  return { count: rows.filter(isNew).length, isNew };
 }
 
 // A honeypot's evidence line: `11-09 01:07:00 connected to honeypot TCP/445, sent an SMB2
@@ -509,6 +519,43 @@ function decoySent(request) {
   return named ? `sent ${named[1]}: ${request}` : request;
 }
 
+// The service types the Honeypots tab filters by: the ports of the honeypot node template
+// and their usual neighbours. A port not listed here is "Other".
+const TRAP_SERVICES = {
+  Web: [80, 81, 443, 5000, 6060, 8000, 8008, 8080, 8081, 8443, 8888, 9443],
+  "Web apps": [2082, 2083, 3000, 5601, 8006, 8088, 8983, 9000, 9090, 10000, 15672],
+  SSH: [22, 2022, 2200, 2222, 22222],
+  Telnet: [23, 992, 2323],
+  FTP: [21, 990],
+  Mail: [25, 110, 143, 465, 587, 993, 995, 2525],
+  RDP: [3389, 3390],
+  VNC: [5800, 5900, 5901, 5902, 5903, 5904, 5905],
+  Windows: [88, 135, 389, 636, 5985, 5986],
+  "File sharing": [111, 139, 445, 2049],
+  Databases: [1433, 1521, 3306, 5432, 5984, 6379, 7474, 8086, 9042, 9200, 11211, 27017],
+  Containers: [2375, 2376, 2379, 6443, 10250],
+  Devices: [554, 5555, 7547, 8291, 34567, 37777],
+  "Proxies and VPN": [1080, 1723, 3128],
+  Messaging: [1883, 5672, 9092],
+  VoIP: [5038, 5060, 5061],
+  Industrial: [102, 502, 2404],
+  Crypto: [8332, 8333, 8545, 8899, 9735, 18080, 18081],
+  AI: [11434, 18789],
+};
+const SERVICE_OF_PORT = new Map(Object.entries(TRAP_SERVICES).flatMap(([service, ports]) => ports.map((p) => [p, service])));
+
+// A hit's service type, from its port as trapHits gives it (`TCP/22`, `web` for a decoy site).
+export function trapService(port) {
+  return port === "web" ? "Web" : SERVICE_OF_PORT.get(Number(String(port).replace(/^TCP\//, ""))) || "Other";
+}
+
+// How many rows there are of each key: [key, count], the most first, then by name.
+export function tally(rows, keyOf) {
+  const by = new Map();
+  for (const r of rows) by.set(keyOf(r), (by.get(keyOf(r)) || 0) + 1);
+  return [...by.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+}
+
 // The decisions whose evidence came from a honeypot port or the decoy site, one row per
 // evidence line, with the scanner's address, the port and what it sent. A ban the peers took
 // over carries the same evidence on each of them: one row, the deciding node's (its own row
@@ -531,7 +578,7 @@ export function trapHits(actions, nodes) {
       const key = `${node}:${addr}:${m[1] ? l.replace(` ${m[1]} `, " ") : l}`;
       const have = rows.get(key);
       if (have && (!have.copy || copy)) continue;
-      rows.set(key, { ...a, ...banPlace(a.message), node, node_id, copy, addr, port: m[2] || "web", sent: m[3] || (m[4] && decoySent(m[4])) || "not recorded", hit_ts: hitTime(l, a.ts), line: l, key });
+      rows.set(key, { ...a, ...banPlace(a.message), node, node_id, copy, addr, port: m[2] || "web", service: trapService(m[2] || "web"), sent: m[3] || (m[4] && decoySent(m[4])) || "not recorded", hit_ts: hitTime(l, a.ts), line: l, key });
     }
   }
   return [...rows.values()];

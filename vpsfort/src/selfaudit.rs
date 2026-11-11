@@ -106,6 +106,7 @@ fn items(cfg: &Config, config_path: Option<&Path>) -> Vec<Item> {
         ("mail_outbox", &cfg.notify.mail_outbox),
         ("signal_outbox", &cfg.notify.signal_outbox),
         ("matrix_outbox", &cfg.notify.matrix_outbox),
+        ("push_outbox", &cfg.notify.push_outbox),
         ("xmpp_outbox", &cfg.notify.xmpp_outbox),
     ] {
         let _ = name;

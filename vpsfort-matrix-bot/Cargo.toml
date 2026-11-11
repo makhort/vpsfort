@@ -1,6 +1,6 @@
 [package]
 name = "vpsfort-matrix-bot"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 description = "Matrix bot delivering vpsfort's admin alerts, digests and reports, end-to-end encrypted (Olm/Megolm), else as OpenPGP files"
 license = "MIT"

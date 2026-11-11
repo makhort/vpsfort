@@ -90,6 +90,61 @@ const JOURNAL_FIELDS: &str = "MESSAGE,SYSLOG_IDENTIFIER,SYSLOG_PID,_SYSTEMD_UNIT
 /// escaping can make a few times longer) a real one is far shorter.
 const MAX_JOURNAL_LINE: u64 = 1 << 20;
 
+/// Bytes of log lines waiting for the main loop. Its channel is bounded by count, and a
+/// journal line is up to a few KB, a followed log's up to 64 KB: while the main loop waits
+/// for a firewall program, a flood of long lines was hundreds of MB in a service limited to
+/// 128. The readers wait (a few seconds at most) while more than this is queued.
+static QUEUED: Queued = Queued(std::sync::atomic::AtomicUsize::new(0));
+const MAX_QUEUED_BYTES: usize = 24 << 20;
+
+/// A count of bytes waiting somewhere.
+struct Queued(std::sync::atomic::AtomicUsize);
+
+impl Queued {
+    /// Waits, `wait` at most, while more than `max` bytes are counted; then counts `n` more.
+    /// False: it went on without room (whoever takes them isn't taking).
+    fn add(&self, n: usize, max: usize, wait: Duration) -> bool {
+        let until = Instant::now() + wait;
+        let mut room = true;
+        while self.0.load(Ordering::Relaxed) > max {
+            if Instant::now() >= until {
+                room = false;
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        self.0.fetch_add(n, Ordering::Relaxed);
+        room
+    }
+
+    fn take(&self, n: usize) {
+        let mut q = self.0.load(Ordering::Relaxed);
+        while let Err(now) = self.0.compare_exchange_weak(q, q.saturating_sub(n), Ordering::Relaxed, Ordering::Relaxed) {
+            q = now;
+        }
+    }
+}
+/// Bytes of log lines (and peers' facts) held back while the journal is caught up with.
+const MAX_DEFERRED_BYTES: usize = 16 << 20;
+const MAX_DEFERRED_FACTS: usize = 20_000;
+
+fn weight(rec: &Record) -> usize {
+    rec.msg.len() + 256
+}
+
+/// Sends a log line to the main loop, within [`MAX_QUEUED_BYTES`]. False: the daemon stops.
+fn send_record(tx: &SyncSender<Msg>, msg: Msg) -> bool {
+    if let Msg::Rec(r) | Msg::Live(_, r) | Msg::Custom(r) = &msg {
+        QUEUED.add(weight(r), MAX_QUEUED_BYTES, Duration::from_secs(5));
+    }
+    tx.send(msg).is_ok()
+}
+
+/// The main loop took a line sent with [`send_record`].
+fn record_taken(rec: &Record) {
+    QUEUED.take(weight(rec));
+}
+
 pub fn journalctl_args(cfg: &Config, cursor: Option<&str>) -> Vec<String> {
     let mut args: Vec<String> = ["--follow", "--output=json", "--no-pager", "--quiet"].map(String::from).to_vec();
     args.push(format!("--output-fields={JOURNAL_FIELDS}"));
@@ -140,7 +195,7 @@ fn reader(cfg: Arc<Config>, mut cursor: Option<String>, tx: SyncSender<Msg>, chi
                 (None, Some(c)) => Msg::Cursor(c),
                 (None, None) => continue,
             };
-            if tx.send(msg).is_err() {
+            if !send_record(&tx, msg) {
                 return;
             }
         }
@@ -231,7 +286,7 @@ fn follow(
                         let text = String::from_utf8_lossy(&buf);
                         if let Some(rec) = crate::record::parse_nextcloud_line(&text).filter(|r| r.ts > seen) {
                             last.fetch_max(rec.ts, Ordering::Relaxed);
-                            if tx.send(Msg::Live(name, rec)).is_err() {
+                            if !send_record(&tx, Msg::Live(name, rec)) {
                                 return;
                             }
                         }
@@ -274,7 +329,7 @@ fn follow_file(
             let sender = (source == crate::record::Source::Custom)
                 .then(|| Box::new(crate::record::Sender { file: Some(path.clone()), ..Default::default() }));
             let rec = Record { ts: time::now(), source, pid: 0, msg, cursor: None, sender };
-            tx.send(Msg::Custom(rec)).is_ok()
+            send_record(&tx, Msg::Custom(rec))
         });
     });
 }
@@ -285,7 +340,7 @@ fn follow_syslog(path: String, tx: SyncSender<Msg>, stop: Arc<AtomicBool>, posit
     thread::spawn(move || {
         let mut years = crate::record::YearGuess::new(time::year_of(time::now()));
         crate::follow::follow(&path, &positions, &stop, |line| match syslog_record(&line, &mut years) {
-            Some(rec) => tx.send(Msg::Rec(rec)).is_ok(),
+            Some(rec) => send_record(&tx, Msg::Rec(rec)),
             None => true,
         });
     });
@@ -497,6 +552,21 @@ fn console_admit(cmd: &str) -> Result<String, String> {
 /// loop; `admit` turns it into the command to run, or refuses it with the reply. Abuse
 /// reports and honeypot hits (the console socket's) are built by `reports`, beside the main
 /// loop.
+/// A command from a socket: up to 4 KB, read until the client closes its side or `until`.
+fn read_command(s: &mut std::os::unix::net::UnixStream, until: Instant) -> Vec<u8> {
+    let mut cmd = Vec::new();
+    let mut chunk = [0u8; 1024];
+    while cmd.len() < 4096 {
+        let Some(left) = until.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()) else { break };
+        let _ = s.set_read_timeout(Some(left));
+        match s.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => cmd.extend_from_slice(&chunk[..n.min(4096 - cmd.len())]),
+        }
+    }
+    cmd
+}
+
 fn answer(
     listener: UnixListener,
     control: SyncSender<Control>,
@@ -505,13 +575,17 @@ fn answer(
 ) {
     thread::spawn(move || {
         for stream in listener.incoming() {
-            let Ok(mut s) = stream else { continue };
-            let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
+            let Ok(mut s) = stream else {
+                // out of descriptors, say: not a busy loop
+                thread::sleep(Duration::from_millis(100));
+                continue;
+            };
             let _ = s.set_write_timeout(Some(Duration::from_secs(5)));
             // the whole command, however it arrives (a long `allow` note in two pieces): the
-            // clients close their side after it; at most 4 KB, and no longer than the timeout
-            let mut cmd = Vec::new();
-            let _ = (&mut s).take(4096).read_to_end(&mut cmd);
+            // clients close their side after it; at most 4 KB, and 3 seconds in all (a
+            // timeout per read let one client, a byte at a time, hold this thread and with
+            // it everyone else's commands for hours)
+            let cmd = read_command(&mut s, Instant::now() + Duration::from_secs(3));
             let cmd = String::from_utf8_lossy(&cmd).trim().to_string();
             let cmd = if cmd.is_empty() { "snapshot".to_string() } else { cmd };
             let cmd = match admit(&cmd) {
@@ -531,9 +605,11 @@ fn answer(
                 let r = Arc::clone(r);
                 thread::spawn(move || {
                     let reply = r.answer(&cmd);
-                    r.waiting.fetch_sub(1, Ordering::SeqCst);
                     let _ = s.set_write_timeout(Some(Duration::from_secs(30)));
                     let _ = s.write_all(reply.as_bytes());
+                    // counted until the answer is written: a client that doesn't read its
+                    // answers can hold `ABUSE_WAITING` threads, not any number of them
+                    r.waiting.fetch_sub(1, Ordering::SeqCst);
                 });
                 continue;
             }
@@ -593,6 +669,13 @@ struct Unapplied {
 
 /// At most this many changes wait (the oldest go first beyond it), and none longer than this.
 const UNAPPLIED_MAX: usize = 10_000;
+/// The cron and integrity watch scans this often at most, however often its directories change.
+const CHANGE_SCAN_EVERY: Duration = Duration::from_secs(5);
+/// A firewall change that takes this long says the firewall program hangs: for
+/// `FIREWALL_PAUSE` the next ones wait, and one round of `retry` takes `RETRY_BUDGET` at most.
+const FIREWALL_SLOW: Duration = Duration::from_secs(10);
+const FIREWALL_PAUSE: Duration = Duration::from_secs(30);
+const RETRY_BUDGET: Duration = Duration::from_secs(30);
 const UNAPPLIED_MAX_AGE: time::Micros = 7 * 24 * 60 * time::MIN;
 
 /// What `ActionSink` holds back, for `status` and the snapshot.
@@ -621,6 +704,10 @@ struct ActionSink {
     apply_failures: u64,
     /// The `since` of the failures alerted about, until they are over (then an info says so).
     apply_alerted: Option<time::Micros>,
+    /// Until when changes aren't applied at once: the firewall program was slow to answer.
+    stalled_until: Option<Instant>,
+    /// An answer that takes this long is a slow one (`FIREWALL_SLOW`).
+    slow: Duration,
     /// Since when the actions log can't be written, and the error; None while writing works.
     log_failing: Option<(time::Micros, String)>,
     /// The same for the state file (`state_saved`).
@@ -661,6 +748,8 @@ impl ActionSink {
             unapplied: Vec::new(),
             apply_failures: 0,
             apply_alerted: None,
+            stalled_until: None,
+            slow: FIREWALL_SLOW,
             log_failing: None,
             state_failing: None,
             persist_alerted: [false, false],
@@ -675,7 +764,23 @@ impl ActionSink {
         // A newer decision about the same network replaces one still waiting: the
         // firewall holds what was decided last, never a stale change applied late.
         let never_applied = self.forget_unapplied(&a);
-        if let Err(e) = enforcer.apply(&mut a) {
+        // A firewall program that hangs takes its whole timeout for each change, in the main
+        // loop: a dozen bans in a row were minutes without reading a line or telling the
+        // watchdog, which then restarted the daemon. After one slow answer the changes of
+        // the next half minute wait for `retry` instead.
+        use crate::engine::ActionKind;
+        let change = matches!(a.kind, ActionKind::Ban | ActionKind::Unban | ActionKind::Allow | ActionKind::Disallow)
+            && enforcer.kind != crate::enforce::Kind::Shadow;
+        let started = Instant::now();
+        let result = if change && self.stalled_until.is_some_and(|t| started < t) {
+            Err("the firewall program took too long a moment ago: waiting to be tried again".to_string())
+        } else {
+            enforcer.apply(&mut a)
+        };
+        if started.elapsed() >= self.slow {
+            self.stalled_until = Some(Instant::now() + FIREWALL_PAUSE);
+        }
+        if let Err(e) = result {
             self.apply_failed(&a, e, never_applied);
         }
         if a.applied {
@@ -885,7 +990,15 @@ impl ActionSink {
             return;
         }
         let mut applied = 0;
-        for mut u in std::mem::take(&mut self.unapplied) {
+        let started = Instant::now();
+        let mut waiting = std::mem::take(&mut self.unapplied).into_iter();
+        while let Some(mut u) = waiting.next() {
+            // (the rest at the next round: the main loop has lines to read meanwhile)
+            if started.elapsed() >= RETRY_BUDGET {
+                self.unapplied.push(u);
+                self.unapplied.extend(waiting);
+                break;
+            }
             // an allow that ended meanwhile has nothing left to apply (a ban: `apply` knows)
             if u.action.kind == ActionKind::Allow && u.action.until.is_some_and(|t| t <= now) {
                 continue;
@@ -1248,12 +1361,19 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
                 None => eprintln!("vpsfort: cron watch: no inotify here: scans every {}s", ccfg.interval.0.max(10)),
             }
             while !stop.load(Ordering::Relaxed) {
+                let started = Instant::now();
                 let mut r = scanner.scan(&ccfg);
                 r.expected = crate::cronwatch::load_expected(&expected, r.scanned);
                 if tx.send(Msg::Cron(Box::new(r))).is_err() {
                     return;
                 }
                 if !crate::inotify::wait(&changes, Duration::from_secs(ccfg.interval.0.max(10)), &stop) {
+                    return;
+                }
+                // A user who keeps touching a watched directory (their own crontab, their
+                // `.ssh`) gets a scan every five seconds, not one after another.
+                let since = started.elapsed();
+                if since < CHANGE_SCAN_EVERY && !nap(CHANGE_SCAN_EVERY - since, &stop) {
                     return;
                 }
             }
@@ -1403,8 +1523,9 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
     }
     if cfg.procwatch.enabled {
         let (tx, pcfg, stop) = (tx.clone(), cfg.procwatch.clone(), Arc::clone(&stop));
+        let conntrack = cfg.enforce.conntrack.clone();
         thread::spawn(move || loop {
-            let r = crate::procwatch::scan(&pcfg);
+            let r = crate::procwatch::scan_with(&pcfg, &conntrack);
             let available = r.available;
             if tx.send(Msg::Proc(Box::new(r))).is_err() || !available || !nap(Duration::from_secs(pcfg.interval.0.max(10)), &stop) {
                 return; // (no /proc: nothing to watch)
@@ -1488,6 +1609,8 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
     let mut deferred_positions: Vec<(&'static str, time::Micros)> = Vec::new();
     let mut deferred_events: Vec<crate::event::Event> = Vec::new();
     let mut deferred_custom: Vec<Record> = Vec::new();
+    // (what the held-back lines and peers' facts take: bounded by size, not only by count)
+    let (mut deferred_bytes, mut deferred_facts) = (0usize, 0usize);
     if let Some(c) = &cluster {
         if !c.cfg.listen.is_empty() {
             let tx = tx.clone();
@@ -1712,6 +1835,7 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
             if let Some(u) = deferred_waf.take() {
                 apply_waf(*u, &mut pipe, &cfg, &enforcer, &mut sink, &mut waf_nets);
             }
+            (deferred_bytes, deferred_facts) = (0, 0);
             for (name, rec) in std::mem::take(&mut deferred_live) {
                 for a in feed_live(&mut pipe, name, rec) {
                     sink.handle(&enforcer, &mut pipe.engine, a);
@@ -1741,7 +1865,11 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
                 }
             }
         }
-        match rx.recv_timeout(Duration::from_millis(250)) {
+        let got = rx.recv_timeout(Duration::from_millis(250));
+        if let Ok(Msg::Rec(r) | Msg::Live(_, r) | Msg::Custom(r)) = &got {
+            record_taken(r);
+        }
+        match got {
             Ok(Msg::Rec(mut rec)) => {
                 clamp_ts(&mut rec);
                 idle_since = None;
@@ -1762,7 +1890,8 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
             }
             Ok(Msg::Cursor(c)) => cursor = Some(c),
             Ok(Msg::Live(name, rec)) if !caught_up => {
-                if deferred_live.len() < 10_000 {
+                if deferred_live.len() < 10_000 && deferred_bytes + weight(&rec) <= MAX_DEFERRED_BYTES {
+                    deferred_bytes += weight(&rec);
                     deferred_live.push((name, rec));
                 }
             }
@@ -1777,7 +1906,9 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
             }
             Ok(Msg::Position(name, t)) => advance(&mut pipe, name, t),
             Ok(Msg::Peer(env, from)) if !caught_up => {
-                if deferred_peers.len() < 1000 {
+                // (the peers send what is dropped here again, at their next full sync)
+                if deferred_peers.len() < 1000 && deferred_facts + env.facts.len() <= MAX_DEFERRED_FACTS {
+                    deferred_facts += env.facts.len();
                     deferred_peers.push((*env, from));
                 }
             }
@@ -1821,8 +1952,11 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
                         let msg = format!(
                             "cluster: facts from node '{origin}' (received through '{via}') refused: {why}. Either that node was broken into or the cluster key leaked (someone sends facts in its name), or its signing key changed or isn't in [cluster] nodes here (`vpsfort cluster-identity` on that node prints the line). `vpsfort status` counts the refusals"
                         );
+                        // keyed by the peer the facts came through (one of the configured
+                        // ones): the name in a refused fact is anyone's to choose, and each
+                        // new name was one more High alert
                         for a in pipe.engine.system_alert_wall(
-                            &format!("sig-refused:{origin}"),
+                            &format!("sig-refused:{via}"),
                             86_400 * time::SEC,
                             Severity::High,
                             msg,
@@ -1910,6 +2044,11 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
                             }
                         }
                         pipe.engine.geoblock = Some(status);
+                    }
+                    if let Some(msg) = db.size_warning(crate::geo::cgroup_memory_max()) {
+                        for a in pipe.engine.system_alert_wall("geo-size", 7 * 86_400 * time::SEC, Severity::Warning, msg, time::now()) {
+                            sink.handle(&enforcer, &mut pipe.engine, a);
+                        }
                     }
                     *geo_slot.lock().unwrap() = Some(Arc::clone(&db));
                     pipe.engine.geo = Some(db);
@@ -2002,8 +2141,25 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
             Ok(Msg::Waf(u)) => apply_waf(*u, &mut pipe, &cfg, &enforcer, &mut sink, &mut waf_nets),
             Ok(Msg::Exposure(r)) if !caught_up => deferred_exposure = Some(*r),
             Ok(Msg::Exposure(r)) => {
+                // (the firewalld backend's zone accepts its ports from banned addresses)
+                let closed = if enforcer.kind == crate::enforce::Kind::Firewalld {
+                    crate::exposure::whitelisted_but_closed(&r.listeners, &cfg.ports.whitelist)
+                } else {
+                    Vec::new()
+                };
                 for a in pipe.engine.on_exposure(*r, cfg.sources.ufw) {
                     sink.handle(&enforcer, &mut pipe.engine, a);
+                }
+                if !closed.is_empty() {
+                    let msg = format!(
+                        "[ports] whitelist holds {}, which firewalld doesn't open to everyone. A whitelisted port stays open for banned \
+                         addresses, and with the firewalld backend that is a port of vpsfort's zone, accepted from them whatever the other \
+                         zones say: open to the banned, closed to the rest. Take it out of the whitelist, or open it in firewalld",
+                        closed.join(", ")
+                    );
+                    for a in pipe.engine.system_alert_wall("firewalld-whitelist", 86_400 * time::SEC, Severity::Warning, msg, time::now()) {
+                        sink.handle(&enforcer, &mut pipe.engine, a);
+                    }
                 }
             }
             Ok(Msg::JournalReset(msg)) => {
@@ -2101,7 +2257,8 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
                 }
             }
             Ok(Msg::Custom(rec)) if !caught_up => {
-                if deferred_custom.len() < 10_000 {
+                if deferred_custom.len() < 10_000 && deferred_bytes + weight(&rec) <= MAX_DEFERRED_BYTES {
+                    deferred_bytes += weight(&rec);
                     deferred_custom.push(rec);
                 }
             }
@@ -2188,21 +2345,26 @@ pub fn run(cfg: Arc<Config>) -> Result<()> {
         // (from 00:05 UTC on), as tamper evidence they keep.
         if caught_up
             && cluster.as_ref().is_some_and(|c| c.cfg.share.contains(&crate::cluster::FactKind::LogDigests))
-            && last_log_digest_check.elapsed() >= Duration::from_secs(60)
+            && Instant::now().checked_duration_since(last_log_digest_check).is_some_and(|d| d >= Duration::from_secs(60))
         {
             last_log_digest_check = Instant::now();
             let now = time::now();
-            let today = crate::logdigest::day_of(now);
             let past_midnight = now.rem_euclid(86_400 * time::SEC) >= 5 * time::MIN;
-            if past_midnight && pipe.engine.log_digest_day.as_deref() != Some(today.as_str()) {
-                let day = crate::logdigest::yesterday(now);
+            // The day remembered is the one hashed (yesterday). It used to be compared with
+            // today's date, which it never equals: the whole day's log was read, hashed and
+            // sent to the peers again every minute.
+            let day = crate::logdigest::yesterday(now);
+            if past_midnight && pipe.engine.log_digest_day.as_deref() != Some(day.as_str()) {
                 match sink.log_path.as_deref().map(|p| crate::logdigest::hash_day(p, &day)) {
                     Some(Ok((sha256, lines))) => {
                         eprintln!("vpsfort: actions log {day}: {lines} lines, sha256 {sha256} (shared with the peers)");
                         pipe.engine.share_log_digest(&day, sha256, lines);
                     }
-                    Some(Err(e)) => eprintln!("vpsfort: hashing the actions log of {day}: {e:#}"),
-                    None => pipe.engine.log_digest_day = Some(today),
+                    Some(Err(e)) => {
+                        eprintln!("vpsfort: hashing the actions log of {day}: {e:#} (trying again in an hour)");
+                        last_log_digest_check = Instant::now() + Duration::from_secs(3540);
+                    }
+                    None => pipe.engine.log_digest_day = Some(day),
                 }
             }
         }
@@ -3010,8 +3172,10 @@ mod tests {
         fs::write(
             &nft,
             format!(
-                "#!/bin/sh\ncat >> '{}'\nif [ -e '{}' ]; then echo 'Could not process rule: Device or resource busy' >&2; exit 1; fi\n",
+                "#!/bin/sh\ncat >> '{}'\nif [ -e '{}' ]; then sleep 1; fi\n\
+                 if [ -e '{}' ]; then echo 'Could not process rule: Device or resource busy' >&2; exit 1; fi\n",
                 dir.join("calls").display(),
+                dir.join("slow").display(),
                 dir.join("fail").display()
             ),
         )
@@ -3132,6 +3296,70 @@ mod tests {
         assert_eq!(sink.apply_state().waiting, 0);
         let log = fs::read_to_string(&calls).unwrap();
         assert!(log.contains("ban4 { 203.0.113.5 timeout ") && log.contains("ban6 { 2001:db8::9 timeout "), "{log}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn readers_wait_while_too_much_is_queued() {
+        let q = Queued(std::sync::atomic::AtomicUsize::new(0));
+        assert!(q.add(600, 1000, Duration::from_millis(100)) && q.add(600, 1000, Duration::from_millis(100)));
+        // over the bound now: the next one waits its time out, and goes on
+        let started = Instant::now();
+        assert!(!q.add(10, 1000, Duration::from_millis(100)));
+        assert!(started.elapsed() >= Duration::from_millis(100));
+        // room again once the main loop has taken some
+        q.take(600);
+        q.take(10);
+        assert!(q.add(10, 1000, Duration::from_millis(100)));
+        q.take(usize::MAX);
+        assert_eq!(q.0.load(Ordering::Relaxed), 0, "never below nothing");
+    }
+
+    /// A firewall program that hangs took its whole timeout for every change, in the main loop.
+    #[test]
+    fn after_a_slow_answer_the_next_changes_wait_for_the_retry() {
+        use crate::engine::ActionKind;
+        let dir = std::env::temp_dir().join(format!("vpsfort-stall-{}", std::process::id()));
+        let (enforcer, cfg) = failing_nft(&dir);
+        let (calls, slow) = (dir.join("calls"), dir.join("slow"));
+        let mut pipe = Pipeline::new(Arc::clone(&cfg), 0);
+        let mut sink = ActionSink::new(None, Notifier::new(&cfg.notify, cfg.mode, None));
+        sink.slow = Duration::from_millis(500);
+        fs::write(&slow, "").unwrap();
+        let _ = fs::remove_file(&calls);
+        sink.handle(&enforcer, &mut pipe.engine, change(ActionKind::Ban, "198.51.100.7", &[]));
+        assert_eq!(sink.apply_state().waiting, 0, "slow, but applied");
+        let started = Instant::now();
+        sink.handle(&enforcer, &mut pipe.engine, change(ActionKind::Ban, "198.51.100.8", &[]));
+        sink.handle(&enforcer, &mut pipe.engine, change(ActionKind::Ban, "198.51.100.9", &[]));
+        assert!(started.elapsed() < Duration::from_millis(500), "not waited for");
+        assert_eq!(sink.apply_state().waiting, 2);
+        assert!(!fs::read_to_string(&calls).unwrap().contains("198.51.100.8"));
+        // the firewall answers again: the retry puts them in
+        fs::remove_file(&slow).unwrap();
+        sink.retry(&enforcer, &mut pipe.engine, time::now());
+        assert_eq!(sink.apply_state().waiting, 0);
+        let log = fs::read_to_string(&calls).unwrap();
+        assert!(log.contains("ban4 { 198.51.100.8 timeout") && log.contains("ban4 { 198.51.100.9 timeout"), "{log}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// `add element` leaves an entry that is there as it is, its end included.
+    #[test]
+    fn an_allow_entry_is_replaced_not_kept() {
+        use crate::engine::ActionKind;
+        let dir = std::env::temp_dir().join(format!("vpsfort-allow-{}", std::process::id()));
+        let (enforcer, _cfg) = failing_nft(&dir);
+        let calls = dir.join("calls");
+        let _ = fs::remove_file(&calls);
+        let mut a = change(ActionKind::Allow, "198.51.100.9", &[]);
+        enforcer.apply(&mut a).unwrap();
+        let log = fs::read_to_string(&calls).unwrap();
+        let (del, add) = (
+            log.find("delete element inet vpsfort oper4 { 198.51.100.9 }"),
+            log.find("add element inet vpsfort oper4 { 198.51.100.9 timeout "),
+        );
+        assert!(del.is_some() && add.is_some() && del < add, "{log}");
         let _ = fs::remove_dir_all(&dir);
     }
 }
