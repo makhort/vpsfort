@@ -1,0 +1,515 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Tried on Fedora - vpsfort</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="Behaviour-based intrusion prevention for a small self-hosted server family">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('light')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item "><a href="index.html">vpsfort</a></li><li class="chapter-item "><a href="comparison.html">Compared with the alternatives</a></li><li class="chapter-item "><a href="vpsfort.html">vpsfort: the daemon</a></li><li class="chapter-item "><a href="vpsfort-web.html">vpsfort-web: the console</a></li><li class="chapter-item "><a href="vpsfort-sim.html">vpsfort-sim: the simulator</a></li><li class="chapter-item "><div>The bots</div><a class="toggle"><div>❱</div></a></li><li><ol class="section"><li class="chapter-item "><a href="vpsfort-xmpp-bot.html">XMPP (vpsfort-xmpp-bot)</a></li><li class="chapter-item "><a href="vpsfort-tg-bot.html">Telegram (vpsfort-tg-bot)</a></li><li class="chapter-item "><a href="vpsfort-mail-bot.html">Mail (vpsfort-mail-bot)</a></li><li class="chapter-item "><a href="vpsfort-signal-bot.html">Signal (vpsfort-signal-bot)</a></li><li class="chapter-item "><a href="vpsfort-matrix-bot.html">Matrix (vpsfort-matrix-bot)</a></li><li class="chapter-item "><a href="vpsfort-push-bot.html">ntfy, Gotify, a webhook (vpsfort-push-bot)</a></li></ol></li><li class="chapter-item expanded "><a href="testing-fedora.html" class="active">Tried on Fedora</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">vpsfort</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/makhort/vpsfort" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="testing-vpsfort-on-fedora-fedora-cloud-on-a-vps"><a class="header" href="#testing-vpsfort-on-fedora-fedora-cloud-on-a-vps">Testing vpsfort on Fedora (Fedora Cloud on a VPS)</a></h1>
+<p>A first run of what is new for Fedora and RHEL, none of which has run on a real host yet:
+<code>package_manager = "dnf"</code> (rpm package checks, dnf patch status), the <code>-dnf</code> config templates,
+the <strong>firewalld</strong> backend, firewalld's denied-packet log lines, the exposure watch reading
+firewalld's zones, the optional <strong>ipset</strong> backend, and on an arm64 VPS the <strong>aarch64</strong> build.</p>
+<p>Each step says what to run and what you should see. Note what differs (paste the output) and
+send it back: that is the test result.</p>
+<p><strong>Placeholders:</strong> <code>VPS_IP</code> is the server's public address, <code>ADMIN_IP</code> the address you connect
+from (<code>curl -s https://ifconfig.me</code> on your machine), <code>PROBE_IP</code> the probe's (the same command
+there), <code>SSH_PORT</code> the server's SSH port (22 unless
+you changed it). Commands run on the VPS as root (<code>sudo -i</code>) unless they say "on the Mac" or
+"on the probe".</p>
+<p><strong>You need:</strong></p>
+<ul>
+<li>the VPS, with your SSH key, and the provider's web console in case you lock yourself out;</li>
+<li>a <strong>probe</strong>: a second machine with another public address that never logs in to the VPS (a
+phone hotspot, or another VPS). It plays the attacker. Your own address is allowlisted, so
+it can't.</li>
+<li>about 2 hours, mostly waiting (the package check starts 15 minutes after vpsfort).</li>
+</ul>
+<p>Shortcut used below:</p>
+<pre><code class="language-bash">lg() { vpsfort -c /etc/vpsfort/vpsfort.toml "$@"; }
+</code></pre>
+<h2 id="1-prepare-the-vps"><a class="header" href="#1-prepare-the-vps">1. Prepare the VPS</a></h2>
+<ol>
+<li>
+<p>Note the system:</p>
+<pre><code class="language-bash">cat /etc/fedora-release; uname -m; getenforce
+</code></pre>
+<p><code>uname -m</code> picks the bundle: <code>x86_64</code>, or <code>aarch64</code> (arm64). SELinux is <code>Enforcing</code> on stock
+Fedora (keep it); some providers' images disable it: note which.</p>
+</li>
+<li>
+<p>Fedora Cloud images come <strong>without firewalld</strong>. Install it, open SSH <em>before</em> starting it,
+and have it log what it refuses (vpsfort reads those lines):</p>
+<pre><code class="language-bash">dnf install -y firewalld unzip
+firewall-offline-cmd --add-service=ssh                 # port 22
+firewall-offline-cmd --add-port=SSH_PORT/tcp           # only if SSH isn't on 22
+systemctl enable --now firewalld
+firewall-cmd --set-log-denied=unicast
+firewall-cmd --state; firewall-cmd --get-default-zone; firewall-cmd --list-all
+</code></pre>
+<p>Expect <code>running</code>, <code>public</code>, and <code>ssh</code> among the services. <strong>Open a second SSH session now</strong>
+and keep it open until the end: it survives a firewall mistake.</p>
+</li>
+<li>
+<p>dnf's metadata cache (the patch status reads only what is cached, like dnf-makecache.timer leaves it):</p>
+<pre><code class="language-bash">dnf makecache
+systemctl is-enabled dnf-makecache.timer
+</code></pre>
+</li>
+<li>
+<p>Time (cluster and journal timestamps need it): <code>timedatectl</code> should say <code>System clock synchronized: yes</code>.</p>
+</li>
+</ol>
+<h2 id="2-build-and-copy-the-bundle-on-the-mac"><a class="header" href="#2-build-and-copy-the-bundle-on-the-mac">2. Build and copy the bundle (on the Mac)</a></h2>
+<pre><code class="language-bash">cd ~/DomainAndServer/log_analysis_final_rewrite/vpsfort
+git status --short                       # empty: the bundle takes only committed files
+./scripts/bundle.sh                                      # x86_64 VPS
+./scripts/bundle.sh --target aarch64-unknown-linux-musl  # arm64 VPS (instead)
+scp target/bundle/vpsfort-*-&lt;arch&gt;.zip fedora@VPS_IP:   # &lt;arch&gt;: x86_64-linux-musl or aarch64-linux-musl
+</code></pre>
+<p>(Fedora Cloud's user is <code>fedora</code>; use yours if the provider made another.)</p>
+<p>(Or the package instead of the bundle: <code>./scripts/package.sh</code> (<code>--target aarch64-unknown-linux-musl</code>
+for arm64) writes <code>target/package/vpsfort-0.8.0-1.&lt;arch&gt;.rpm</code>; <code>scp</code> it over and on the VPS
+<code>dnf install ./vpsfort-0.8.0-1.&lt;arch&gt;.rpm</code>, then <code>cp /usr/share/vpsfort/templates/vpsfort-standalone-dnf.toml /etc/vpsfort/vpsfort.toml</code> instead of <code>install.sh --template</code>, and <code>systemctl enable --now vpsfort vpsfort-abuse-report.timer</code> instead of the second <code>install.sh</code>. vpsfort is then <code>/usr/bin/vpsfort</code>;
+the steps below read the same otherwise.)</p>
+<h2 id="3-install-in-shadow-mode"><a class="header" href="#3-install-in-shadow-mode">3. Install in shadow mode</a></h2>
+<pre><code class="language-bash">cd ~fedora &amp;&amp; unzip -q vpsfort-*.zip &amp;&amp; cd vpsfort-*-linux-musl
+./install.sh --check                                  # Bundle OK: vpsfort 0.8.0 (...)
+cat TARGET                                            # the architecture it was built for
+./install.sh --template vpsfort-standalone-dnf.toml
+</code></pre>
+<p>Expect: <em>New server: /etc/vpsfort/vpsfort.toml is the template vpsfort-standalone-dnf.toml now</em>.</p>
+<p><strong>Edit the config</strong> before installing (<code>sudoedit /etc/vpsfort/vpsfort.toml</code>): the template is
+the VPN host's, with its addresses and ports.</p>
+<div class="table-wrapper"><table><thead><tr><th>where</th><th>change to</th></tr></thead><tbody>
+<tr><td>top</td><td><code>package_manager = "dnf"</code> stays; <code>mode = "shadow"</code> stays for now</td></tr>
+<tr><td><code>[ports]</code></td><td><code>whitelist = []</code>, <code>names = {}</code> (no WireGuard here)</td></tr>
+<tr><td><code>[[ratelimit]]</code></td><td>the SSH one: <code>ports = ["SSH_PORT/tcp"]</code>; delete the WireGuard block, all four lines (one without ports is refused)</td></tr>
+<tr><td><code>[allowlist] nets</code></td><td>replace <code>13.48.43.31</code> with <code>"ADMIN_IP",</code>: <strong>your own address, never banned</strong>. Without it, enforce mode can lock you out (keep <code>127.0.0.0/8</code> and <code>::1</code>)</td></tr>
+<tr><td><code>[cluster]</code></td><td><code>enabled = false</code></td></tr>
+<tr><td><code>[verify]</code></td><td>add <code>interval = "1h"</code> (a second pass within the test; 7 days by default; 1h is the shortest: a shorter one stops vpsfort from starting)</td></tr>
+</tbody></table>
+</div>
+<p>Then:</p>
+<pre><code class="language-bash">files/vpsfort --config /etc/vpsfort/vpsfort.toml print-config &gt; /dev/null &amp;&amp; echo config ok   # the bundle's binary: not installed yet
+./install.sh
+</code></pre>
+<p>Expect, in install.sh's output: <em>Config OK</em>, <em>nftables ruleset OK (dry run)</em>, no NOTE about
+firewalld's denied packets (step 1.2 turned it on), and at the end the service running.</p>
+<pre><code class="language-bash">systemctl is-active vpsfort
+journalctl -u vpsfort -b | grep 'vpsfort: started'
+</code></pre>
+<p>Expect <code>active</code>, and <code>mode=Shadow backend=shadow</code> (shadow mode applies nothing yet).</p>
+<p><strong>Check the installer's choice of template</strong> (a quick side test): <code>ls configs/</code> shows three
+<code>-dnf</code> files; <code>grep ^package_manager configs/*.toml</code> shows <code>dnf</code> in exactly those.</p>
+<h2 id="4-shadow-mode-what-vpsfort-reads"><a class="header" href="#4-shadow-mode-what-vpsfort-reads">4. Shadow mode: what vpsfort reads</a></h2>
+<p>Give it 3 minutes, then:</p>
+<pre><code class="language-bash">lg status
+</code></pre>
+<p>Note the whole output. Check in it:</p>
+<ol>
+<li><strong>Exposure (firewalld's zones):</strong> the firewall line says <code>firewalld running</code>, not
+<code>nftables, rules not read</code>. sshd is <code>allowed by firewalld</code> with <code>[ALLOW ssh (public)]</code>
+(or <code>[ALLOW SSH_PORT/tcp (public)]</code>).</li>
+<li><strong>Patch status (dnf):</strong> a patches line: <code>up to date</code>, <code>N updates pending, none for security</code>,
+or what needs doing (<code>N security updates pending (...): dnf upgrade</code>, a newer kernel than the
+running one, programs still running replaced code), then <code>N other updates pending</code>. Compare with
+<code>dnf --cacheonly --quiet check-update --security</code>. An error here (e.g.
+<code>dnf check-update: ...</code>) is a finding: paste it.</li>
+<li><strong>Firewall signals:</strong> a public VPS gets scanned within minutes. Check firewalld logs them,
+and vpsfort counts them:
+<pre><code class="language-bash">journalctl -k -g 'filter_IN_public_REJECT' -n 3 --no-pager
+journalctl -u vpsfort -b | grep '\[shadow\]' | tail -n 5
+</code></pre>
+Expect kernel lines <code>filter_IN_public_REJECT: IN=eth0 OUT= ... SRC=...</code>, and after a while
+would-be bans of scanners, tagged <code>[shadow]</code> (also in <code>/var/log/vpsfort/actions.jsonl</code>).</li>
+</ol>
+<p><strong>Exposure, step by step</strong> (python3 comes with Fedora):</p>
+<p><code>lg status</code> lists only exposed listeners; the TUI's Exposure tab (<code>lg tui</code>, key <code>6</code>, <code>q</code> to
+quit) lists all of them, blocked ones too.</p>
+<pre><code class="language-bash">python3 -m http.server 8080 --bind 0.0.0.0 &gt; /dev/null 2&gt;&amp;1 &amp;
+sleep 70; lg status | grep 8080            # nothing: not exposed
+lg tui                                     # tab 6: 0.0.0.0:8080/tcp  python3  blocked by firewalld
+firewall-cmd --add-port=8080/tcp
+</code></pre>
+<p>firewalld's zones are re-read every 5 minutes (sooner when a file in /etc/firewalld changes;
+this runtime change touches none), so:</p>
+<pre><code class="language-bash">sleep 300; lg status | grep 8080           # 0.0.0.0:8080/tcp  python3  allowed by firewalld [ALLOW 8080/tcp (public)]
+kill %1
+sleep 70; lg status | grep -i dead         # dead firewalld rule: 8080/tcp (public) (nothing listens)
+firewall-cmd --remove-port=8080/tcp
+</code></pre>
+<p>A source-only rule:</p>
+<pre><code class="language-bash">firewall-cmd --add-rich-rule='rule family="ipv4" source address="ADMIN_IP" port port="8081" protocol="tcp" accept'
+python3 -m http.server 8081 --bind 0.0.0.0 &gt; /dev/null 2&gt;&amp;1 &amp;
+sleep 360; lg tui                          # tab 6: 8081 allowed by firewalld from some sources only,
+                                           # rule "ALLOW rich rule 8081/tcp (public) from ADMIN_IP"
+kill %1
+firewall-cmd --remove-rich-rule='rule family="ipv4" source address="ADMIN_IP" port port="8081" protocol="tcp" accept'
+</code></pre>
+<p><strong>Package origins (rpm):</strong></p>
+<pre><code class="language-bash">lg integrity | head -40
+</code></pre>
+<p>Expect watched files with their rpm package (<code>package pam</code> for <code>/etc/pam.d/*</code>,
+<code>package openssh-server</code> for <code>sshd_config</code>), and files of your own
+(e.g. <code>/etc/sudoers.d/90-cloud-init-users</code>, if your image has it) as <code>local</code>. Then a modified one:</p>
+<pre><code class="language-bash">cp -a /etc/pam.d/sudo /root/pam-sudo.bak
+echo '# vpsfort test' &gt;&gt; /etc/pam.d/sudo
+lg integrity | grep pam.d/sudo             # package sudo, MODIFIED
+cp -a /root/pam-sudo.bak /etc/pam.d/sudo
+</code></pre>
+<h2 id="5-enforce-with-the-firewalld-backend"><a class="header" href="#5-enforce-with-the-firewalld-backend">5. Enforce with the firewalld backend</a></h2>
+<p>First check your own address is allowlisted: <code>grep -A3 '^nets' /etc/vpsfort/vpsfort.toml</code>
+must show <code>ADMIN_IP</code>. Then edit the config: <code>mode = "enforce"</code>, and in <code>[enforce]</code>
+<code>backend = "firewalld"</code>. Then:</p>
+<pre><code class="language-bash">systemctl restart vpsfort
+journalctl -u vpsfort -b | grep -E 'started|firewalld' | tail -n 5
+</code></pre>
+<p>Expect <code>mode=Enforce backend=firewalld</code>, and no <em>firewalld unavailable</em> line. The first start
+reloads firewalld once (it creates vpsfort's ipsets and zone in firewalld's permanent
+configuration). Your second SSH session must still be alive.</p>
+<p><strong>vpsfort's firewalld objects:</strong></p>
+<pre><code class="language-bash">firewall-cmd --get-ipsets                         # vpsfort-alive vpsfort-ban4 vpsfort-ban6
+firewall-cmd --info-zone=vpsfort                 # target: DROP, sources: ipset:vpsfort-ban4 ipset:vpsfort-ban6
+firewall-cmd --info-policy=vpsfort-fwd           # ingress-zones: vpsfort, egress-zones: ANY, target: DROP
+firewall-cmd --ipset=vpsfort-alive --get-entries # 192.0.2.1
+firewall-cmd --permanent --list-all --zone=public # unchanged by vpsfort
+</code></pre>
+<p><strong>An operator ban</strong> of the probe (documentation addresses like 192.0.2.x are refused: vpsfort
+never bans non-routable addresses):</p>
+<pre><code class="language-bash">lg ban PROBE_IP --for 10m --note test
+firewall-cmd --ipset=vpsfort-ban4 --get-entries  # PROBE_IP (plus any bans vpsfort decided)
+</code></pre>
+<p>On the probe, <code>nc -vz -w 3 VPS_IP 22</code> now times out. Then:</p>
+<pre><code class="language-bash">lg unban PROBE_IP
+firewall-cmd --ipset=vpsfort-ban4 --get-entries  # PROBE_IP gone; the probe connects again
+</code></pre>
+<p><strong>A real ban, from the probe</strong> (on the probe, which has never logged in):</p>
+<pre><code class="language-bash">nc -vz -w 3 VPS_IP 22      # on the probe: succeeds (or "open") before
+nc -vz -w 3 VPS_IP 23      # on the probe: a tripwire port; refused or times out
+sleep 5
+nc -vz -w 3 VPS_IP 22      # on the probe: now times out: banned
+</code></pre>
+<p>On the VPS:</p>
+<pre><code class="language-bash">tail -n 3 /var/log/vpsfort/actions.jsonl          # a ban of the probe's address, tripwire 23/tcp
+firewall-cmd --ipset=vpsfort-ban4 --get-entries   # the probe's address
+journalctl -k -g filter_IN_vpsfort -n 3 --no-pager  # (only if logged) these are not counted again
+</code></pre>
+<p>(If the probe's first <code>nc ... 22</code> was itself refused, sshd listens elsewhere: use <code>SSH_PORT</code>.)</p>
+<p><strong>Healing after a firewalld reload:</strong></p>
+<pre><code class="language-bash">firewall-cmd --reload
+firewall-cmd --ipset=vpsfort-ban4 --get-entries   # empty: firewalld forgot them
+sleep 40
+firewall-cmd --ipset=vpsfort-ban4 --get-entries   # the probe's address is back
+grep -c 'firewalld forgot' /var/log/vpsfort/actions.jsonl   # 1 (a high "system" alert)
+</code></pre>
+<p>Do the same with <code>systemctl restart firewalld</code>.</p>
+<p><strong>Exposure under enforce:</strong> <code>lg status</code> still says <code>firewalld running</code>; the <code>vpsfort</code> zone
+must not make anything look open (its whitelist ports are for banned sources only).</p>
+<p><strong>Lift the probe's ban:</strong> <code>lg unban PROBE_IP</code>, and <code>nc -vz -w 3 VPS_IP 22</code> from the probe works again.</p>
+<h2 id="6-enforce-with-nftables-next-to-firewalld-backend--auto"><a class="header" href="#6-enforce-with-nftables-next-to-firewalld-backend--auto">6. Enforce with nftables next to firewalld (<code>backend = "auto"</code>)</a></h2>
+<p><code>auto</code> prefers vpsfort's own nftables table, which runs next to firewalld's tables.</p>
+<pre><code class="language-bash">sed -i 's/^backend = "firewalld"/backend = "auto"/' /etc/vpsfort/vpsfort.toml
+systemctl restart vpsfort
+journalctl -u vpsfort -b | grep started | tail -n 1     # backend=nftables
+nft list table inet vpsfort | head -30                  # chain bans, sets ban4/ban6, the tripwire rules
+</code></pre>
+<p>From the probe: <code>nc -vz -w 3 VPS_IP 3389</code> (another tripwire), then port 22 times out; the
+probe's address is in <code>nft list set inet vpsfort ban4</code>. Then:</p>
+<pre><code class="language-bash">firewall-cmd --reload; sleep 40
+nft list set inet vpsfort ban4            # still there (firewalld leaves other tables alone),
+                                           # or rebuilt within 30 s with a "nftables table ... had been removed" alert
+lg unban PROBE_IP
+</code></pre>
+<p>Note which of the two happened: it says whether this firewalld version flushes foreign tables.</p>
+<p>The firewalld objects from step 5 stay in firewalld's permanent configuration, unused (their
+sets are emptied): <code>firewall-cmd --ipset=vpsfort-ban4 --get-entries</code> is empty.</p>
+<h2 id="7-package-check-rpm"><a class="header" href="#7-package-check-rpm">7. Package check (rpm)</a></h2>
+<p>The first pass runs 15 minutes after vpsfort's start (step 6's restart counts). Then:</p>
+<pre><code class="language-bash">lg status | grep packages     # packages: last check ..., N files match their packages, 0 differ; M set-uid/set-gid programs
+grep -E 'match rpm|differ from what rpm' /var/log/vpsfort/actions.jsonl
+</code></pre>
+<p>Expect <em>package check: N files match rpm's checksums</em> (N in the tens of thousands), and few or
+no differences (a difference now is a finding: paste it, and <code>rpm -Vf &lt;that file&gt;</code>).</p>
+<p>Now tamper with a package's program, after the first pass:</p>
+<pre><code class="language-bash">dnf install -y tree
+cp /usr/bin/tree /root/tree.bak
+printf '\n' &gt;&gt; /usr/bin/tree
+rpm -Vf /usr/bin/tree          # S.5...... /usr/bin/tree: rpm sees it too
+</code></pre>
+<p>At the next pass (<code>[verify] interval = "1h"</code>): a <strong>high</strong> alert <em>1 package files differ from what
+rpm installed - ... (reinstall: dnf reinstall <package>)</em> in the actions log and <code>lg status</code>
+(<code>1 differ</code>). Restore: <code>dnf reinstall -y tree</code>.</p>
+<h2 id="8-optional-the-ipset-backend"><a class="header" href="#8-optional-the-ipset-backend">8. Optional: the ipset backend</a></h2>
+<pre><code class="language-bash">dnf install -y ipset iptables-nft
+sed -i 's/^backend = "auto"/backend = "ipset"/' /etc/vpsfort/vpsfort.toml
+systemctl restart vpsfort
+journalctl -u vpsfort -b | grep started | tail -n 1   # backend=ipset
+ipset list -n                                          # vpsfort-ban4 vpsfort-ban6 vpsfort-feed4 vpsfort-feed6
+iptables -t mangle -S vpsfort-ban                     # -m set --match-set vpsfort-feed4 src -j DROP, then ban4
+ip6tables -t mangle -S vpsfort-ban
+lg ban PROBE_IP --for 10m --note test
+ipset list vpsfort-ban4 | grep PROBE_IP               # PROBE_IP timeout 59x: the kernel ends it
+lg unban PROBE_IP
+lg feeds status                                        # feeds load into vpsfort-feed4/6 (not with firewalld)
+ipset list vpsfort-feed4 | head -12
+</code></pre>
+<p>From the probe, the tripwire test of step 5 once more (ban, port 22 times out, <code>ipset list vpsfort-ban4</code>
+has its address, <code>lg unban PROBE_IP</code>). Then <code>iptables -t mangle -F vpsfort</code> (as a firewall reload
+would) and within 40 s <code>iptables -t mangle -S vpsfort</code> has its rules back.</p>
+<p>Back to the default afterwards: <code>backend = "auto"</code>, restart.</p>
+<h2 id="8b-optional-block-by-country"><a class="header" href="#8b-optional-block-by-country">8b. Optional: block by country</a></h2>
+<p>Pick the country of a VPN exit you can use as the probe: <code>lg geo PROBE_IP</code> names it (the
+earlier probe exits were <code>Brazil</code>, code <code>BR</code>). Add to the config, with any backend of the steps
+above (not shadow mode):</p>
+<pre><code class="language-toml">[geoblock]
+enabled = true
+countries = ["BR"]
+</code></pre>
+<pre><code class="language-bash">systemctl restart vpsfort; sleep 10
+journalctl -u vpsfort -b | grep geoblock               # geoblock (BR): N IPv4 + M IPv6 networks
+lg status | grep geoblock                               # ..., active in &lt;backend&gt;
+nft list set inet vpsfort geo4 | head                  # nftables
+ipset list vpsfort-geo4 | head                         # ipset
+firewall-cmd --ipset=vpsfort-geo4 --get-entries | wc -l  # firewalld (the first load takes a while)
+</code></pre>
+<p>From the probe exit: <code>nc -vz -w 3 VPS_IP 22</code> times out, with no ban in <code>lg status</code>
+(the country is dropped before anything is logged). From your usual exit (another country) it
+connects. <code>lg geo PROBE_IP</code> and the networks above should agree. Then <code>enabled = false</code>, restart,
+and the set is empty again.</p>
+<h2 id="9-things-to-check-throughout"><a class="header" href="#9-things-to-check-throughout">9. Things to check throughout</a></h2>
+<pre><code class="language-bash">journalctl -u vpsfort -b -p warning --no-pager | tail -n 30   # vpsfort's own warnings and errors
+ausearch -m avc -ts today 2&gt; /dev/null | tail                  # SELinux denials (should be none)
+systemctl show vpsfort -p MemoryPeak                          # under the unit's 128M limit
+</code></pre>
+<h2 id="10-send-back"><a class="header" href="#10-send-back">10. Send back</a></h2>
+<ul>
+<li><code>cat /etc/fedora-release; uname -m; firewall-cmd --version</code></li>
+<li><code>lg status</code> from step 4 and after step 7</li>
+<li>the expected-vs-seen differences, step by step (and any errors above)</li>
+<li><code>journalctl -u vpsfort -b --no-pager | grep -v '\[shadow\]' | tail -n 50</code></li>
+</ul>
+<h2 id="clean-up-if-the-vps-is-only-for-this-test"><a class="header" href="#clean-up-if-the-vps-is-only-for-this-test">Clean up (if the VPS is only for this test)</a></h2>
+<pre><code class="language-bash">systemctl disable --now vpsfort
+firewall-cmd --permanent --delete-policy=vpsfort-fwd
+firewall-cmd --permanent --delete-zone=vpsfort
+for s in vpsfort-ban4 vpsfort-ban6 vpsfort-alive; do firewall-cmd --permanent --delete-ipset=$s; done
+systemctl reboot     # vpsfort's nftables table, iptables chains and ipset sets live until a reboot only
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="vpsfort-push-bot.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="vpsfort-push-bot.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

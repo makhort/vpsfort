@@ -1,0 +1,386 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>vpsfort - vpsfort</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="Behaviour-based intrusion prevention for a small self-hosted server family">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('light')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded "><a href="index.html" class="active">vpsfort</a></li><li class="chapter-item "><a href="comparison.html">Compared with the alternatives</a></li><li class="chapter-item "><a href="vpsfort.html">vpsfort: the daemon</a></li><li class="chapter-item "><a href="vpsfort-web.html">vpsfort-web: the console</a></li><li class="chapter-item "><a href="vpsfort-sim.html">vpsfort-sim: the simulator</a></li><li class="chapter-item "><div>The bots</div><a class="toggle"><div>❱</div></a></li><li><ol class="section"><li class="chapter-item "><a href="vpsfort-xmpp-bot.html">XMPP (vpsfort-xmpp-bot)</a></li><li class="chapter-item "><a href="vpsfort-tg-bot.html">Telegram (vpsfort-tg-bot)</a></li><li class="chapter-item "><a href="vpsfort-mail-bot.html">Mail (vpsfort-mail-bot)</a></li><li class="chapter-item "><a href="vpsfort-signal-bot.html">Signal (vpsfort-signal-bot)</a></li><li class="chapter-item "><a href="vpsfort-matrix-bot.html">Matrix (vpsfort-matrix-bot)</a></li><li class="chapter-item "><a href="vpsfort-push-bot.html">ntfy, Gotify, a webhook (vpsfort-push-bot)</a></li></ol></li><li class="chapter-item "><a href="testing-fedora.html">Tried on Fedora</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">vpsfort</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/makhort/vpsfort" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="vpsfort"><a class="header" href="#vpsfort">vpsfort</a></h1>
+<p>Behaviour-based intrusion prevention for a small self-hosted server family: an XMPP server
+(ejabberd) with Nextcloud, a WireGuard VPN host and a Telegram relay node. Everything is
+written in Rust and runs as single static binaries on Linux (musl; x86_64, aarch64 and 32-bit ARMv7 with hardware floating point).</p>
+<p><strong>vpsfort</strong> follows the systemd journal (ejabberd, sshd, the UFW or firewalld kernel log,
+Nextcloud AIO), scores every remote address by what it does, and bans attackers in nftables,
+firewalld, ufw, iptables or ipset within seconds. It can also drop whole countries or networks
+(ASNs), by the offline geo database it already uses for labels. Nodes can share bans and suspicion reports over an encrypted cluster link. Six
+optional bots carry vpsfort's admin alerts, daily digest and weekly abuse report to the
+admins, and an optional web console shows the whole cluster to its admins, read only. They only
+carry messages and show data: protection never depends on them.</p>
+<pre><code>        ┌──────────── server ─────────────┐        cluster (XChaCha20-Poly1305, TCP 7946)
+journal ─► vpsfort ─► nftables/firewalld/ufw/iptables/ipset ◄─► vpsfort on other nodes
+            │  outboxes (files)
+            ├─► vpsfort-xmpp-bot ─► XMPP, OMEMO-encrypted (client mode: else OpenPGP files)
+            ├─► vpsfort-tg-bot     ─► Telegram (pseudonymized, files OpenPGP-encrypted)
+            ├─► vpsfort-mail-bot   ─► SMTP, PGP/MIME-encrypted
+            ├─► vpsfort-signal-bot ─► Signal through signal-cli (else OpenPGP files)
+            ├─► vpsfort-matrix-bot ─► Matrix, Olm/Megolm-encrypted (else OpenPGP files)
+            └─► vpsfort-push-bot   ─► ntfy, Gotify or a webhook (sanitized, files OpenPGP-encrypted)
+            │  read-only console socket
+            └─► vpsfort-web (agent) ◄─ web key, TCP 7949 ─ vpsfort-web (console) ─► HTTPS ─► the admin's browser
+</code></pre>
+<p>How vpsfort compares with fail2ban, sshguard, CrowdSec, CSF, Wazuh and OSSEC, the host
+integrity and monitoring tools, and commercial products, with pros and cons per category and
+feature: <a href="comparison.html">COMPARISON.md</a>.</p>
+<h2 id="contents"><a class="header" href="#contents">Contents</a></h2>
+<ol>
+<li><a href="#crates">Crates</a></li>
+<li><a href="#build-and-test">Build and test</a></li>
+<li><a href="#deployment">Deployment</a></li>
+<li><a href="#license">License</a></li>
+<li><a href="#authorship">Authorship</a></li>
+</ol>
+<h2 id="crates"><a class="header" href="#crates">Crates</a></h2>
+<p>Each directory is its own Cargo project with a README that covers setup, settings and design
+in detail.</p>
+<div class="table-wrapper"><table><thead><tr><th>crate</th><th>what it does</th></tr></thead><tbody>
+<tr><td><a href="vpsfort.html"><code>vpsfort</code></a></td><td>The daemon and its CLI/TUI: log parsers, the scoring and ban engine, firewall backends, cluster, exposure/cron/antivirus watches, package checks (dpkg or rpm), blocklist feeds, country and network blocking, daily digest, weekly abuse reports.</td></tr>
+<tr><td><a href="vpsfort-xmpp-bot.html"><code>vpsfort-xmpp-bot</code></a></td><td>XMPP bot in two modes. Admin (on the XMPP server): curated <code>ejabberdctl</code> commands in chat, plus vpsfort's admin messages over OMEMO. Client (<code>BOT_MODE=client</code>, any host and XMPP server, e.g. a desktop): send-only, vpsfort's admin messages over OMEMO, else as OpenPGP-encrypted files. SCRAM-SHA-256-PLUS login.</td></tr>
+<tr><td><a href="vpsfort-tg-bot.html"><code>vpsfort-tg-bot</code></a></td><td>Telegram transport for vpsfort's admin messages. Account names become pseudonyms and servers appear only by node id. Reports go out as OpenPGP-encrypted files.</td></tr>
+<tr><td><a href="vpsfort-mail-bot.html"><code>vpsfort-mail-bot</code></a></td><td>Send-only SMTP bot that mails vpsfort's admin messages, each OpenPGP-encrypted as a whole (subject included).</td></tr>
+<tr><td><a href="vpsfort-signal-bot.html"><code>vpsfort-signal-bot</code></a></td><td>Send-only Signal bot over signal-cli (installed separately): vpsfort's admin messages while the safety number with the admin is the pinned one, else as OpenPGP-encrypted files.</td></tr>
+<tr><td><a href="vpsfort-web.html"><code>vpsfort-web</code></a></td><td>Read-only web console for the whole cluster: an agent on every node hands its vpsfort's data (through a read-only socket) to the console, sealed with a web key of its own (never the cluster key) and forward-secret; the console shows bans, alerts, offenders, places and every node's health and every node's abuse report split per network owner, ready to mail, over HTTPS (TLS 1.3) to its admins (one or a few, all equal), each with a password and a one-time code or a passkey, plus <code>/metrics</code> for Prometheus. It also runs alone on a host without vpsfort, as an aggregator.</td></tr>
+<tr><td><a href="vpsfort-sim.html"><code>vpsfort-sim</code></a></td><td>A simulated cluster and its web console in one process, from real decision logs (each node's state from vpsfort's own log reader, digest renderer and abuse report builder) or a console export, with real vpsfort-web agents and console: for trying the console without servers, screenshots and page work. Makes the web key, the admin's password and one-time secret and a certificate when missing, and says so.</td></tr>
+<tr><td><a href="vpsfort-matrix-bot.html"><code>vpsfort-matrix-bot</code></a></td><td>Send-only Matrix client: vpsfort's admin messages end-to-end encrypted (Olm/Megolm, vodozemac) to the devices the admin verified, else as OpenPGP-encrypted files.</td></tr>
+<tr><td><a href="vpsfort-push-bot.html"><code>vpsfort-push-bot</code></a></td><td>Send-only push bot for ntfy, Gotify or any webhook: vpsfort's admin messages sanitized as for Telegram (the service reads them), files only OpenPGP-encrypted.</td></tr>
+<tr><td><code>vpsfort-botlib</code></td><td>What the Telegram, mail, Signal, Matrix and push bots share: the outbox format, the pseudonyms and server names, the OpenPGP files, the log. A library, not shipped on its own.</td></tr>
+</tbody></table>
+</div>
+<p>The supported combinations of bots and cluster peers are described in vpsfort's README,
+"Deployment layouts". <code>vpsfort/tests/layouts.rs</code> runs each layout end to end.</p>
+<h2 id="build-and-test"><a class="header" href="#build-and-test">Build and test</a></h2>
+<p>You need Rust stable and the <code>x86_64-unknown-linux-musl</code> target (for ARM also <code>aarch64-unknown-linux-musl</code>,
+<code>armv7-unknown-linux-musleabihf</code>; <code>TARGET=&lt;target&gt; ./scripts/ci.sh</code> builds one). The bots and vpsfort-web also need the
+<code>llvm-tools</code> component. Each crate builds and tests on its own:</p>
+<pre><code class="language-bash">cd vpsfort            # or vpsfort-xmpp-bot, vpsfort-tg-bot, vpsfort-mail-bot, vpsfort-signal-bot, vpsfort-matrix-bot, vpsfort-push-bot, vpsfort-web
+./scripts/ci.sh        # fmt, clippy -D warnings, tests, cargo audit, cargo deny, static musl build
+./scripts/bundle.sh    # the release bundle (zip); ./scripts/package.sh: the .deb, .rpm and .apk (both take --target TRIPLE)
+</code></pre>
+<p><code>package.sh</code> needs <code>cargo install cargo-deb cargo-generate-rpm --locked</code> once; they write the
+packages without dpkg or rpm, so the packages build on macOS too.</p>
+<p>The static Linux binary also builds from macOS without a C cross toolchain (see each crate's
+<code>.cargo/config.toml</code>). Some tests listen on 127.0.0.1, so they need a machine or sandbox that
+allows local sockets. <code>.github/workflows/</code> runs the same <code>ci.sh</code> per crate on GitHub Actions
+and uploads the bundles: the tests on x86_64 and on GitHub's arm64 runners, the 32-bit ARM
+binary cross-built, linted for its target and started under qemu.</p>
+<p>Each crate has <code>fuzz/</code> targets for cargo-fuzz (nightly). <code>tests/fuzz_smoke.rs</code> runs the same
+targets on stable over their seeds.</p>
+<h2 id="deployment"><a class="header" href="#deployment">Deployment</a></h2>
+<p><strong>From a release bundle</strong> (no Rust needed): one zip per crate and architecture,
+<code>&lt;crate&gt;-&lt;version&gt;-&lt;commit&gt;-&lt;arch&gt;.zip</code>, <code>&lt;arch&gt;</code> one of <code>x86_64-linux-musl</code>,
+<code>aarch64-linux-musl</code> (arm64) and <code>armv7-linux-musleabihf</code> (32-bit ARMv7, hard-float). It holds the static binary, the systemd
+units, logrotate files and config templates, <code>SHA256SUMS</code>, and an <code>install.sh</code>. Unzip it on
+the server and run <code>sudo ./install.sh</code> (the first run of each puts a config in place to edit,
+then you run it again). Each crate's README has a section "Install from a release bundle",
+with how to download and verify one.</p>
+<p><strong>From a package</strong> (Debian, Ubuntu and their derivatives; Fedora, RHEL and its rebuilds; Alpine):
+the same releases carry <code>&lt;crate&gt;_&lt;version&gt;-1_&lt;arch&gt;.deb</code> (<code>amd64</code>, <code>arm64</code>, <code>armhf</code>),
+<code>&lt;crate&gt;-&lt;version&gt;-1.&lt;arch&gt;.rpm</code> (<code>x86_64</code>, <code>aarch64</code>, <code>armv7hl</code>) and
+<code>&lt;crate&gt;-&lt;version&gt;-r0.&lt;arch&gt;.apk</code> (<code>x86_64</code>, <code>aarch64</code>, <code>armv7</code>), the same static binary and
+deploy files for the package manager: <code>sudo apt install ./&lt;file&gt;.deb</code>, <code>sudo dnf install ./&lt;file&gt;.rpm</code> or <code>apk add --allow-untrusted ./&lt;file&gt;.apk</code> (the <code>.apk</code> is unsigned; its <code>.sha256</code>
+and attestation verify it, and it brings OpenRC scripts instead of the units: Alpine has no
+systemd, and no journal, so vpsfort follows <code>/var/log/messages</code> there). vpsfort goes to
+<code>/usr/bin</code> with its units in <code>/usr/lib/systemd/system</code> and the templates in
+<code>/usr/share/vpsfort/templates</code>; the bots and vpsfort-web stay in <code>/opt/&lt;crate&gt;</code>.
+Nothing starts on its own: the first install puts the config template in place to edit, then
+you enable the service. An upgrade keeps the config (asking, when a terminal is there, whether
+to replace it with the new template) and restarts a running service when its config is valid.
+The packages also install over a bundle or <code>deploy.sh</code> install and take it over, keeping its
+config, keys and state. Rollback is installing the previous version's package. Each crate's
+README has a section "Install from a package".</p>
+<p><strong>From the repository</strong> (a public repository with GitHub Pages): <code>.github/workflows/repository.yml</code>
+runs after every release is published, gathers the newest <code>.deb</code> and <code>.rpm</code> of every crate from
+the releases, builds a signed apt repository (<code>deb/</code>, suite <code>stable</code>, component <code>main</code>) and a
+signed dnf repository per architecture (<code>rpm/&lt;arch&gt;/</code>) with <code>scripts/repo.sh</code>, and pushes them
+to the <code>gh-pages</code> branch, which Pages serves at <code>https://makhort.github.io/vpsfort/</code> with
+the instructions on its index page; the rpms in it are signed with the same key (dnf checks
+each package, <code>gpgcheck=1</code>), the debs are covered by the signed <code>InRelease</code>. The same workflow
+builds the <strong>documentation site</strong> under <code>docs/</code> there (the READMEs and COMPARISON.md with
+mdBook, <code>scripts/docs-site.sh</code>) after every push to <code>main</code> that changes them, also without a
+signing key. It needs the repository secret <code>REPO_GPG_KEY</code> (an armored OpenPGP private key made
+for this: <code>gpg --quick-generate-key "vpsfort packages &lt;you@example.org&gt;" rsa4096 sign 0</code>;
+RSA, since rpm before 4.16 (RHEL 8) can't verify ed25519 signatures; exported with
+<code>--export-secret-keys</code>), <code>REPO_GPG_PASSPHRASE</code> if it has one, and Pages set to deploy from the
+<code>gh-pages</code> branch (the workflow's first run creates it: choose it in Settings → Pages after
+that); without the key, or before the first release, only the documentation is published. Then:</p>
+<pre><code class="language-bash">sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://makhort.github.io/vpsfort/vpsfort.asc | sudo install -m 0644 /dev/stdin /etc/apt/keyrings/vpsfort.asc
+echo "deb [signed-by=/etc/apt/keyrings/vpsfort.asc] https://makhort.github.io/vpsfort/deb stable main" | sudo tee /etc/apt/sources.list.d/vpsfort.list
+sudo apt update &amp;&amp; sudo apt install vpsfort
+</code></pre>
+<p>and on Fedora or RHEL <code>sudo curl -fsSL https://makhort.github.io/vpsfort/vpsfort.repo -o /etc/yum.repos.d/vpsfort.repo &amp;&amp; sudo dnf install vpsfort</code>.
+Compare the key's fingerprint on the index page with the one you made. <code>apt upgrade</code> and <code>dnf upgrade</code> then bring new versions, with the same post-install steps as a single package.</p>
+<p><strong>The signing key's fingerprint is</strong> <code>12A75B42C4ADD340896F5E7A2F64B712E37F3CEC</code>; compare it with
+the downloaded key's before the first <code>apt update</code>: <code>gpg --show-keys /etc/apt/keyrings/vpsfort.asc</code>.</p>
+<p><strong>Releases:</strong> a version is a tag <code>&lt;crate&gt;-v&lt;version&gt;</code> (<code>vpsfort-v0.8.0</code>,
+<code>vpsfort-xmpp-bot-v0.7.2</code>, ...), with the version in that crate's <code>Cargo.toml</code>
+and the release notes as that version's <code>## &lt;version&gt;</code> section in the crate's <code>CHANGELOG.md</code>
+(<code>./scripts/bundle.sh --check-tag TAG</code> checks both). Pushing the tag runs that crate's workflow,
+which refuses a tag that doesn't match or has no notes, tests, builds and installs the bundles and packages as
+on every commit (the <code>.deb</code> on the runner, over the bundle's install; the <code>.rpm</code> in Fedora and
+AlmaLinux containers, the <code>.apk</code> in an Alpine container), then attaches them to the GitHub Release of the tag, each with its <code>.sha256</code> and
+(in a public repository) a signed build provenance attestation, <code>.sigstore.json</code>, that
+<code>gh attestation verify</code> checks, and a software bill of materials, <code>&lt;crate&gt;-&lt;version&gt;.cdx.json</code>
+(CycloneDX, from <code>cargo cyclonedx</code>: every crate in the binary with its version, license and
+<code>pkg:cargo</code> identifier, with its <code>.sha256</code> and covered by the attestation). Every CI run,
+tagged or not, also keeps its zip, <code>.deb</code>, <code>.rpm</code>, <code>.apk</code> and SBOM as workflow artifacts.</p>
+<p><strong>Dependencies:</strong> <code>cargo audit</code> (known vulnerabilities, unsound code, yanked versions) and
+<code>cargo deny</code> (<a href="deny.toml"><code>deny.toml</code></a>: permissive licenses only, crates from crates.io only, two
+versions of one crate reported) run in every crate's <code>ci.sh</code>, locally and on every CI run.
+vpsfort's workflow also enforces on the runner's own kernel with the real <code>nft</code>, as root
+(<code>tests/real_nft.rs</code>, and the installed daemon in enforce mode: a ban, the table deleted and
+rebuilt, an unban); the other enforcement tests use a stand-in <code>nft</code>.</p>
+<p><strong>Fedora and RHEL:</strong> vpsfort's <code>package_manager = "dnf"</code> (its <code>-dnf</code> config templates, the
+<code>.rpm</code>'s default on a host with dnf) reads rpm's database and asks dnf for pending updates
+instead of dpkg and apt; with firewalld as the firewall. Tried on a Fedora 44 server, step by step in
+<a href="testing-fedora.html">vpsfort/TESTING-fedora.md</a>; the results are in vpsfort's README,
+"Verified on the servers".</p>
+<p><strong>From a checkout:</strong> each crate has a <code>deploy/</code> directory: a <code>deploy.sh</code> that runs <code>ci.sh</code>,
+builds the binary and copies everything to a host over SSH, and an <code>install.sh</code> to run there
+as root. It also holds the systemd units, logrotate files and config templates.
+<code>scripts/bundle.sh</code> builds the release bundle locally. vpsfort ships config templates for
+five roles: <code>vpsfort.toml</code> (XMPP server), <code>vpsfort-standalone.toml</code> (a host with SSH and UFW
+only, e.g. a VPN server), <code>vpsfort-tg.toml</code> (Telegram relay node), <code>vpsfort-honeypot.toml</code>
+(a dedicated honeypot node that serves nothing and feeds its bans to the cluster) and
+<code>vpsfort-desktop.toml</code> (a Linux desktop or laptop), each also as a <code>-dnf</code> variant for Fedora
+and RHEL.</p>
+<p>The templates use placeholder names and addresses (<code>example.org</code>, documentation ranges).
+Replace them, and the allowlist entries, with your own before deploying. Start in
+<code>mode = "shadow"</code>, review the decisions, then switch to <code>"enforce"</code>.</p>
+<p><strong>SSH hardening:</strong> <code>hardening/harden-vps.sh</code>, run from your laptop, turns SSH on a VPS
+(Debian/Ubuntu or Fedora/RHEL-like) into the gateway layout vpsfort's SSH audit checks: one
+key-only user forced into <code>su</code> or sftp, keys in a root-owned file, <code>su</code> limited by pam_wheel.
+It takes over a server hardened partly by hand too (<code>-g</code> keeps its user, <code>--su</code> works without
+root login or sudo). It tests the new login before it commits and rolls back otherwise;
+<code>hardening/harden-vps.sh --help</code> lists the options.</p>
+<h2 id="license"><a class="header" href="#license">License</a></h2>
+<p><a href="LICENSE">MIT</a>.</p>
+<h2 id="authorship"><a class="header" href="#authorship">Authorship</a></h2>
+<p>This project was co-authored by Claude (Anthropic; Opus 5.5, then Fable 5.1) in Claude Code: the design,
+the code, the tests and the documentation were written in collaboration with the model.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+                            <a rel="next prefetch" href="comparison.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+                    <a rel="next prefetch" href="comparison.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

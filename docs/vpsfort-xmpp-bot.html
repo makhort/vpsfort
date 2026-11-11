@@ -1,0 +1,925 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>XMPP (vpsfort-xmpp-bot) - vpsfort</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="Behaviour-based intrusion prevention for a small self-hosted server family">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('light')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item "><a href="index.html">vpsfort</a></li><li class="chapter-item "><a href="comparison.html">Compared with the alternatives</a></li><li class="chapter-item "><a href="vpsfort.html">vpsfort: the daemon</a></li><li class="chapter-item "><a href="vpsfort-web.html">vpsfort-web: the console</a></li><li class="chapter-item "><a href="vpsfort-sim.html">vpsfort-sim: the simulator</a></li><li class="chapter-item expanded "><div>The bots</div><a class="toggle"><div>❱</div></a></li><li><ol class="section"><li class="chapter-item expanded "><a href="vpsfort-xmpp-bot.html" class="active">XMPP (vpsfort-xmpp-bot)</a></li><li class="chapter-item "><a href="vpsfort-tg-bot.html">Telegram (vpsfort-tg-bot)</a></li><li class="chapter-item "><a href="vpsfort-mail-bot.html">Mail (vpsfort-mail-bot)</a></li><li class="chapter-item "><a href="vpsfort-signal-bot.html">Signal (vpsfort-signal-bot)</a></li><li class="chapter-item "><a href="vpsfort-matrix-bot.html">Matrix (vpsfort-matrix-bot)</a></li><li class="chapter-item "><a href="vpsfort-push-bot.html">ntfy, Gotify, a webhook (vpsfort-push-bot)</a></li></ol></li><li class="chapter-item "><a href="testing-fedora.html">Tried on Fedora</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">vpsfort</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/makhort/vpsfort" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="vpsfort-xmpp-bot"><a class="header" href="#vpsfort-xmpp-bot">vpsfort-xmpp-bot</a></h1>
+<p>An XMPP bot for vpsfort, in one of two modes (<code>BOT_MODE</code> in <code>config.env</code>):</p>
+<ul>
+<li><strong>admin</strong> (the default): the Rust rewrite of the Python XMPP admin bot (<code>/opt/xmpp-bot/bot8.py</code>,
+before the rename below), on the XMPP server itself: the same chat commands over <code>ejabberdctl</code>
+for the admin and users, the same <code>state.json</code>, the same <code>config.env</code>, plus vpsfort's alerts
+and weekly report for the admin (vpsfort's <code>[notify] bot_outbox</code>, with vpsfort's plain-text
+fallback). Most of this README is about it. An ejabberd with several domains runs one per
+domain ("Several domains" below).</li>
+<li><strong>client</strong>: a copy bot like vpsfort-tg-bot or vpsfort-matrix-bot, on any host (a VPN server,
+a relay node, a desktop with vpsfort's desktop profile) with an account on any XMPP server. It
+only sends vpsfort's alerts, daily digest and weekly abuse report to its admin, OMEMO-encrypted,
+and as files encrypted to the admin's OpenPGP key when OMEMO can't reach the admin (vpsfort's
+<code>[notify] xmpp_outbox</code>). No ejabberd, no commands but <code>/status</code>, <code>/omemo</code> and <code>/help</code>. See
+"Client mode" below.</li>
+</ul>
+<p>Both share the login (SCRAM-SHA-256-PLUS, certificates verified, stop on a wrong password), the
+OMEMO code and trust pins, the no-archive hints and the outbox format.</p>
+<h2 id="contents"><a class="header" href="#contents">Contents</a></h2>
+<ol>
+<li><a href="#what-changed-from-the-python-bot">What changed from the Python bot</a></li>
+<li><a href="#omemo">OMEMO</a></li>
+<li><a href="#alerts-from-vpsfort">Alerts from vpsfort</a></li>
+<li><a href="#weekly-abuse-report">Weekly abuse report</a></li>
+<li><a href="#client-mode">Client mode</a></li>
+<li><a href="#several-domains">Several domains</a></li>
+<li><a href="#connection-drops-sleep-wi-fi-server-restarts">Connection drops (sleep, Wi-Fi, server restarts)</a></li>
+<li><a href="#install-from-a-release-bundle">Install from a release bundle</a></li>
+<li><a href="#install-from-a-package">Install from a package</a></li>
+<li><a href="#build-test-deploy">Build, test, deploy</a></li>
+<li><a href="#settings">Settings</a></li>
+</ol>
+<h2 id="what-changed-from-the-python-bot"><a class="header" href="#what-changed-from-the-python-bot">What changed from the Python bot</a></h2>
+<ul>
+<li>
+<p><strong>Login: SCRAM-SHA-256-PLUS</strong> (SCRAM-SHA-256 bound to the TLS 1.3 session) instead of
+DIGEST-MD5. At startup the bot refuses a server that doesn't offer SCRAM-SHA-256, so it never
+falls back to SCRAM-SHA-1 or PLAIN. If the server rejects the channel binding, the bot logs a
+warning and uses plain SCRAM-SHA-256. ejabberd logs
+<code>Accepted c2s SCRAM-SHA-256-PLUS authentication for bot@...</code>.</p>
+</li>
+<li>
+<p><strong>TLS certificates are verified</strong> against the JID's domain, also when connecting to
+<code>127.0.0.1</code>. xmpppy didn't verify them.</p>
+</li>
+<li>
+<p><strong>Wrong password: the bot stops</strong> (exit 78, which the unit does not restart) instead of
+retrying until mod_fail2ban (or vpsfort) bans the address. That holds at startup and also
+when the password changes while the bot runs: it stops after the second failed login (see
+"Connection drops").</p>
+</li>
+<li>
+<p><strong>The bot runs as the <code>ejabberd</code> user</strong>, the one ejabberd itself runs as, with no root and
+no capabilities. ejabberdctl then works for it directly, without switching users. The
+bot's password is removed from the environment of the commands it runs. (Run as root
+instead, it starts ejabberdctl and openssl as <code>EJABBERD_USER</code>.)</p>
+</li>
+<li>
+<p><strong>Usernames are normalized as ejabberd does</strong> (nodeprep): <code>Admin</code>, <code>ADMIN</code> and <code>ａｄｍｉｎ</code>
+are all <code>admin</code>. The admin's and the bot's own accounts can't be removed, banned, kicked,
+given a new password or reset link, or reported. <code>/remove</code> also takes the user off the bot
+allowlist, so a new account of the same name starts without bot access.</p>
+</li>
+<li>
+<p><strong>Late commands are not run.</strong> A command that reaches the bot more than 2 minutes after it
+was sent (held in offline storage while the bot was down) gets "Not run: … send it again"
+instead. A message delivered twice (same id) runs once.</p>
+</li>
+<li>
+<p><strong>The password is no longer on the command line</strong>: the bot reads <code>BOT_PASSWORD</code> (and every
+other setting) from the environment, i.e. straight from <code>config.env</code>.</p>
+</li>
+<li>
+<p><strong>Nothing the bot sends is archived.</strong> Every message it sends (replies, errors, alerts,
+OMEMO key messages) carries a XEP-0334 <code>&lt;no-permanent-store/&gt;</code> hint. mod_mam
+(<code>default: always</code>) then archives it on neither side, while offline storage still delivers
+it. The bot also sets its own account's archive preference to <code>never</code> (XEP-0313). What a
+user sends to the bot still lands in that user's archive; <code>/purge_bot_chats confirm</code>
+deletes it, along with the bot's whole archive.</p>
+</li>
+<li>
+<p>Messages are accepted only from exactly the bot's domain (the Python suffix test also let
+through domains like <code>evilexample.org</code>, although only listed JIDs could run commands).</p>
+</li>
+<li>
+<p><strong>User commands</strong>, all about the sender's own account only:</p>
+<ul>
+<li>
+<p><code>/invite</code> points to mod_invites' web page (<code>INVITE_URL</code>, default
+<code>https://&lt;domain&gt;:5281/invites</code>), where users sign in and create invitations; it
+replaces <code>/create</code>, which still answers with the same text.</p>
+</li>
+<li>
+<p><code>/resetlink</code>: a reset link for their own account.</p>
+</li>
+<li>
+<p><code>/devices</code>: their connected devices, numbered, with address and time online; the one
+they write from is marked. A footer reminds them to check the list and to disconnect
+an unknown device with <code>/logout</code> and set a new password with <code>/resetlink</code>.</p>
+</li>
+<li>
+<p><code>/logout &lt;number|device&gt;</code>: disconnects one of their devices, by its number in
+<code>/devices</code> or its name. The device the command comes from only with <code>confirm</code>.</p>
+</li>
+<li>
+<p><code>/storage</code>: how many of their messages the server archive holds and how many wait
+for delivery.</p>
+</li>
+<li>
+<p><code>/delete_history confirm</code>: deletes their whole message archive on the server.</p>
+</li>
+<li>
+<p><code>/motd</code>: the current message of the day.</p>
+</li>
+<li>
+<p><code>/lang &lt;EN|FR|GE|PL|RU|UA&gt;</code>: the language of the bot's replies.</p>
+</li>
+<li>
+<p><code>/export</code>: what the server and the bot hold about the user (GDPR art. 15): last
+login, profile, contacts, group chats, devices, message counts, invitations they
+created (without tokens, and without who used them), their language and abuse
+reports, and how many reports there are about them (not by whom). The whole-server
+XEP-0227 export (<code>export_piefxis</code>) is not used: it writes everyone's data, password
+hashes included, to disk.</p>
+<p>With <code>EJABBERD_DB</code> set (ejabberd's <code>sql_database</code>), the full copy follows as a JSON
+file (GDPR art. 15 and 20), sent like the weekly report: encrypted (OMEMO media,
+XEP-0454), to the device that asked and the user's other trusted devices, in an
+OMEMO-encrypted chat only (a plain chat gets a note instead). It holds every row of
+ejabberd's database about the account: account (hash types, not hashes), last
+activity, contacts and groups, vCard, private storage, privacy lists, archive
+settings, the archived messages themselves, offline messages, push registrations
+(not their secrets), published items (PEP) and their settings, own pubsub
+subscriptions, room nicknames and subscriptions, invitations created, login
+tokens' client names (not the tokens), shared roster groups; plus connected
+devices, joined rooms and what the bot holds.</p>
+<p><strong>Only the user's own data.</strong> <code>sqlite3 -readonly</code> reads the database. Every query
+matches the account exactly (<code>=</code>, never <code>LIKE</code>, whose <code>_</code> and <code>%</code> would match other
+names), and every row is checked again in the bot before it goes into the file: a
+row owned by anyone else is dropped and logged. Left out on purpose: group chat
+archives and member lists (other people's messages and accounts), who subscribed to
+the user's published items, the accounts the user's invitations created, a contact's
+subscription request text, and every secret. A test (<code>commands/tests.rs</code>) builds a
+SQLite database with the user, a look-alike account <code>LIKE</code> would match, a group
+chat and a foreign publisher, and checks the file holds none of them.</p>
+</li>
+<li>
+<p><code>/privacy</code> (also for the admin): how long the server keeps data. The archive,
+offline messages and push registrations go after <code>RETENTION_MESSAGE_DAYS</code> (21),
+uploads (at most <code>UPLOAD_MAX_MB</code>, 500, each) after <code>RETENTION_FILE_DAYS</code> (7),
+accounts without a login after <code>RETENTION_ACCOUNT_DAYS</code> (90), unused group chats
+after <code>RETENTION_ROOM_DAYS</code> (90). Keep them in step with <code>cleanup_db.sh</code> and
+<code>mod_http_upload(_quota)</code>. It also covers passwords (SCRAM hashes), OMEMO, server logs
+and what the bot itself keeps.</p>
+</li>
+<li>
+<p><code>/help</code> ends with the admin's address (<code>ADMIN_JID</code>) for questions.</p>
+</li>
+</ul>
+<p>ejabberd's error texts go to the bot's log, not to users.</p>
+<p>At startup and then daily, the bot drops from <code>state.json</code> what it holds about accounts
+that no longer exist (the daily <code>cleanup_db.sh</code> deletes inactive ones without telling
+it), reports about or by them, and abuse reports older than <code>ABUSE_REPORT_DAYS</code> (90).
+It skips this when ejabberd's user list lacks the bot's own account, so a failed
+listing can't wipe the state. <code>/getlim</code>, <code>/setlim</code> and
+<code>/invited</code> (the old <code>/create</code> quota) are gone; old entries stay in <code>state.json</code>.</p>
+</li>
+<li>
+<p><strong>Replies to users in their language.</strong> <code>/allow &lt;username&gt; [language]</code> sets it, and users can change it with <code>/lang</code>: <code>EN</code>
+(default), <code>FR</code>, <code>GE</code> (German), <code>PL</code> (Polish), <code>RU</code> or <code>UA</code> (Ukrainian), in any case. Everything the bot
+says to that user is translated: help, errors, usage lines, <code>/invite</code>, <code>/resetlink</code>,
+<code>/abuse</code>, OMEMO messages and <code>/omemo</code>. Command names stay English. The admin's replies
+stay English. <code>/allowed</code> shows each user's language. It is kept in <code>state.json</code> (a
+<code>lang</code> field older versions ignore).</p>
+</li>
+<li>
+<p><strong>Server announcements in the configured languages.</strong> <code>/maintenance</code>, <code>/restart</code> and
+the subject of <code>/warn</code> are written in every language of <code>ANNOUNCE_LANGUAGES</code>, in that
+order (default <code>EN,FR,RU,UK</code>; <code>GE</code>/<code>DE</code>, <code>PL</code> and <code>UA</code>/<code>UK</code> work too), one paragraph per
+language with its flag. Times are given in each language's time zone, named as it is
+then (<code>BST</code> or <code>GMT</code> for English, <code>CET</code>/<code>CEST</code> for French, German and Polish, <code>MSK</code>, <code>EET</code>/
+<code>EEST</code> for Ukrainian): <code>/maintenance 'Sun 01:00' 'Sun 02:00'</code> gives "from Sun 02:00 to
+Sun 03:00 (BST)" and so on. <code>/dt_conv</code> shows a time the same way. The text of <code>/warn</code>
+itself is the admin's, as typed.</p>
+</li>
+<li>
+<p><strong>Delivery and read receipts.</strong> Commands that ask for them get a XEP-0184 receipt and a
+XEP-0333 "displayed" marker, so Conversations shows them as delivered and read. The bot
+answers disco#info and puts XEP-0115 caps in its presence, so clients know it supports
+both.</p>
+</li>
+<li>
+<p><code>state.json</code> is written to a temporary file and then renamed into place, so a crash never
+leaves a truncated file. The format is unchanged, so you can roll back.</p>
+</li>
+<li>
+<p>Pings, disco#info and roster pushes are answered; other IQ requests get
+<code>service-unavailable</code>.</p>
+</li>
+<li>
+<p>Passwords and reset links sent unencrypted carry <code>&lt;no-store/&gt;</code> too, so they never wait in
+the server's offline storage. With <code>OMEMO=required</code> they are always encrypted.</p>
+</li>
+<li>
+<p><strong>More admin commands</strong>, grouped by section in <code>/help</code>: <code>/status</code>, <code>/certs</code>,
+<code>/sessions</code>, <code>/roster</code>, <code>/storage</code>, <code>/baninfo</code>, <code>/kick</code>, <code>/unban_ip</code> (fail2ban),
+<code>/resetlink</code> (a <code>mod_invites</code> page where the user sets a new password), <code>/invites</code>,
+<code>/spam_domains</code>, <code>/block_domain</code>, <code>/unblock_domain</code>. These ask for a final <code>confirm</code>:
+<code>/purge_mam</code>, <code>/purge_offline</code> (ejabberd's batch purges; <code>/purge_status</code> shows progress),
+<code>/purge_bot_chats</code>, <code>/restart</code> (<code>restart_kindly</code>: refuses new logins, announces in the
+<code>ANNOUNCE_LANGUAGES</code>, waits, restarts) and <code>/reload_config</code>. Shutdown, backups, modules and mass
+deletion stay in the root shell.</p>
+</li>
+<li>
+<p>Replies use Message Styling (XEP-0393), which Conversations renders and other clients
+show as plain text: generated logins and passwords, commands in <code>/help</code> and usage lines,
+and OMEMO fingerprints in monospace; listings (<code>/list</code>, <code>/online</code>, …) in a preformatted
+block. Server announcements (<code>/maintenance</code>, <code>/warn</code>, <code>/announce</code>, MOTD) stay plain.</p>
+</li>
+<li>
+<p><strong>The avatar shows in Conversations.</strong> Besides the vCard photo, the bot publishes the
+avatar with XEP-0084 (PEP, open access), which is the only kind Conversations shows for
+contacts; it uses vCard photos only for servers. It also approves subscription requests
+from the admin and allowed users, and asks them for theirs in return: ejabberd sends a
+contact's PEP items (the avatar) when that contact's presence reaches the publisher, so it
+takes a subscription in both directions. At startup, and right after <code>/allow</code>, it makes
+the subscription mutual with the admin and every allowed user, also those who never added
+the bot as a contact. Conversations shows such a user the bot's request once; accept it.
+Other subscription requests stay unanswered.</p>
+</li>
+</ul>
+<h2 id="omemo"><a class="header" href="#omemo">OMEMO</a></h2>
+<p>The bot speaks OMEMO 0.3 (<code>eu.siacs.conversations.axolotl</code>, what Conversations, Gajim, Dino
+and Monal use), implemented in <code>src/omemo/</code> from the X3DH, Double Ratchet and XEdDSA
+specifications and XEP-0384 v0.3.</p>
+<ul>
+<li>On login it publishes its device list (only its own device) and its key bundle, with open
+access. It republishes the bundle when a one-time key gets used, and rotates the signed key
+every 30 days.</li>
+<li>An encrypted command gets an encrypted reply, sent to the sender's trusted devices, with the
+same no-archive hint as every other message of the bot.</li>
+<li><code>OMEMO=on</code> (the default) also accepts unencrypted commands. <code>OMEMO=required</code> refuses them,
+except <code>/omemo</code>. <code>OMEMO=off</code> turns OMEMO off entirely.</li>
+<li><code>/omemo</code> shows the bot's fingerprint and your devices' fingerprints with their trust state.
+Compare the bot's fingerprint with the one in Conversations (contact details) and with the
+<code>OMEMO on: device …, fingerprint …</code> line in the bot's log.</li>
+</ul>
+<p><strong>Trust.</strong> Keys are pinned in <code>omemo-trust.txt</code> next to <code>state.json</code> (<code>OMEMO_TRUST_FILE</code>),
+one <code>&lt;jid&gt; &lt;fingerprint&gt;</code> per line, as Conversations shows the fingerprint (spaces and case
+don't matter). A JID with pinned keys is served only on those keys: an unknown device gets
+its fingerprint back and no command runs. A JID without pins is trusted on any key, as
+Conversations does before you verify anything, unless <code>OMEMO_TRUST=pinned</code>, which trusts
+pinned keys only. The bot warns in its log while the admin has no pin. The file must be
+owned by root (or the bot's user) and writable by its owner only; otherwise the bot trusts no
+key at all and says so in its log. Because pinning needs root on the server, a stolen admin password alone cannot run
+commands once your devices are pinned. The file is re-read on every message, so no restart
+is needed.</p>
+<p><strong>Keys.</strong> <code>omemo.json</code> next to <code>state.json</code> (<code>OMEMO_STORE</code>, mode 600) holds the bot's
+identity key and sessions. Deleting it gives the bot a new device and key, which clients
+then have to trust again. Never restore an old copy: its ratchet state has already been
+used.</p>
+<p><strong>Tests.</strong> <code>./scripts/omemo-oracle.sh</code> sets up omemo-dr, Gajim's OMEMO library, in a venv
+under <code>target/</code> and runs <code>src/omemo/oracle_tests.rs</code> against it. The tests cover signatures
+in both directions, sessions started by either side, many messages each way, out-of-order
+and duplicate messages, key transport messages, tampering, a peer rebuilding its session,
+and the bot restarting. Once the venv exists, <code>ci.sh</code> runs these tests too. omemo-dr is
+GPL-3.0 and only runs at test time; none of its code is in the bot.</p>
+<p><strong>Reminder: OMEMO 2.</strong> The bot speaks only OMEMO 0.3. The current XEP-0384 is OMEMO 2
+(<code>urn:xmpp:omemo:2</code>: a different wire format, XEP-0420 stanza content encryption, and the
+whole stanza encrypted instead of just the body), and clients are moving to it. When
+Conversations, which the admin uses, ships it, add OMEMO 2 next to 0.3: publish both device
+lists and bundles, and answer each device in the version it uses. Don't switch from one
+to the other; that would cut off clients that still speak only one. Then test both versions
+against an oracle as for 0.3.</p>
+<h2 id="alerts-from-vpsfort"><a class="header" href="#alerts-from-vpsfort">Alerts from vpsfort</a></h2>
+<p>vpsfort's messages to the admin (alerts and the daily digest) come through the bot, OMEMO-
+encrypted like everything else it sends, instead of from ejabberd's <code>send_message</code> in plain
+text (which <code>mod_mam</code> would also archive). vpsfort's <code>[notify] bot_outbox</code> points at the
+bot's outbox. Each message is a file there, <code>alert-*.msg</code> (<code>alert-&lt;time&gt;-&lt;n&gt;-&lt;signature&gt;.msg</code>: the
+signature is vpsfort's own check, before its plain-text fallback, that the file is its own and
+unchanged; the bot doesn't check it). The bot looks every 5 seconds,
+claims a message by renaming it to <code>.&lt;name&gt;.sending</code>, sends it to the admin's trusted
+devices and deletes it.</p>
+<ul>
+<li><strong>vpsfort falls back to plain text.</strong> A message the bot hasn't taken within vpsfort's
+<code>bot_grace</code> (2 minutes) goes out the old way, with a last line saying why it isn't
+encrypted. That happens when the bot is down or offline, OMEMO is off, no admin device is
+trusted, or sending failed (the bot then puts the file back).</li>
+<li><strong>Admin only.</strong> The bot sends only messages addressed to <code>ADMIN_JID</code>. It renames a message
+for anyone else to <code>.&lt;name&gt;.rejected</code>, and vpsfort sends that one itself right away.
+Users' warnings never go through the bot.</li>
+<li>If the bot stops while sending, it puts the message back at its next start (or vpsfort
+takes it after 10 more minutes).</li>
+<li>vpsfort also warns the admin (the same way) when another file waits in the outbox longer
+than <code>bot_stuck_after</code> (1 hour), i.e. a weekly report the bot can't send.</li>
+</ul>
+<p>Check it as root on the XMPP server: <code>vpsfort -c /etc/vpsfort/vpsfort.toml notify-test --bot admin@example.org</code> waits until the bot has sent the test message, and says so.</p>
+<h2 id="weekly-abuse-report"><a class="header" href="#weekly-abuse-report">Weekly abuse report</a></h2>
+<p>Every Monday at 06:00 UTC the admin gets vpsfort's abuse report for both servers as an
+encrypted file: a line saying what it is (servers, period), then the file itself, which
+Conversations and Monal show as a downloadable attachment.</p>
+<p><strong>How it gets there.</strong> vpsfort and the bot stay separate programs; they meet only in a
+directory.</p>
+<ol>
+<li><code>vpsfort-abuse-report.timer</code> runs on both servers at the same time (vpsfort's
+<code>deploy/vpsfort-abuse-report.sh</code>). Each server writes its own JSON report (<code>abuse-report --since 7d --json --all --min-events 1</code>).</li>
+<li>The VPN server sends its report to the XMPP server over the cluster link
+(<code>vpsfort cluster-send-report</code>: the same XChaCha20-Poly1305 key and port as the shared
+bans, nothing new opened), where vpsfort writes it to <code>/var/lib/vpsfort/inbox/</code>.</li>
+<li>The XMPP server merges both (<code>abuse-report --merge … --contacts</code>: the RDAP lookups,
+<code>--min-events 3</code> and <code>--top 50</code> apply to the merged report) into the text report with one
+"Hello, …" section per abuse mailbox, and puts it in the bot's outbox,
+<code>/opt/vpsfort-xmpp-bot/outbox/abuse-report-&lt;date&gt;.txt</code>, owned by the bot.</li>
+<li>The bot checks the outbox every 5 minutes and right after login. It encrypts each file
+with AES-256-GCM (a new random key and 12-byte IV per file), uploads the ciphertext with
+HTTP File Upload (XEP-0363) and sends the admin an OMEMO message whose body is the
+download URL as <code>aesgcm://…#&lt;IV&gt;&lt;key&gt;</code> (OMEMO media sharing, XEP-0454). Then it deletes
+the file.</li>
+</ol>
+<p><strong>Why encrypted end to end.</strong> The TLS certificate comes from Let's Encrypt, which is fine
+for transport, but the server (and anyone with access to its disk or backups) would
+otherwise hold a readable copy of the upload. With XEP-0454 the server only ever stores
+ciphertext, and the key exists only inside the OMEMO message, encrypted for the admin's
+trusted devices. The bot never sends a report in plain text, whatever <code>OMEMO</code> says: with no
+trusted admin device the file waits and is retried. No XEP-0066 <code>&lt;x xmlns='jabber:x:oob'&gt;</code>
+is added, since it would travel in clear. PEP/pubsub is involved only as it already is, for
+the OMEMO device list and bundles; the report itself does not use pubsub.</p>
+<p><strong>Needs on the server:</strong> <code>mod_http_upload</code> with the bot allowed to upload (the default
+<code>access: local</code> is enough). The bot finds the service with disco on the domain; set
+<code>UPLOAD_SERVICE</code> (e.g. <code>upload.example.org</code>) to skip that. The upload is an HTTPS PUT to
+the slot URL, verified against the system's root certificates.</p>
+<p><strong>Retention (GDPR).</strong> The report holds attackers' addresses and sanitized log lines; account
+names are withheld. It is derived from vpsfort's security records, kept 84 days anyway
+(<code>SECURITY_RECORD_DAYS</code>), and adds no copy that outlives them:</p>
+<ul>
+<li>the work files on both servers live in a private directory under <code>/run</code> (memory), deleted
+when the job ends;</li>
+<li>the VPN report in the XMPP server's inbox is deleted once merged; an unmerged one after 7
+days;</li>
+<li>the outbox file is deleted as soon as it is sent; an unsent one after <code>OUTBOX_MAX_DAYS</code>
+(7), with a warning in the bot's log;</li>
+<li>the upload is ciphertext only and goes after <code>RETENTION_FILE_DAYS</code> (7,
+<code>mod_http_upload_quota</code>);</li>
+<li>the two messages carry the no-archive hint like everything the bot sends: not in MAM,
+only in offline storage until delivered.</li>
+</ul>
+<p>The admin's devices keep what they downloaded; delete the chat or file there when the
+abuse desks have been written to. <code>/privacy</code> says, in every language, that the admin gets
+this weekly encrypted report without account names and that the server holds it only
+encrypted for at most <code>RETENTION_FILE_DAYS</code> days. The legal basis is the legitimate
+interest in network and information security (GDPR art. 6(1)(f), recital 49).</p>
+<p><strong>Check it</strong> without waiting for Monday, as root on both servers (the VPN server first):
+<code>systemctl start vpsfort-abuse-report</code>, then <code>journalctl -u vpsfort-abuse-report</code> and the
+bot's log (<code>outbox: … sent to the admin (OMEMO media)</code>).</p>
+<h2 id="client-mode"><a class="header" href="#client-mode">Client mode</a></h2>
+<p><code>BOT_MODE=client</code> (template: <code>deploy/config-client.env.example</code>) makes the bot a copy bot for
+vpsfort's <code>[notify] xmpp_outbox</code>, as vpsfort-tg-bot is for <code>tg_outbox</code>: for a host without
+ejabberd, such as the VPN server, a relay node, or a Linux desktop with vpsfort's desktop profile
+(<code>deploy/vpsfort-desktop.toml</code> in vpsfort names the lines).</p>
+<ul>
+<li><strong>Any XMPP server, for the bot and the admin.</strong> The bot needs an account of its own anywhere
+(a public server will do) and writes only to <code>ADMIN_JID</code>, on whatever server that is. Without
+<code>XMPP_SERVER</code> it connects to the JID's domain through its SRV records (<code>_xmpp-client._tcp</code>, or
+<code>_xmpps-client._tcp</code> with <code>XMPP_TLS=direct</code>), falling back to port 5222 (5223); the
+certificate is verified against the JID's domain either way. The login is the admin bot's:
+SCRAM-SHA-256(-PLUS) only, and exit 78 when the server offers nothing else or the password is
+wrong. Prosody before 13 offers only SCRAM-SHA-1: <code>ALLOW_SCRAM_SHA1=yes</code> accepts it (never PLAIN).</li>
+<li><strong>OMEMO first.</strong> Alerts go out as OMEMO messages, files (the weekly abuse report) as OMEMO media
+(XEP-0454) through the bot's server's HTTP File Upload, to the admin's trusted devices, exactly
+as in admin mode: trust pins in <code>omemo-trust.txt</code>, blind trust while there are none (or
+<code>OMEMO_TRUST=pinned</code>).</li>
+<li><strong>OpenPGP when OMEMO can't reach the admin</strong>: <code>OMEMO=off</code>, the admin's client publishes no OMEMO
+device, none of the admin's devices is trusted (not pinned under <code>OMEMO_TRUST=pinned</code>, or no key
+bundle), or encrypting fails. The message or file is then encrypted to the admin's OpenPGP key
+(<code>OPENPGP_KEY</code>: a v4 RSA or Curve25519 key, as OpenKeychain and iPGMail export it; the same code
+as vpsfort-matrix-bot's), uploaded under a neutral name (<code>message-&lt;time&gt;.txt.pgp</code>,
+<code>report-&lt;time&gt;.txt.pgp</code>) and sent as a link (body and XEP-0066 <code>&lt;x xmlns='jabber:x:oob'&gt;</code>), which
+Conversations shows as a download; open it with OpenKeychain (Android) or iPGMail (iPhone).
+Without <code>OPENPGP_KEY</code> such messages wait. <code>OMEMO=off</code> without <code>OPENPGP_KEY</code> is refused at the
+start (exit 78): the bot sends nothing in clear.</li>
+<li><strong>In clear the server sees only</strong> the links to the OpenPGP files (their content is encrypted)
+and short notices, each kind at most once a day: why messages come as files now ("none of
+admin@…'s 2 OMEMO device(s) is trusted and reachable …"), why they wait, how many alerts were
+dropped. Every message carries the no-archive hint, as in admin mode.</li>
+<li><strong>No fallback on vpsfort's side</strong>, as for the other copy bots: an alert waits in the outbox until
+it is sent or older than <code>ALERT_MAX_HOURS</code> (24; then dropped, and one notice says how many),
+a file until <code>OUTBOX_MAX_DAYS</code> (7). vpsfort warns when copies wait longer than its
+<code>bot_stuck_after</code>. The bot accepts any <code>To:</code> in the outbox: it has one admin.</li>
+<li><strong>It answers only its admin</strong>, plain or OMEMO: <code>/status</code> (what was sent since the start, what
+waits, OMEMO, the fallback key's fingerprint), <code>/omemo</code> (fingerprints, as in admin mode) and
+<code>/help</code>. Anyone else gets no answer and no presence. It asks the admin for a mutual
+subscription at every start, as the admin bot does; accept it once.</li>
+<li><strong>No ejabberdctl, no state.json, no users.</strong> <code>BOT_STATE_PATH</code>'s directory holds the OMEMO keys,
+the pins and the outbox. The admin-mode settings (<code>EJABBERDCTL</code>, <code>EJABBERD_DB</code>, <code>INVITE_URL</code>,
+the retention days, <code>ANNOUNCE_LANGUAGES</code>) are ignored.</li>
+</ul>
+<p><strong>Install</strong> from the release bundle on the host, as root: <code>./install.sh --client</code> (or plain
+<code>./install.sh</code> on a host without the user <code>ejabberd</code>) puts the client template in place as
+<code>/opt/vpsfort-xmpp-bot/config.env</code> and installs the bot without starting it; fill in
+<code>BOT_JID</code>, <code>BOT_PASSWORD</code>, <code>ADMIN_JID</code>, copy your OpenPGP public key to
+<code>/opt/vpsfort-xmpp-bot/admin.asc</code> (or comment <code>OPENPGP_KEY</code> out), then run <code>./install.sh</code>
+again. Because the config says <code>BOT_MODE=client</code>, <code>install.sh</code> creates the system user
+<code>vpsfort-xmpp-bot</code> and installs <code>vpsfort-xmpp-bot-client.service</code> as <code>vpsfort-xmpp-bot.service</code> (the
+package keeps it under its own name: <code>systemctl enable --now vpsfort-xmpp-bot-client</code>):
+no ejabberd group, <code>ProtectSystem=strict</code>, <code>MemoryDenyWriteExecute</code> (no Erlang VM to start
+here). It skips every ejabberd step. Then, in vpsfort's <code>[notify]</code>:</p>
+<pre><code class="language-toml">enabled = true
+xmpp = false                                # no ejabberd on this host
+xmpp_outbox = "/opt/vpsfort-xmpp-bot/outbox"
+xmpp_user = "vpsfort-xmpp-bot"
+</code></pre>
+<p>and <code>systemctl restart vpsfort</code>, <code>vpsfort -c /etc/vpsfort/vpsfort.toml notify-test --xmpp-client</code>. The weekly abuse report job finds the outbox there too.</p>
+<p>Switching an existing install between the modes: change <code>BOT_MODE</code> and run <code>install.sh</code>; it
+moves the files to the other mode's user. The OMEMO device stays the same if the bot's account
+does. One vpsfort-xmpp-bot in client mode per host: vpsfort refuses <code>bot_outbox</code> and
+<code>xmpp_outbox</code> together. (Several admin bots on one XMPP server: "Several domains".)</p>
+<h2 id="several-domains"><a class="header" href="#several-domains">Several domains</a></h2>
+<p>An ejabberd with several domains (<code>hosts:</code> in <code>ejabberd.yml</code>, e.g. while its users move from
+an old domain to a new one) runs one admin bot per domain. Each domain's users get a bot on
+their own domain (<code>bot@example.org</code>, <code>bot@example.net</code>) that works on that domain's accounts,
+announcements, message of the day, invite page and database. The first domain's bot is the
+usual <code>vpsfort-xmpp-bot.service</code>. Each further one is an instance of the template unit
+<code>vpsfort-xmpp-bot@.service</code>, running the same binary with files of its own:</p>
+<div class="table-wrapper"><table><thead><tr><th></th><th>The first domain</th><th>Another domain (<code>&lt;name&gt;</code>)</th></tr></thead><tbody>
+<tr><td>Unit</td><td><code>vpsfort-xmpp-bot.service</code></td><td><code>vpsfort-xmpp-bot@&lt;name&gt;.service</code></td></tr>
+<tr><td>Config</td><td><code>/opt/vpsfort-xmpp-bot/config.env</code></td><td><code>/opt/vpsfort-xmpp-bot/instances/&lt;name&gt;/config.env</code></td></tr>
+<tr><td>State, OMEMO keys and pins, outbox</td><td><code>/opt/vpsfort-xmpp-bot/</code></td><td><code>/opt/vpsfort-xmpp-bot/instances/&lt;name&gt;/</code></td></tr>
+<tr><td>Log</td><td><code>/var/log/vpsfort-xmpp-bot/bot.log</code></td><td><code>/var/log/vpsfort-xmpp-bot/&lt;name&gt;/bot.log</code></td></tr>
+</tbody></table>
+</div>
+<p>As root on the XMPP server, once this version of the bot is installed (the name: lower-case
+letters, digits, <code>.</code>, <code>_</code> and <code>-</code>; the domain is a good one):</p>
+<pre><code class="language-bash">ejabberdctl register bot example.net 'a long random password'   # the second bot's own account
+bash /opt/vpsfort-xmpp-bot/install.sh --instance example.net     # its config from the template; not started
+sudoedit /opt/vpsfort-xmpp-bot/instances/example.net/config.env  # BOT_JID, BOT_PASSWORD, ADMIN_JID, XMPP_DOMAIN, EJABBERD_DB
+bash /opt/vpsfort-xmpp-bot/install.sh --instance example.net     # checks it, then enables and starts vpsfort-xmpp-bot@example.net
+</code></pre>
+<p>From an unzipped bundle, <code>sudo ./install.sh --instance example.net</code> does the same. Add the
+account to ejabberd's <code>protected_accounts</code> like the first bot's, and the instance's unit to
+vpsfort's <code>[sources] services</code> (<code>"vpsfort-xmpp-bot@example.net.service"</code>), so vpsfort tells you
+when it stops for good.</p>
+<ul>
+<li><strong>Each bot has its own account and files.</strong> <code>install.sh</code> refuses an instance whose <code>BOT_JID</code>
+is another bot's: two logins as one JID and resource push each other out, and the reconnects
+look like an attack to mod_fail2ban and vpsfort. It also refuses one whose state directory,
+OMEMO store or outbox is another bot's. The bot itself won't start (exit 78) on a directory
+another running bot holds, e.g. with <code>BOT_STATE_PATH</code> copied over from the first bot's
+<code>config.env</code>: it locks its state directory, OMEMO store and outbox (flock) while it runs.
+Each bot has its own OMEMO device, so users pin each bot's key on its own.</li>
+<li><strong>The admin may be on any of the server's domains.</strong> At its start the bot reads the
+server's domains (<code>ejabberdctl registered_vhosts</code>). Its <code>ADMIN_JID</code> may be an account on any
+of them, so one admin account can run all the bots. An account on another server never gets
+the commands (the bot warns at its start). Users get a bot only on their own domain:
+<code>/allow alice</code> in the example.net bot allows <code>alice@example.net</code>.</li>
+<li><strong>Per domain:</strong> the account commands (<code>/add</code>, <code>/remove</code>, <code>/list</code>, <code>/ban</code>, …), <code>/online</code> (the
+domain's users only), <code>/announce</code>, <code>/warn</code> and <code>/maintenance</code> (run them in each bot to reach
+everyone), the message of the day, <code>/spam_domains</code> (mod_antispam keeps a list per domain),
+the purges, <code>/privacy</code>, <code>/invite</code>'s page (<code>INVITE_URL</code>, default
+<code>https://&lt;domain&gt;:5281/invites</code>) and <code>/export</code> (<code>EJABBERD_DB</code>: the domain's own
+<code>sql_database</code>, from <code>host_config</code> in <code>ejabberd.yml</code>).</li>
+<li><strong>Server-wide</strong>, whichever bot runs it: <code>/restart</code> (ejabberd's <code>restart_kindly</code> tells
+everyone online, on every domain; one at a time), <code>/reload_config</code>, <code>/status</code>, <code>/certs</code>,
+<code>/unban_ip</code>. <code>/block_domain</code> refuses each of the server's own domains.</li>
+<li><strong>vpsfort's alerts go through one bot.</strong> vpsfort's <code>[notify] bot_outbox</code> names one outbox:
+keep it the first bot's (<code>/opt/vpsfort-xmpp-bot/outbox</code>, where the weekly abuse report goes
+too), with its <code>ADMIN_JID</code> in <code>[notify] admins</code>. vpsfort sends a message for an admin that
+bot doesn't serve itself, in plain text ("Admin only" above).</li>
+<li><strong>Upgrades and rollbacks cover all bots.</strong> They run the same binary: <code>install.sh</code> (and the
+command <code>deploy.sh</code> prints) restarts each running instance after the first bot, and reports
+one that doesn't come back without stopping. <code>install.sh rollback</code> takes every bot back to the
+previous version. A package upgrade restarts the running instances too.</li>
+<li><strong>Removing one:</strong> <code>systemctl disable --now vpsfort-xmpp-bot@example.net</code>, then remove
+<code>/opt/vpsfort-xmpp-bot/instances/example.net</code> and <code>/var/log/vpsfort-xmpp-bot/example.net</code>
+(its OMEMO keys go with them), and the account if it goes too
+(<code>ejabberdctl unregister bot example.net</code>).</li>
+</ul>
+<p><strong>From a package</strong> there is no <code>install.sh</code>: the template unit is in <code>/usr/lib/systemd/system</code>,
+and the directory is made by hand. Its <code>config.env</code> leaves <code>BOT_STATE_PATH</code> and <code>LOG_DIR</code> to the
+unit's defaults (the instance's directory and log directory):</p>
+<pre><code class="language-bash">sudo install -d -o root -g ejabberd -m 0750 /opt/vpsfort-xmpp-bot/instances
+sudo install -d -o root -g ejabberd -m 1770 /opt/vpsfort-xmpp-bot/instances/example.net
+sudo install -o root -g ejabberd -m 0640 /opt/vpsfort-xmpp-bot/config.env.example /opt/vpsfort-xmpp-bot/instances/example.net/config.env
+sudoedit /opt/vpsfort-xmpp-bot/instances/example.net/config.env
+sudo dpkg-reconfigure vpsfort-xmpp-bot       # the owners, outbox and log directory of each instance (rpm: dnf reinstall ./vpsfort-xmpp-bot-*.rpm)
+sudo systemctl enable --now vpsfort-xmpp-bot@example.net
+</code></pre>
+<p>On Alpine the same directory and config, then a link named after the instance:
+<code>ln -s vpsfort-xmpp-bot /etc/init.d/vpsfort-xmpp-bot.example.net</code>, and
+<code>rc-update add vpsfort-xmpp-bot.example.net default &amp;&amp; rc-service vpsfort-xmpp-bot.example.net start</code>.</p>
+<p>Not yet run on a server. CI's bundle install on the runner makes an instance's config, and its
+<code>.deb</code> install checks that the package takes the bundle's template unit over and keeps the
+instance.</p>
+<h2 id="connection-drops-sleep-wi-fi-server-restarts"><a class="header" href="#connection-drops-sleep-wi-fi-server-restarts">Connection drops (sleep, Wi-Fi, server restarts)</a></h2>
+<p>tokio-xmpp reconnects by itself, forever (backing off from 1 to 30 s), finds the server again
+through DNS each time, and resumes the session (XEP-0198) when the server still holds it. Three
+things it doesn't do are covered by the bot (since 2026-10-26, both modes):</p>
+<ul>
+<li><strong>Nothing in the outbox is lost.</strong> tokio-xmpp counts a stanza as sent once it is in the
+socket's buffer, also on a connection that died unnoticed (a laptop that just woke up), and
+drops what the server hadn't acknowledged when it can't resume the session (the server keeps
+it 5 minutes on ejabberd's default). It reports no disconnection either. So before sending
+outbox items the bot pings its server (XEP-0199) and waits if there is no answer (asking again
+after 30 s at the earliest); after each alert or file it pings again and deletes the file only
+if the answer came on the same session. Otherwise the file stays and goes out again later: an
+alert may arrive twice, never not at all. Every send waits at most 30 s, so the bot keeps
+answering stop signals while the connection is down.</li>
+<li><strong>A dead connection is noticed sooner in client mode:</strong> after 60 s of silence the bot asks
+the server for a sign of life and gives up on the connection 15 s later (tokio-xmpp's tight
+timeouts; admin mode, on localhost, keeps 5 + 5 minutes). Its timers stop while the machine
+sleeps, so on a laptop that is 75 s after waking up at most.</li>
+<li><strong>Failed reconnects can't get the bot banned, and a flaky network can't stop it.</strong> The server
+may be guarded by mod_fail2ban (5 failed logins) and by vpsfort: a failed login is 25 points
+there, a connection without login 10, a failed TLS handshake 40; vpsfort bans at 100 points of
+a score halving every 10 minutes, or 200 of one halving every 12 hours. A connection that
+reached the server but didn't get the session online is followed by a wait of 2, 5, then 10
+minutes (30 after six such attempts, 60 after twelve), which keeps even failed TLS handshakes
+under both scores; attempts that never reach the server (no network, DNS down, connection
+refused) aren't counted. Before the next attempt, the bot checks the login on a connection of
+its own: only a rejected password (or no SCRAM-SHA-256) stops it, after two failed logins in
+all, whereas a network that went away during the login just means trying again. The usual
+reconnect after a sleep or a Wi-Fi change reaches the server and comes online at once, so it
+never waits.</li>
+<li><strong>A server restart can't leave the bot resuming a session the server no longer has.</strong> After
+a restart ejabberd answers the resumption with <code>&lt;failed/&gt;</code> without an <code>h</code> attribute (it knows
+no count for a session it never had); xmpp-parsers 0.23 rejects that element, and tokio-xmpp
+then drops the stream but keeps the old session's state, so every reconnect would try the
+same resumption, logging in each time and never coming online (and stopping after three such
+logins, as if the password had changed). A login check that passes after a connection that
+never got the session online makes the bot start a new client, with no session to resume: it
+is back about two minutes after the server (the wait above, then the check). The same cure covers any other dead end after the login.</li>
+<li><strong>The bot's account must be a real one, not a vpsfort canary.</strong> vpsfort's <code>[canary] xmpp</code>
+names (its shipped list: <code>test</code>, <code>info</code>, <code>support</code>, <code>user</code>, <code>guest</code>, <code>demo</code>, <code>xmpp</code>, <code>jabber</code>,
+...) are account-level tripwires: one failed login bans the address at once (100 points), and
+every login is a critical alert. The spacing above can't help there. The bot warns at the
+start when its name is on the shipped list; <code>install.sh</code> checks the list of the vpsfort on
+the same host and refuses such an account in admin mode (warns in client mode, whose server is
+usually elsewhere). The cure is another account, or the name in <code>[canary] except</code> on the
+server.</li>
+<li><strong>No network at the start</strong> (a laptop that boots offline): the login check at startup waits and
+tries again (5 s, doubling to 5 minutes) instead of exiting. The client unit therefore doesn't
+pull in <code>network-online.target</code>, which slows booting on desktops.</li>
+</ul>
+<p>After a long sleep, vpsfort on the same machine may report once that the bot left a message
+unsent for hours: it measures the wait by the wall clock, which went on during the sleep.</p>
+<h2 id="install-from-a-release-bundle"><a class="header" href="#install-from-a-release-bundle">Install from a release bundle</a></h2>
+<p>Without a Rust toolchain: every version tag <code>vpsfort-xmpp-bot-v&lt;version&gt;</code> gets its bundle, <code>vpsfort-xmpp-bot-&lt;version&gt;-&lt;commit&gt;-&lt;arch&gt;.zip</code> for each architecture (<code>x86_64-linux-musl</code>, <code>aarch64-linux-musl</code> for arm64, <code>armv7-linux-musleabihf</code> for 32-bit ARMv7 with hardware floating point), as an asset of the tag's GitHub Release (see "Releases" in the <a href="index.html#deployment">repository README</a>); CI also keeps one for every commit as a workflow artifact (they expire and need a GitHub login), and <code>scripts/bundle.sh</code> builds it locally. It holds the static binary, the unit and logrotate files, <code>config.env.example</code>, <code>SHA256SUMS</code> and <code>install.sh</code>.</p>
+<p><strong>Download and verify</strong> (on your machine, then copy the zip over, or on the server): take the zip for the server's architecture (<code>uname -m</code>: <code>x86_64</code>, <code>aarch64</code>, or <code>armv7l</code> for armv7) from the GitHub Release of the version's tag, with the <a href="https://cli.github.com/">GitHub CLI</a> or from the <a href="https://github.com/makhort/vpsfort/releases">Releases page</a> (each crate's releases are tagged <code>vpsfort-xmpp-bot-v&lt;version&gt;</code>):</p>
+<pre><code class="language-bash">arch=x86_64-linux-musl     # the server's: aarch64-linux-musl (arm64), armv7-linux-musleabihf (32-bit ARM)
+gh release download vpsfort-xmpp-bot-v0.7.2 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
+sha256sum -c vpsfort-xmpp-bot-*-$arch.zip.sha256              # the download is intact (macOS: shasum -a 256 -c)
+gh attestation verify vpsfort-xmpp-bot-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-xmpp-bot-v0.7.2
+</code></pre>
+<p><code>gh attestation verify</code> (after <code>gh auth login</code>) checks the signed build provenance: that this repository's CI built exactly this zip from that tag. With <code>--bundle vpsfort-xmpp-bot-*-$arch.zip.sigstore.json</code> it checks the attestation attached to the Release instead of fetching it from GitHub. Only a public repository's releases have one (GitHub offers attestations for private repositories only with Enterprise Cloud).</p>
+<p>On the XMPP server (<code>apt install unzip</code> or <code>dnf install unzip</code> if needed):</p>
+<pre><code class="language-bash">arch=x86_64-linux-musl     # as above: aarch64-linux-musl, armv7-linux-musleabihf on ARM
+unzip vpsfort-xmpp-bot-*-$arch.zip &amp;&amp; cd vpsfort-xmpp-bot-*-$arch
+sudo ./install.sh          # first time: installs the bot with /opt/vpsfort-xmpp-bot/config.env from the template, not started
+sudoedit /opt/vpsfort-xmpp-bot/config.env                     # the bot's account, ADMIN_JID, XMPP_DOMAIN ("Settings")
+sudo ./install.sh          # starts the bot (or: systemctl enable --now vpsfort-xmpp-bot); later: upgrades it
+sudo ./install.sh rollback # back to the previous version
+sudo ./install.sh --instance example.net   # the bot for another domain of this ejabberd ("Several domains")
+</code></pre>
+<p>It doesn't start the bot while <code>config.env</code> still holds <code>REPLACE…</code> placeholders. It checks every file against <code>SHA256SUMS</code> in a copy only root can write, then runs the same <code>install.sh</code> as <code>deploy.sh</code> below (<code>./install.sh --check</code> only checks the files). Without <code>--client</code>, the first install takes the admin template where the user <code>ejabberd</code> exists and the client template elsewhere. An existing <code>/opt/xmpp-bot</code> (the bot's old name) is moved over as with <code>deploy.sh</code>.</p>
+<h2 id="install-from-a-package"><a class="header" href="#install-from-a-package">Install from a package</a></h2>
+<p>The same release has a package per architecture, for the distribution's package manager instead of <code>install.sh</code>: <code>vpsfort-xmpp-bot_&lt;version&gt;-1_&lt;arch&gt;.deb</code> (<code>amd64</code>, <code>arm64</code>, <code>armhf</code>; Debian, Ubuntu and their derivatives) <code>vpsfort-xmpp-bot-&lt;version&gt;-1.&lt;arch&gt;.rpm</code> (<code>x86_64</code>, <code>aarch64</code>, <code>armv7hl</code>; Fedora, RHEL and its rebuilds) and <code>vpsfort-xmpp-bot-&lt;version&gt;-r0.&lt;arch&gt;.apk</code> (<code>x86_64</code>, <code>aarch64</code>, <code>armv7</code>; Alpine, with OpenRC: below), each with its <code>.sha256</code> and <code>.sigstore.json</code>, downloaded and verified as the bundle above (<code>--pattern "*.deb*"</code>, <code>"*.rpm*"</code> or <code>"*.apk*"</code>). CI keeps them for every commit as workflow artifacts, and <code>scripts/package.sh</code> builds them locally (<code>cargo install cargo-deb cargo-generate-rpm --locked</code> once, and python3 for the <code>.apk</code>, which <code>scripts/apk.py</code> at the repository's root writes; none needs dpkg, rpm or apk-tools, so it runs on macOS too; <code>--target aarch64-unknown-linux-musl</code> or <code>armv7-unknown-linux-musleabihf</code> for the ARM ones). Or from the signed apt and dnf repository on GitHub Pages, once it is set up (the repository README, "Deployment"), where <code>apt upgrade</code> and <code>dnf upgrade</code> then bring new versions.</p>
+<pre><code class="language-bash">sudo apt install ./vpsfort-xmpp-bot_0.7.2-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-xmpp-bot-0.7.2-1.x86_64.rpm
+sudoedit /opt/vpsfort-xmpp-bot/config.env                  # the first install put the template there ("Settings")
+sudo systemctl enable --now vpsfort-xmpp-bot               # admin mode; client mode:  vpsfort-xmpp-bot-client
+</code></pre>
+<p>The package puts the same files in the same places as <code>install.sh</code> (<code>/opt/vpsfort-xmpp-bot</code> with the binary and both templates, <code>/var/log/vpsfort-xmpp-bot</code>), with three units in <code>/usr/lib/systemd/system</code>: <code>vpsfort-xmpp-bot.service</code> for the admin bot (as the user ejabberd, on the XMPP server), <code>vpsfort-xmpp-bot-client.service</code> for the client bot (<code>BOT_MODE=client</code>, its own user <code>vpsfort-xmpp-bot</code>, any host), and the template <code>vpsfort-xmpp-bot@.service</code> for the admin bots of a server's other domains ("Several domains"); you enable the one for the mode in <code>config.env</code>. The first install takes the admin template where the user <code>ejabberd</code> exists and the client template elsewhere. The post-install step does what <code>install.sh</code> does apart from copying files: the client mode's user, <code>config.env</code> the first time, the owners and modes for the mode's user, the outbox and the log directory, the logrotate rules for the mode (<code>/etc/logrotate.d/vpsfort-xmpp-bot</code>, and in admin mode <code>ejabberd-logs</code>, written from the copies in <code>/usr/share/vpsfort-xmpp-bot</code>), and the canary and <code>CTL_OVER_HTTP</code> checks as warnings. It refuses nothing: with <code>BOT_MODE=admin</code> and no user <code>ejabberd</code> it only says so. Switching modes: change <code>BOT_MODE</code>, run <code>dpkg-reconfigure vpsfort-xmpp-bot</code> (rpm: <code>dnf reinstall ./vpsfort-xmpp-bot-*.rpm</code>), then disable one unit and enable the other. In vpsfort's <code>[sources] services</code>, the client bot is <code>vpsfort-xmpp-bot-client.service</code>. <code>apt remove</code> stops the bot and keeps <code>/opt/vpsfort-xmpp-bot</code>; <code>apt purge</code> removes it with the state, OMEMO keys and pins, and the logrotate rules it wrote (rpm: by hand).</p>
+<p><strong>Nothing starts on its own.</strong> The first install puts the template in place and prints what to fill in; you enable the service once it is filled in. An upgrade keeps the config and restarts the service only if it was running and the config is filled in. <strong>Over a bundle or <code>deploy.sh</code> install</strong> the package takes over: the config, state and keys stay; the bundle's unit in <code>/etc/systemd/system</code> (it would shadow the package's) and its rollback files go, and the service is enabled again on the package's unit if it was (vpsfort's integrity watch reports the removed unit as a warning once). <strong>Replacing the config:</strong> when a terminal is there, the install asks whether to replace the config with the new template (the old one kept with the suffix <code>.old</code>); Enter, a timeout of a minute, no terminal or <code>DEBIAN_FRONTEND=noninteractive</code> keep it. <code>VPSFORT_PACKAGE_CONFIG=replace</code> (or <code>keep</code>) answers without asking: <code>sudo VPSFORT_PACKAGE_CONFIG=replace apt install ./&lt;file&gt;.deb</code>. <strong>Rollback</strong> is installing the previous version's package (<code>apt install ./&lt;old&gt;.deb --allow-downgrades</code>, <code>dnf downgrade ./&lt;old&gt;.rpm</code>): there is no <code>.prev</code> file. A bundle's client-mode install ran under the admin unit's name; the takeover enables <code>vpsfort-xmpp-bot-client.service</code> instead.</p>
+<p><strong>Alpine (apk, OpenRC):</strong> <code>apk add --allow-untrusted ./vpsfort-xmpp-bot-&lt;version&gt;-r0.x86_64.apk</code> puts the same files in the same places, with two OpenRC scripts instead of the units: <code>/etc/init.d/vpsfort-xmpp-bot</code> (the admin bot, as the <code>ejabberd</code> user) and <code>/etc/init.d/vpsfort-xmpp-bot-client</code> (the client bot, as <code>vpsfort-xmpp-bot</code>), each exporting the settings from <code>config.env</code> as <code>EnvironmentFile=</code> does, supervised by <code>supervise-daemon</code> and started again 5 seconds after a crash; systemd's sandboxing has no equivalent there. The package is unsigned, hence <code>--allow-untrusted</code>: <code>sha256sum -c</code> and the attestation verify it. Its install scripts are POSIX sh and do what the post-install step above does: the user (<code>vpsfort-xmpp-bot</code>, only where there is no ejabberd user to run as), <code>config.env</code> from the template the first time (the admin bot's where ejabberd runs, else the client's), the owners and modes, the log directory; an upgrade restarts a running bot. Then <code>rc-update add vpsfort-xmpp-bot default &amp;&amp; rc-service vpsfort-xmpp-bot start</code> (or <code>-client</code>). <code>apk del vpsfort-xmpp-bot</code> stops them and keeps <code>/opt/vpsfort-xmpp-bot</code>. Not yet run on an Alpine host: CI installs the package in an Alpine container.</p>
+<h2 id="build-test-deploy"><a class="header" href="#build-test-deploy">Build, test, deploy</a></h2>
+<pre><code class="language-bash">./scripts/ci.sh            # fmt, clippy, tests, cargo audit, static Linux binary
+./deploy/deploy.sh         # ci.sh, then copies (over SFTP only) to a fresh xmpp:/tmp/vpsfort-xmpp-bot-deploy.XXXX
+</code></pre>
+<p>The static Linux build needs <code>rustup target add x86_64-unknown-linux-musl</code> (for ARM: <code>aarch64-unknown-linux-musl</code>, <code>armv7-unknown-linux-musleabihf</code>, built with <code>TARGET=... ./deploy/deploy.sh</code>) and
+<code>rustup component add llvm-tools</code> (see <code>.cargo/config.toml</code>).</p>
+<p>Then paste the command <code>deploy.sh</code> prints into a root shell on the server: it checks the
+files and runs <code>install.sh</code> (installs /opt/vpsfort-xmpp-bot/vpsfort-xmpp-bot and the unit,
+restarts). <strong>On a clean host</strong> that first run creates <code>/opt/vpsfort-xmpp-bot</code> with
+<code>config.env</code> from the template (the admin bot's where the user <code>ejabberd</code> exists, the client
+bot's elsewhere; <code>bash install.sh --client</code> picks the client one), installs the bot for that
+mode (the client mode's user, the unit, the log directory, the outbox) and stops before
+starting it while <code>config.env</code> still holds <code>REPLACE…</code> placeholders. Fill it in, then
+<code>systemctl enable --now vpsfort-xmpp-bot</code>. To go back to the previous binary and unit:</p>
+<pre><code class="language-bash">bash /opt/vpsfort-xmpp-bot/install.sh rollback
+</code></pre>
+<p><strong>Renamed from <code>xmppbot</code> (2026-10-17).</strong> The bot was <code>xmppbot</code>, installed as
+<code>/opt/xmpp-bot/xmppbot</code>, run by <code>xmpp-bot.service</code>, logging to <code>/var/log/xmpp-bot</code>. The
+first <code>install.sh</code> of the new name moves an old install over on its own, before installing:</p>
+<ul>
+<li>stops and disables <code>xmpp-bot.service</code>, removes it and <code>/etc/logrotate.d/xmpp-bot</code>
+(local changes in <code>xmpp-bot.service.d/</code> move to <code>vpsfort-xmpp-bot.service.d/</code>);</li>
+<li>moves <code>/opt/xmpp-bot</code> to <code>/opt/vpsfort-xmpp-bot</code> and <code>/var/log/xmpp-bot</code> to
+<code>/var/log/vpsfort-xmpp-bot</code>, with owners and modes: <code>state.json</code>, the OMEMO keys and trust
+pins, the avatar, the outbox and the log carry over, so the XMPP account, the OMEMO device
+and the admins' pinned fingerprint stay the same;</li>
+<li>rewrites the old paths in <code>config.env</code> (the previous file stays as <code>config.env.pre-rename</code>)
+and adds <code>LOG_DIR</code> if it was missing;</li>
+<li>keeps the old binary as <code>vpsfort-xmpp-bot.prev</code> if it ran cleanly, so <code>rollback</code> works
+right after the move (with the new unit and paths; the old unit is not kept);</li>
+<li>in <code>/etc/vpsfort/vpsfort.toml</code> and <code>/etc/default/vpsfort-abuse-report</code>, replaces
+<code>/opt/xmpp-bot</code> and <code>"xmpp-bot.service"</code> (each changed file stays as
+<code>&lt;file&gt;.pre-rename-&lt;time&gt;</code>), checks that vpsfort accepts the config (else puts it back and
+says what to change by hand) and restarts vpsfort.</li>
+</ul>
+<p>Deploy the current vpsfort first: its <code>vpsfort-abuse-report.service</code> may write only to the
+new outbox paths, and <code>install.sh</code> warns while the installed one names only the old ones.
+vpsfort's integrity check reports the changed units in <code>/etc/systemd/system</code> once; that is
+this move. Running <code>install.sh</code> again changes nothing more; if both <code>/opt/xmpp-bot</code> and
+<code>/opt/vpsfort-xmpp-bot</code> exist, it stops and asks you to keep one.</p>
+<p><strong>Fuzzing.</strong> The OMEMO code and the outbox format live in the crate's library (<code>src/lib.rs</code>),
+which the binary uses too, so <code>fuzz/</code> can reach them. There are three cargo-fuzz targets
+(code in <code>src/fuzzing.rs</code>):</p>
+<ul>
+<li><code>omemo_wire</code>: libsignal's protobuf messages inside OMEMO keys. Whatever parses must
+serialize back to the same message.</li>
+<li><code>omemo_decrypt</code>: encrypted messages to a bot device, including session starts on its real
+prekey ids with fuzzed keys (zeros, low-order points) and a fuzzed first message.</li>
+<li><code>omemo_stanza</code>: XML from other clients (<code>&lt;encrypted&gt;</code>, device lists, bundles the bot
+starts sessions from) and vpsfort's outbox messages.</li>
+</ul>
+<p><code>tests/fuzz_smoke.rs</code> runs them on stable, over real traffic between two throwaway devices,
+the seeds in <code>fuzz/seeds/</code> and fixed mutations, so <code>cargo test</code> keeps them working
+(<code>VPSFORT_XMPP_BOT_WRITE_SEEDS=1 cargo test --test fuzz_smoke</code> regenerates the seeds; the keys in them
+are throwaway). The real search needs nightly:</p>
+<pre><code class="language-bash">rustup toolchain install nightly --profile minimal &amp;&amp; cargo install cargo-fuzz --locked   # once
+cargo +nightly fuzz run omemo_decrypt fuzz/corpus/omemo_decrypt fuzz/seeds/omemo_decrypt -- -max_total_time=600
+</code></pre>
+<p>New inputs collect in <code>fuzz/corpus/</code>, crashes in <code>fuzz/artifacts/</code> (both git-ignored). The
+first runs (2026-10-16, 90 s per target, 240,000 to 750,000 inputs each) found nothing.</p>
+<p>ejabberd's database holds only SCRAM-SHA-256 and SCRAM-SHA-512 hashes (the bot needs
+SHA-256). The one-off script that migrated the plain-text passwords
+(<code>ejabberd_scram_migration.py</code>) ran on 2026-10 and was retired with its backups; it is in
+the git history.</p>
+<p><code>install.sh</code> keeps the previous binary and units (<code>vpsfort-xmpp-bot.prev</code>, <code>vpsfort-xmpp-bot.service.prev</code>,
+<code>vpsfort-xmpp-bot@.service.prev</code>) for <code>rollback</code> (only while the running version runs cleanly), backs up <code>state.json</code>,
+installs a logrotate rule for <code>/var/log/vpsfort-xmpp-bot/bot.log</code> (weekly, one old copy: 14 days
+at most, as <code>/privacy</code> says; older copies are deleted). The bot logs only there, not to
+systemd's journal, which would keep the lines longer (<code>tail -f /var/log/vpsfort-xmpp-bot/bot.log</code>
+instead of <code>journalctl -u vpsfort-xmpp-bot</code>; the journal still has systemd's own start/stop lines
+and anything printed before the log opens). It also installs <code>ejabberd-logs</code>, a logrotate
+rule keeping ejabberd's own log files 14 days at most (weekly, one old copy, <code>reopen_log</code>
+afterwards), unless another rule already covers <code>/opt/ejabberd/logs</code>, and reminds you to
+set <code>log_rotate_size: infinity</code> in <code>ejabberd.yml</code> so ejabberd stops rotating by size. With
+journald limited to 14 days (<code>MaxRetentionSec=14day</code>, <code>MaxFileSec=1day</code>), <code>/privacy</code> can
+say server logs are deleted after 14 days at the latest. It also checks that ejabberd's unit runs
+as <code>ejabberd</code>, and shows the bot's log and ejabberd's record of the login. The Python bot
+can't come back: it only logs in with DIGEST-MD5 or PLAIN, which the server no longer
+offers.</p>
+<p>It warns when <code>CTL_OVER_HTTP</code> is set in <code>/opt/ejabberd/conf/ejabberdctl.cfg</code>. In that
+mode <code>ejabberdctl</code> sends its arguments to ejabberd as JSON without escaping them, so line
+breaks and quotes (announcements, passwords) break commands, and replies with non-ASCII text
+(a Cyrillic nickname in a roster) come back empty. The bot needs the classic mode; turning
+it off doesn't affect ejabberd's socket itself, which other tools may use directly.</p>
+<p>It also sets owners and modes (of regular files with one name only: a link the bot's user
+planted under one of these names, in a directory it writes to, is left alone, as root would
+otherwise change the file it points at), so the bot can change only what it has to:</p>
+<div class="table-wrapper"><table><thead><tr><th>Path</th><th>Owner</th><th>Mode</th></tr></thead><tbody>
+<tr><td><code>/opt/vpsfort-xmpp-bot/</code></td><td>root:ejabberd</td><td>1770 (sticky: the bot can't replace root's files)</td></tr>
+<tr><td><code>config.env</code> (holds the password), <code>omemo-trust.txt</code>, the avatar</td><td>root:ejabberd</td><td>640</td></tr>
+<tr><td><code>state.json</code>, <code>omemo.json</code></td><td>ejabberd</td><td>600</td></tr>
+<tr><td><code>/var/log/vpsfort-xmpp-bot/</code>, <code>bot.log</code></td><td>ejabberd</td><td>700, 600</td></tr>
+<tr><td><code>outbox/</code> (the weekly report waiting to be sent)</td><td>root:ejabberd</td><td>1770; files ejabberd 600</td></tr>
+<tr><td><code>instances/</code> (the bots for other domains), and in it each <code>&lt;name&gt;/</code> with the files above</td><td>root:ejabberd</td><td>750; 1770</td></tr>
+</tbody></table>
+</div>
+<p>After editing <code>omemo-trust.txt</code> as root, keep it <code>root:ejabberd 640</code>; the bot trusts no key
+while others than root can write it.</p>
+<p>The unit drops every capability, keeps <code>/usr</code> and <code>/etc</code> read-only, is held to 512 MB of
+memory (<code>MemoryMax</code>: the bot is small, but every ejabberdctl command starts an Erlang VM of
+tens of MB inside the unit; the client unit gets 128 MB), and has
+<code>KillMode=process</code>, so a pending <code>/restart</code> (ejabberdctl <code>restart_kindly</code> waiting out its
+delay) carries on when the bot restarts; a second one is refused while it runs.</p>
+<h2 id="settings"><a class="header" href="#settings">Settings</a></h2>
+<p><code>BOT_MODE</code> (<code>admin</code>, the default, or <code>client</code>). Since 2026-10-26 <code>XMPP_SERVER</code> (unset: the JID's
+domain through SRV records), <code>XMPP_DOMAIN</code> (unset: the JID's domain), <code>XMPP_PORT</code> (unset: 5222,
+or 5223 with <code>XMPP_TLS=direct</code>), <code>BOT_NAME</code> (<code>vpsfort</code>) and <code>BOT_STATE_PATH</code>
+(<code>/opt/vpsfort-xmpp-bot/state.json</code>; an instance's: <code>state.json</code> in its own directory, see
+"Several domains") have defaults, and <code>ALLOW_SCRAM_SHA1</code> (no) is new; client
+mode adds <code>OPENPGP_KEY</code> and <code>ALERT_MAX_HOURS</code> (24) and uses the OMEMO, upload and outbox settings
+below.</p>
+<p>The variables in the existing <code>config.env</code>: <code>BOT_JID</code>, <code>BOT_PASSWORD</code>, <code>BOT_NAME</code>, <code>ADMIN_JID</code>,
+<code>XMPP_SERVER</code>, <code>XMPP_DOMAIN</code>, <code>XMPP_PORT</code>, <code>BOT_STATE_PATH</code>, <code>ORG_NAME</code>, <code>AVATAR_PATH</code>,
+<code>LOG_DIR</code>. Optional extras: <code>OMEMO</code> (<code>on</code>, <code>required</code>, <code>off</code>), <code>OMEMO_STORE</code>,
+<code>OMEMO_TRUST_FILE</code>, <code>OMEMO_TRUST</code> (<code>blind</code>, <code>pinned</code>), <code>XMPP_TLS</code> (<code>auto</code>, <code>direct</code> or
+<code>starttls</code>; auto means direct TLS on port 5223, as xmpppy did), <code>BOT_PASSWORD_FILE</code>,
+<code>EJABBERDCTL</code>, <code>EJABBERD_USER</code>, <code>EJABBERD_DB</code> (ejabberd's SQLite file, for /export's
+JSON file; e.g. <code>/opt/ejabberd/database/example.org.v2.db</code>), <code>SQLITE3</code>
+(<code>/usr/bin/sqlite3</code>, package <code>sqlite3</code>), <code>INVITE_URL</code>, <code>RETENTION_MESSAGE_DAYS</code>,
+<code>RETENTION_FILE_DAYS</code>, <code>UPLOAD_MAX_MB</code>, <code>RETENTION_ACCOUNT_DAYS</code>, <code>RETENTION_ROOM_DAYS</code>,
+<code>ABUSE_REPORT_DAYS</code>, <code>SECURITY_RECORD_DAYS</code> (84: vpsfort's <code>actions.jsonl</code>, weekly × 12),
+<code>ANNOUNCE_LANGUAGES</code> (<code>EN,FR,RU,UK</code>), <code>OUTBOX_DIR</code> (default <code>outbox</code> next to the state file), <code>OUTBOX_MAX_DAYS</code> (7),
+<code>UPLOAD_SERVICE</code>. <code>vpsfort-xmpp-bot --help</code> lists the
+matching command-line flags.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="vpsfort-sim.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="vpsfort-tg-bot.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="vpsfort-sim.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="vpsfort-tg-bot.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

@@ -1,0 +1,473 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Mail (vpsfort-mail-bot) - vpsfort</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="Behaviour-based intrusion prevention for a small self-hosted server family">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('light')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item "><a href="index.html">vpsfort</a></li><li class="chapter-item "><a href="comparison.html">Compared with the alternatives</a></li><li class="chapter-item "><a href="vpsfort.html">vpsfort: the daemon</a></li><li class="chapter-item "><a href="vpsfort-web.html">vpsfort-web: the console</a></li><li class="chapter-item "><a href="vpsfort-sim.html">vpsfort-sim: the simulator</a></li><li class="chapter-item expanded "><div>The bots</div><a class="toggle"><div>❱</div></a></li><li><ol class="section"><li class="chapter-item "><a href="vpsfort-xmpp-bot.html">XMPP (vpsfort-xmpp-bot)</a></li><li class="chapter-item "><a href="vpsfort-tg-bot.html">Telegram (vpsfort-tg-bot)</a></li><li class="chapter-item expanded "><a href="vpsfort-mail-bot.html" class="active">Mail (vpsfort-mail-bot)</a></li><li class="chapter-item "><a href="vpsfort-signal-bot.html">Signal (vpsfort-signal-bot)</a></li><li class="chapter-item "><a href="vpsfort-matrix-bot.html">Matrix (vpsfort-matrix-bot)</a></li><li class="chapter-item "><a href="vpsfort-push-bot.html">ntfy, Gotify, a webhook (vpsfort-push-bot)</a></li></ol></li><li class="chapter-item "><a href="testing-fedora.html">Tried on Fedora</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">vpsfort</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/makhort/vpsfort" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="vpsfort-mail-bot"><a class="header" href="#vpsfort-mail-bot">vpsfort-mail-bot</a></h1>
+<p>A send-only mail bot for <a href="vpsfort.html">vpsfort</a>: it mails vpsfort's admin alerts,
+the daily digest and the weekly abuse report to the admins, each mail <strong>OpenPGP-encrypted as
+a whole</strong>, subject included. It goes out through a mail server over SMTP: the local Postfix,
+or any other server with TLS. It reads no mail and takes no orders; the servers stay managed
+over SSH.</p>
+<p>It is the third copy bot next to vpsfort-xmpp-bot (OMEMO) and vpsfort-tg-bot (Telegram), and
+works like vpsfort-tg-bot: vpsfort puts a copy of every admin message in its outbox, the bot
+sends it and deletes it. It can run on any vpsfort node, alone or next to the other bots, or
+on a relay node of its own (as vpsfort-tg-bot does, <code>deploy/vpsfort-tg.toml</code> in vpsfort).</p>
+<h2 id="contents"><a class="header" href="#contents">Contents</a></h2>
+<ol>
+<li><a href="#what-a-mail-looks-like">What a mail looks like</a></li>
+<li><a href="#keys">Keys</a></li>
+<li><a href="#sanitizing-optional">Sanitizing (optional)</a></li>
+<li><a href="#the-mail-server">The mail server</a></li>
+<li><a href="#how-vpsfort-and-the-bot-meet">How vpsfort and the bot meet</a></li>
+<li><a href="#install-from-a-release-bundle">Install from a release bundle</a></li>
+<li><a href="#install-from-a-package">Install from a package</a></li>
+<li><a href="#setup">Setup</a></li>
+<li><a href="#settings">Settings</a></li>
+<li><a href="#retention-and-what-the-bot-keeps">Retention and what the bot keeps</a></li>
+<li><a href="#build-and-test">Build and test</a></li>
+</ol>
+<h2 id="what-a-mail-looks-like"><a class="header" href="#what-a-mail-looks-like">What a mail looks like</a></h2>
+<p>Every mail is PGP/MIME (RFC 3156): <code>multipart/encrypted</code>, one OpenPGP message holding the
+whole content. Mail servers on the way, and the mailbox provider, see only:</p>
+<ul>
+<li>the envelope and the outer headers: <code>From</code>, <code>To</code>, <code>Date</code>, <code>Message-ID</code> (random), the size,
+and the subject <code>...</code> (<code>OUTER_SUBJECT</code>);</li>
+<li><code>Auto-Submitted: auto-generated</code> (no auto-replies), and, if the bot signs, an <code>Autocrypt</code>
+header with the bot's public key.</li>
+</ul>
+<p>Inside, encrypted: the real subject (<code>[vpn] vpsfort: password guessing blocked</code>) and the
+headers again as "protected headers" (<code>protected-headers="v1"</code>), which Thunderbird, K-9 /
+Thunderbird for Android, FairEmail and Delta Chat show in place of <code>...</code>, then the text,
+quoted-printable (any line length, any character). Text from attackers in alerts (user names
+they tried, URIs) never reaches a header unencoded and can't start a MIME part.</p>
+<ul>
+<li><strong>Alerts and the digest</strong>: one mail each, the message's text as the mail's text.</li>
+<li><strong>The weekly abuse report</strong>: the report as the mail's text (it is text). A file that isn't
+UTF-8 text would be attached instead.</li>
+</ul>
+<p>The OpenPGP format is the one every client reads: v4 keys (RSA, or Ed25519/Curve25519), a v3
+PKESK per recipient key, SEIPD v1 with MDC under AES-256, no compression (not AEAD / v6, which
+many clients can't read yet). <code>tests/gpg_interop.rs</code> has GnuPG decrypt the mails and check the
+signature, for RSA and Curve25519 keys.</p>
+<h2 id="keys"><a class="header" href="#keys">Keys</a></h2>
+<ul>
+<li><strong><code>OPENPGP_KEY</code></strong> (required): the recipients' public keys, in one file (armored or binary,
+one or more keys). Each address in <code>MAIL_TO</code> gets the key whose user id names it; with a single
+key, that key serves every address (logged as a warning when the user id differs). An address
+without a key stops the bot at the start (exit 78): nothing goes out in clear. A key that has
+expired, at the start or later: that recipient gets nothing (logged every 10 minutes) until
+the key is replaced; with no usable key at all the bot doesn't start, and when the last one
+expires while it runs, messages wait and vpsfort warns about them after <code>bot_stuck_after</code>.
+Only the key's own signatures count: certifications by others (<code>gpg --sign-key</code>, web of
+trust) are ignored, not taken for broken self-signatures.</li>
+<li><strong><code>SIGNING_KEY</code></strong> (optional): the bot's own key, made once with <code>vpsfort-mail-bot keygen</code>
+(Ed25519, no passphrase: it would sit next to the key anyway). Every mail is then signed, and
+the public key goes out in the <code>Autocrypt</code> header (autocrypt.org Level 1), so clients that read
+it (Thunderbird, K-9/FairEmail, Delta Chat) learn it from the first mail and show the signature
+as valid. Others: import <code>signing.key.pub.asc</code>. The key proves a mail comes from the bot; it
+can't read anything.</li>
+</ul>
+<p>Only public keys of the recipients are on the server: whoever gets into it can't read mails
+already sent.</p>
+<h2 id="sanitizing-optional"><a class="header" href="#sanitizing-optional">Sanitizing (optional)</a></h2>
+<p>The mails are encrypted end to end, so by default alerts and digests go out as they are, with
+XMPP account names and the servers' own addresses. <code>SANITIZE=on</code> replaces them exactly as
+vpsfort-tg-bot does for Telegram (the same code, <code>src/redact.rs</code> and <code>src/servers.rs</code>):</p>
+<ul>
+<li>every XMPP address (<code>alice@example.org</code>, <code>ejabberd:alice</code>) becomes a pseudonym
+<code>[acct:1a2b3c]</code>, an HMAC under <code>PSEUDONYM_KEY</code> (made on the first start, the bot's, 600);
+<code>vpsfort-mail-bot pseudonym alice@example.org</code> on the server tells which is which;</li>
+<li>the servers' own addresses and host names in <code>SERVER_NAMES</code> become their node ids
+(<code>nextcloud.example.org:443</code> → <code>nextcloud.node1:443</code>); attackers' addresses stay.</li>
+</ul>
+<p>The weekly abuse report is never changed (as on Telegram). The Telegram bot sanitizes always.</p>
+<h2 id="the-mail-server"><a class="header" href="#the-mail-server">The mail server</a></h2>
+<div class="table-wrapper"><table><thead><tr><th></th><th><code>SMTP_TLS</code></th><th>port</th><th>login</th></tr></thead><tbody>
+<tr><td>the local Postfix</td><td><code>none</code> (only allowed to 127.0.0.1, ::1, localhost)</td><td>25</td><td>usually <code>SMTP_AUTH=none</code></td></tr>
+<tr><td>a provider or another server</td><td><code>tls</code> (TLS from the start) or <code>starttls</code> (required: never falls back to plain)</td><td>465 / 587</td><td><code>SMTP_AUTH=auto</code> (PLAIN or LOGIN, whichever is offered), <code>plain</code>, <code>login</code></td></tr>
+</tbody></table>
+</div>
+<p>The server's certificate is checked against the system's CAs (<code>/etc/ssl/certs</code>) and
+<code>SMTP_TLS_NAME</code> (default: <code>SMTP_HOST</code>), or only against <code>SMTP_CA_FILE</code> (a server with a
+certificate of its own CA). A login is never sent over plain SMTP to another host: that
+setting is refused. The password goes in <code>SMTP_PASSWORD_FILE</code> (root:vpsfort-mail-bot 640).</p>
+<p>What the server says decides what happens:</p>
+<ul>
+<li><strong>Out of reach, 4xx, TLS failing:</strong> the message waits; the bot tries again after 30 s,
+doubling up to 30 minutes. Alerts older than <code>ALERT_MAX_HOURS</code> (24) are dropped and counted
+in one mail; files after <code>OUTBOX_MAX_DAYS</code> (7).</li>
+<li><strong>5xx for one mail</strong> (too large, rejected as spam): the bot sends a short note in its place
+saying what was refused and where to find it (vpsfort's actions log, or how to make the
+report again). If the note goes through, the refused mail is dropped.</li>
+<li><strong>5xx for every mail</strong> (the sender or a recipient refused): the note fails too, the message
+waits, and the bot tries every 30 minutes.</li>
+<li><strong>A refused login</strong> (530, 534, 535, 538): no note is tried (it would be one more failed
+login towards the server's ban); the message waits, retried every 30 minutes. At the start
+it stops the bot with exit 78, which systemd doesn't restart.</li>
+<li><strong>No STARTTLS offered</strong> where <code>SMTP_TLS=starttls</code>: nothing is sent, not even the login, and
+the bot keeps retrying with backoff rather than giving up for good (someone in the way may be
+stripping it, and must not be able to stop the bot).</li>
+</ul>
+<p>The bot opens one connection per mail (a few a day).</p>
+<h2 id="how-vpsfort-and-the-bot-meet"><a class="header" href="#how-vpsfort-and-the-bot-meet">How vpsfort and the bot meet</a></h2>
+<p>The outbox (<code>/opt/vpsfort-mail-bot/outbox</code>, root:vpsfort-mail-bot 1770, sticky) has the format
+of the other bots: <code>alert-*.msg</code> with <code>To:</code> and <code>Subject:</code> lines, a blank line and the text,
+written under a dot name and renamed into place, owned by the bot's user. The bot claims one by
+renaming it to <code>.&lt;name&gt;.sending</code>, sends it, deletes it; if sending fails it renames it back
+(and on the next start it puts back what a stop left half-sent). The weekly report is any
+other regular file. vpsfort (<code>[notify] mail_outbox</code>, <code>mail_user</code>) puts a copy of every
+message for the first admin there (every admin message on a node with <code>xmpp = false</code> or no
+<code>admins</code>), and the abuse report job puts the report there. vpsfort warns the admins (over
+XMPP and to the Telegram bot, else as a system alert) when the bot leaves something unsent
+longer than <code>bot_stuck_after</code>.</p>
+<h2 id="install-from-a-release-bundle"><a class="header" href="#install-from-a-release-bundle">Install from a release bundle</a></h2>
+<p>Instead of <code>deploy.sh</code> (below), without a Rust toolchain: every version tag <code>vpsfort-mail-bot-v&lt;version&gt;</code> gets its bundle, <code>vpsfort-mail-bot-&lt;version&gt;-&lt;commit&gt;-&lt;arch&gt;.zip</code> for each architecture (<code>x86_64-linux-musl</code>, <code>aarch64-linux-musl</code> for arm64, <code>armv7-linux-musleabihf</code> for 32-bit ARMv7 with hardware floating point), as an asset of the tag's GitHub Release (see "Releases" in the <a href="index.html#deployment">repository README</a>); CI also keeps one for every commit as a workflow artifact (they expire and need a GitHub login), and <code>scripts/bundle.sh</code> builds it locally. It holds the static binary, the unit, <code>config.env.example</code>, <code>SHA256SUMS</code> and <code>install.sh</code>.</p>
+<p><strong>Download and verify</strong> (on your machine, then copy the zip over, or on the server): take the zip for the server's architecture (<code>uname -m</code>: <code>x86_64</code>, <code>aarch64</code>, or <code>armv7l</code> for armv7) from the GitHub Release of the version's tag, with the <a href="https://cli.github.com/">GitHub CLI</a> or from the <a href="https://github.com/makhort/vpsfort/releases">Releases page</a> (each crate's releases are tagged <code>vpsfort-mail-bot-v&lt;version&gt;</code>):</p>
+<pre><code class="language-bash">arch=x86_64-linux-musl     # the server's: aarch64-linux-musl (arm64), armv7-linux-musleabihf (32-bit ARM)
+gh release download vpsfort-mail-bot-v0.5.3 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
+sha256sum -c vpsfort-mail-bot-*-$arch.zip.sha256              # the download is intact (macOS: shasum -a 256 -c)
+gh attestation verify vpsfort-mail-bot-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-mail-bot-v0.5.3
+</code></pre>
+<p><code>gh attestation verify</code> (after <code>gh auth login</code>) checks the signed build provenance: that this repository's CI built exactly this zip from that tag. With <code>--bundle vpsfort-mail-bot-*-$arch.zip.sigstore.json</code> it checks the attestation attached to the Release instead of fetching it from GitHub. Only a public repository's releases have one (GitHub offers attestations for private repositories only with Enterprise Cloud).</p>
+<p>On the server (<code>apt install unzip</code> or <code>dnf install unzip</code> if needed):</p>
+<pre><code class="language-bash">arch=x86_64-linux-musl     # as above: aarch64-linux-musl, armv7-linux-musleabihf on ARM
+unzip vpsfort-mail-bot-*-$arch.zip &amp;&amp; cd vpsfort-mail-bot-*-$arch
+sudo ./install.sh          # install or upgrade; the first time also /opt/vpsfort-mail-bot/config.env
+sudo ./install.sh rollback # back to the previous version
+</code></pre>
+<p>The first install, as with <code>deploy.sh</code>, doesn't start the bot until <code>config.env</code> is filled in (then run it again). <code>install.sh</code> checks every file against <code>SHA256SUMS</code> in a copy only root can write, then runs the same installer as <code>deploy.sh</code> (<code>./install.sh --check</code> only checks the files).</p>
+<h2 id="install-from-a-package"><a class="header" href="#install-from-a-package">Install from a package</a></h2>
+<p>The same release has a package per architecture, for the distribution's package manager instead of <code>install.sh</code>: <code>vpsfort-mail-bot_&lt;version&gt;-1_&lt;arch&gt;.deb</code> (<code>amd64</code>, <code>arm64</code>, <code>armhf</code>; Debian, Ubuntu and their derivatives) <code>vpsfort-mail-bot-&lt;version&gt;-1.&lt;arch&gt;.rpm</code> (<code>x86_64</code>, <code>aarch64</code>, <code>armv7hl</code>; Fedora, RHEL and its rebuilds) and <code>vpsfort-mail-bot-&lt;version&gt;-r0.&lt;arch&gt;.apk</code> (<code>x86_64</code>, <code>aarch64</code>, <code>armv7</code>; Alpine, with OpenRC: below), each with its <code>.sha256</code> and <code>.sigstore.json</code>, downloaded and verified as the bundle above (<code>--pattern "*.deb*"</code>, <code>"*.rpm*"</code> or <code>"*.apk*"</code>). CI keeps them for every commit as workflow artifacts, and <code>scripts/package.sh</code> builds them locally (<code>cargo install cargo-deb cargo-generate-rpm --locked</code> once, and python3 for the <code>.apk</code>, which <code>scripts/apk.py</code> at the repository's root writes; none needs dpkg, rpm or apk-tools, so it runs on macOS too; <code>--target aarch64-unknown-linux-musl</code> or <code>armv7-unknown-linux-musleabihf</code> for the ARM ones). Or from the signed apt and dnf repository on GitHub Pages, once it is set up (the repository README, "Deployment"), where <code>apt upgrade</code> and <code>dnf upgrade</code> then bring new versions.</p>
+<pre><code class="language-bash">sudo apt install ./vpsfort-mail-bot_0.5.3-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-mail-bot-0.5.3-1.x86_64.rpm
+sudoedit /opt/vpsfort-mail-bot/config.env                 # the first install put the template there
+sudo systemctl enable --now vpsfort-mail-bot
+</code></pre>
+<p>The package puts the same files in the same places as <code>install.sh</code> (<code>/opt/vpsfort-mail-bot</code> with the binary and <code>config.env.example</code>, the user <code>vpsfort-mail-bot</code>, <code>/var/log/vpsfort-mail-bot</code>, the logrotate rule), except the unit, which is in <code>/usr/lib/systemd/system</code>. Its post-install step does what <code>install.sh</code> does apart from copying files: the user, <code>config.env</code> from the template the first time, the owners and modes, the outbox and the log directory; and it prints what is left to do ("Setup": the addresses, the mail server, the recipients' OpenPGP keys). <code>dpkg-reconfigure vpsfort-mail-bot</code> (rpm: <code>dnf reinstall ./vpsfort-mail-bot-*.rpm</code>) runs that step again, e.g. after copying a key there. <code>apt remove vpsfort-mail-bot</code> (<code>dnf remove</code>) stops the bot and keeps <code>/opt/vpsfort-mail-bot</code>; <code>apt purge vpsfort-mail-bot</code> removes it with the state and keys (rpm: by hand).</p>
+<p><strong>Nothing starts on its own.</strong> The first install puts the template in place and prints what to fill in; you enable the service once it is filled in. An upgrade keeps the config and restarts the service only if it was running and the config is filled in. <strong>Over a bundle or <code>deploy.sh</code> install</strong> the package takes over: the config, state and keys stay; the bundle's unit in <code>/etc/systemd/system</code> (it would shadow the package's) and its rollback files go, and the service is enabled again on the package's unit if it was (vpsfort's integrity watch reports the removed unit as a warning once). <strong>Replacing the config:</strong> when a terminal is there, the install asks whether to replace the config with the new template (the old one kept with the suffix <code>.old</code>); Enter, a timeout of a minute, no terminal or <code>DEBIAN_FRONTEND=noninteractive</code> keep it. <code>VPSFORT_PACKAGE_CONFIG=replace</code> (or <code>keep</code>) answers without asking: <code>sudo VPSFORT_PACKAGE_CONFIG=replace apt install ./&lt;file&gt;.deb</code>. <strong>Rollback</strong> is installing the previous version's package (<code>apt install ./&lt;old&gt;.deb --allow-downgrades</code>, <code>dnf downgrade ./&lt;old&gt;.rpm</code>): there is no <code>.prev</code> file.</p>
+<p><strong>Alpine (apk, OpenRC):</strong> <code>apk add --allow-untrusted ./vpsfort-mail-bot-&lt;version&gt;-r0.x86_64.apk</code> puts the same files in the same places, with the OpenRC script <code>/etc/init.d/vpsfort-mail-bot</code> instead of the unit: the settings exported from <code>config.env</code> as <code>EnvironmentFile=</code> does, supervised by <code>supervise-daemon</code> and started again 5 seconds after a crash; systemd's sandboxing has no equivalent there. The package is unsigned, hence <code>--allow-untrusted</code>: <code>sha256sum -c</code> and the attestation verify it. Its install scripts are POSIX sh and do what the post-install step above does: the user, <code>config.env</code> from the template the first time, the owners and modes, the log directory; an upgrade restarts a running bot. Then <code>rc-update add vpsfort-mail-bot default &amp;&amp; rc-service vpsfort-mail-bot start</code>. <code>apk del vpsfort-mail-bot</code> stops it and keeps <code>/opt/vpsfort-mail-bot</code>. Not yet run on an Alpine host: CI installs the package in an Alpine container.</p>
+<h2 id="setup"><a class="header" href="#setup">Setup</a></h2>
+<p>On your Mac:</p>
+<pre><code class="language-bash">./deploy/deploy.sh vpn
+</code></pre>
+<p>It runs <code>scripts/ci.sh</code>, builds the static binary, copies it with the unit and <code>install.sh</code>
+to the server and prints the command to paste into a root shell there. The first install
+creates the user <code>vpsfort-mail-bot</code>, <code>/opt/vpsfort-mail-bot/config.env</code> from
+<code>config.env.example</code>, and doesn't start the bot until it's filled in. Then, as root:</p>
+<ol>
+<li>Fill in <code>config.env</code>: <code>MAIL_FROM</code>, <code>MAIL_TO</code>, the mail server.</li>
+<li>Copy the recipients' public keys to <code>/opt/vpsfort-mail-bot/recipients.asc</code> (Thunderbird:
+Account settings → End-to-end encryption → OpenPGP Key Manager → File → Export; or
+<code>gpg --armor --export you@example.org</code>), and the SMTP password to <code>smtp-password</code>.</li>
+<li>Optionally, the signing key:
+<code>set -a; . /opt/vpsfort-mail-bot/config.env; set +a; /opt/vpsfort-mail-bot/vpsfort-mail-bot keygen --out /opt/vpsfort-mail-bot/signing.key</code>
+and <code>SIGNING_KEY=/opt/vpsfort-mail-bot/signing.key</code> in config.env.</li>
+<li><code>bash /opt/vpsfort-mail-bot/install.sh</code> again (it sets owners and modes of the keys and files), then:</li>
+</ol>
+<pre><code class="language-bash">set -a; . /opt/vpsfort-mail-bot/config.env; set +a
+/opt/vpsfort-mail-bot/vpsfort-mail-bot check        # connects, logs in, sends nothing
+/opt/vpsfort-mail-bot/vpsfort-mail-bot send-test    # one test mail
+systemctl enable --now vpsfort-mail-bot
+</code></pre>
+<ol start="5">
+<li>In <code>[notify]</code> of <code>/etc/vpsfort/vpsfort.toml</code>: <code>mail_outbox = "/opt/vpsfort-mail-bot/outbox"</code>
+and <code>mail_user = "vpsfort-mail-bot"</code>, restart vpsfort, and
+<code>vpsfort -c /etc/vpsfort/vpsfort.toml notify-test --mail</code>.</li>
+</ol>
+<p>For SPF/DKIM, <code>MAIL_FROM</code> should be an address the mail server may send as; otherwise the
+mails may land in spam. <code>install.sh rollback</code> goes back to the previous binary and unit.</p>
+<h2 id="settings"><a class="header" href="#settings">Settings</a></h2>
+<p>Every option is also an environment variable (config.env is the unit's <code>EnvironmentFile</code>);
+<code>vpsfort-mail-bot --help</code> lists them with their defaults. <code>deploy/config.env.example</code> explains
+each one.</p>
+<h2 id="retention-and-what-the-bot-keeps"><a class="header" href="#retention-and-what-the-bot-keeps">Retention and what the bot keeps</a></h2>
+<ul>
+<li>Outbox files until they are sent (alerts 24 h at most, files 7 days).</li>
+<li>Its log, <code>/var/log/vpsfort-mail-bot/bot.log</code> (owner only): what was sent to whom, and the
+mail server's answers; rotated weekly, no line older than 14 days. No message text.</li>
+<li>Nothing else: no state file. With <code>SANITIZE=on</code>, the pseudonym key. The service makes it on
+its first start; the one-off commands (<code>check</code>, <code>send-test</code>, <code>pseudonym</code>), run as root, never
+do, so it stays the bot's.</li>
+</ul>
+<p>The unit is hardened like vpsfort-tg-bot's: no capabilities, a read-only system but its two
+directories, IPv4 and IPv6 sockets only, no writable-executable memory, and 128 MB of memory
+at most (<code>MemoryMax</code>).</p>
+<h2 id="build-and-test"><a class="header" href="#build-and-test">Build and test</a></h2>
+<pre><code class="language-bash">./scripts/ci.sh
+</code></pre>
+<p>Format, clippy, the tests, <code>cargo audit</code>, and the static <code>x86_64-unknown-linux-musl</code> binary (<code>TARGET=aarch64-unknown-linux-musl ./scripts/ci.sh</code>, or <code>armv7-unknown-linux-musleabihf</code>, for ARM).
+<code>tests/fake_smtp.rs</code> runs the bot against a fake mail server on 127.0.0.1 (plain, STARTTLS and
+TLS with a test CA, PLAIN and LOGIN, a server that strips STARTTLS, refusals) and runs the
+binary as systemd would; it needs to bind 127.0.0.1. <code>tests/gpg_interop.rs</code> needs <code>gpg</code>
+(skips without it). SMTP is <code>lettre</code> (blocking, rustls with ring: no OpenSSL), OpenPGP is
+rpgp, both pure Rust.</p>
+<p><strong>Fuzzing.</strong> What comes from outside (vpsfort's outbox files with attackers' log text in
+them, other files there, the recipients' key file, the signing key) goes through four
+cargo-fuzz targets (code in <code>src/fuzzing.rs</code>). Besides no panics, each checks the promises
+with rules of its own:</p>
+<ul>
+<li><code>alert_mail</code>: an outbox file to the finished mail, with <code>SANITIZE</code> off and on. The mail is
+all ASCII with CRLF line ends and lines under 998 characters; it has exactly the bot's own
+outer headers (subject <code>...</code>) and, between the boundaries, only the version part and the
+armored message. Decrypted, it has the fixed protected headers, the subject on one line, and
+the text back unchanged; with <code>SANITIZE=on</code>, no account address and no server address or
+host name of the fuzzed setup is left.</li>
+<li><code>file_mail</code>: a file (<code>name</code>, NUL, content): text as the mail's text, anything else attached
+under a safe name, back byte for byte.</li>
+<li><code>openpgp_keys</code>: the key file; whatever is taken must encrypt to every usable address.</li>
+<li><code>signing_key</code>: whatever is taken signs mails that verify, in a well-formed Autocrypt header.</li>
+</ul>
+<p><code>tests/fuzz_smoke.rs</code> runs them on stable on realistic inputs, the seeds in <code>fuzz/seeds/</code> and a
+few thousand mutations, so <code>cargo test</code> keeps them working; a failing input is saved as
+<code>target/fuzz-smoke-&lt;target&gt;.bin</code> (<code>VPSFORT_MAIL_BOT_WRITE_SEEDS=1 cargo test --test fuzz_smoke</code>
+regenerates the seeds; the keys in them, the signing key's secret part too, are throwaway).
+The real search needs nightly:</p>
+<pre><code class="language-bash">rustup toolchain install nightly --profile minimal &amp;&amp; cargo install cargo-fuzz --locked   # once
+cargo +nightly fuzz run alert_mail fuzz/corpus/alert_mail fuzz/seeds/alert_mail -- -dict=fuzz/alert_mail.dict -max_len=8192 -max_total_time=600
+</code></pre>
+<p>New inputs collect in <code>fuzz/corpus/</code>, crashes in <code>fuzz/artifacts/</code> (both git-ignored). The
+<code>regression-*</code> seeds are inputs the first runs (2026-10-17) failed on, all fixed: a subject
+holding <code>=?utf-8?b?…?=</code> went into the header as it was, so mail clients would have shown it
+decoded, as other text (now encoded); a damaged signing key whose secret part no longer
+matched its public part was taken, and every mail would have carried a bad signature (now
+refused at the start); with <code>SANITIZE=on</code>, a server address replaced by its node id completed
+an address (<code>admin@::ffff:192.0.2.10</code> → <code>admin@node1</code>; fixed in vpsfort-tg-bot too). One was the
+oracle's: a pseudonym cut by the 200-character subject limit.</p>
+<p><strong>Tested on a server</strong> (since 2026-10-20): a Debian VPS deployed with <code>deploy.sh</code>, the unit
+running. <code>check</code>, <code>send-test</code>, vpsfort's <code>notify-test --mail</code> (picked up from the outbox and
+sent within seconds), a digest (<code>digest --send</code>), real alerts (a source gone quiet, new
+listeners, a cluster node not responding) and the weekly abuse report, all through a provider
+(<code>SMTP_TLS=tls</code>, port 465, LOGIN) to a SimpleLogin alias forwarding to Proton Mail. Proton Mail
+on Android decrypts and shows them; GnuPG on a Mac decrypts the exported mails and shows the
+bot's signature as good. Proton re-armors the encrypted part and exports it quoted-printable with
+CRLF line ends, which turns every <code>=</code> in the armor (the base64 padding and the checksum line)
+into <code>=3D</code> and makes gpg report a CRC error or a malformed CRC. Undo that before decrypting a
+mail exported from Proton (only there: base64 itself never holds <code>=3D</code>, apart from a checksum
+that happens to start with <code>3D</code>):</p>
+<pre><code class="language-bash">sed 's/=3D/=/g' mail.eml | gpg --decrypt
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="vpsfort-tg-bot.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="vpsfort-signal-bot.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="vpsfort-tg-bot.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="vpsfort-signal-bot.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>
