@@ -1,0 +1,40 @@
+Architectures: amd64 arm64 armhf
+Codename: stable
+Components: main
+Date: Thu, 26 Nov 2026 21:46:16 +0000
+Description: vpsfort, its bots and web console (static binaries)
+Label: vpsfort
+Origin: vpsfort
+Suite: stable
+MD5Sum:
+ fb4faf17e706ee06a23289f8f781a541              215 Release
+ 4f6215a279e11acdfab26fe36ced14de             9056 main/binary-amd64/Packages
+ 9625a2baf44b28bd021e6943682439d1             3248 main/binary-amd64/Packages.gz
+ 972e8873516d8b0d0c450a943706531c             9054 main/binary-arm64/Packages
+ 113c537c8fbc5a010aeb4b12fe58cb62             3254 main/binary-arm64/Packages.gz
+ e6423238f5c36cf0bdb5a5d654c645c7             9054 main/binary-armhf/Packages
+ 1c34cc1ad384f553f63993ccf76ab51d             3253 main/binary-armhf/Packages.gz
+SHA1:
+ d29b31c07c85c3095c9d46150761cf9021b40288              215 Release
+ 9593e47daa6e674f07285d68a35f9bc8e3c56ca8             9056 main/binary-amd64/Packages
+ fe6689e7e0591490c89d6ac7a97518f5780555ab             3248 main/binary-amd64/Packages.gz
+ 0982715da711b65fedbcefddececca1485d3f936             9054 main/binary-arm64/Packages
+ e2565a9a415753b0e76ebd8dda953b61355ebb24             3254 main/binary-arm64/Packages.gz
+ 19312458e6215b9215ae3ab102c9cefb8beb5bf7             9054 main/binary-armhf/Packages
+ 649b33344e1cb95b1b0be7cc52d72088ed292c00             3253 main/binary-armhf/Packages.gz
+SHA256:
+ a7801a8421294140540a27727f0f6e035501f6a2bc8f3097cb0c06d8e82115bb              215 Release
+ dfdd4b03397822ab0399ea1458d3c27d3d016a3d3b1629ec0351d554d18adefb             9056 main/binary-amd64/Packages
+ e1904167c74fab7c746dfd41ff57450c1a765f2aace4d474140280097719ae7a             3248 main/binary-amd64/Packages.gz
+ dacf2f4059554fbed461f949cd1f114135a32765c2ba185ea1952058e8b81201             9054 main/binary-arm64/Packages
+ 79292be7db44acb310875fd0ec11d5b65b17200ef1a05025ffd3a947c0485f8f             3254 main/binary-arm64/Packages.gz
+ fdc105ae73e14d9eb57812ed38e09a39f05a31dcc3002ccb09733e8da8ab7533             9054 main/binary-armhf/Packages
+ 65974a3f1e22770134b33df469686376e1cd3229baca5e7f139b945006ef15e6             3253 main/binary-armhf/Packages.gz
+SHA512:
+ 743fdb67e6c7b75c8bedf9129a4d8480c57698b5360784f185eab362c94008af3865d88fdfd80603f7527a7573fa2ba7a566f7e12c220bef2b467802ad6d7da3              215 Release
+ 0de076a67c51c2a43b7fabcc5552f42a9cf2ba1303264f030f7750d87f83f0ccb9bf1d481d0145570a1a39906962f98cfc99200e8e01f299b6ce6f26ff85fbe8             9056 main/binary-amd64/Packages
+ 058537588c06c860d8af9ee966613ff1cd7feca150cfe15931f2aff0737b264af313798036a4f8a00a492a70f9f42893e4c1b58b680c4d0d95ee7d5b0b607c73             3248 main/binary-amd64/Packages.gz
+ 5e450230e4e7ef05eeeabcd5c5c332ced39442a1166190ff93ef7aadfffef8c2024080271ee3f398f5fb44129e0f7fbfa9d554c9a3dc25175acb0b388bb99c5f             9054 main/binary-arm64/Packages
+ f69c351d31f58d10cf5b7bdfc16c8931a57ab779ef29dc7b39ded13a111e9f8c959f825b1c7c1d7c433530c972299491d11d3eda981f8a3e20cd09047740d721             3254 main/binary-arm64/Packages.gz
+ 9e8da2b8b22a5a06d20815ff3f5bd885390d5236fb725400c3e35b752c9914f404e9f6b571c5b2c3156c60bcf0037ee111c9361c0316beb53ecec1fd29baea06             9054 main/binary-armhf/Packages
+ 82a0b845fb3261986fd816b07e88d7865dad029f8e429bb13e52a683508824e97fac9c76eb777c892e67805dea21073899a40622d8126f88fab90c6869f6fb22             3253 main/binary-armhf/Packages.gz

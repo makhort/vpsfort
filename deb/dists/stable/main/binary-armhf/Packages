@@ -1,0 +1,189 @@
+Package: vpsfort-mail-bot
+Architecture: armhf
+Version: 0.5.5-1
+Priority: optional
+Section: admin
+Maintainer: makhort <makhort@users.noreply.github.com>
+Installed-Size: 5741
+Depends: ca-certificates, systemd
+Filename: pool/main/vpsfort-mail-bot_0.5.5-1_armhf.deb
+Size: 1930668
+MD5sum: 1e72c3868a5ca53aa7ead4afd33ff779
+SHA1: 286ee16ea6a55eca455c18ca052106492baffcad
+SHA256: 38ebbe8eba048ad3d5d177431e39b9d1217e3163e6db7f7f1a07a21ce438909c
+SHA512: 4195356968cb79d839e45729304efa0c1f93684be2331bf969510ff6f56bb795a5654505607a30c85b117464114dcd72c09cf7aabb8cc4c6a6c158d5d6b34528
+Homepage: https://github.com/makhort/vpsfort
+Description: Send-only mail bot delivering vpsfort's admin alerts, digests and reports,
+ OpenPGP-encrypted
+ vpsfort-mail-bot mails vpsfort's admin alerts, digests and abuse reports, each
+ OpenPGP-encrypted as a whole (subject included) to the recipients' keys,
+ through your SMTP server. It installs to /opt/vpsfort-mail-bot as its own
+ system user, with config.env from the template; nothing is started until it is
+ filled in.
+
+Package: vpsfort-matrix-bot
+Architecture: armhf
+Version: 0.3.4-1
+Priority: optional
+Section: admin
+Maintainer: makhort <makhort@users.noreply.github.com>
+Installed-Size: 5657
+Depends: ca-certificates, systemd
+Filename: pool/main/vpsfort-matrix-bot_0.3.4-1_armhf.deb
+Size: 1964804
+MD5sum: 00f48ec1ca736383af4ef08ce12b66a7
+SHA1: b5112105159e235fdc667648781fc545b57e7a0f
+SHA256: 0fab4c8d6ef107a4bee5be7be052b1cb65b789634976502ce6feff02e64f6f33
+SHA512: 2c3082b29f4c4584102ae9b28a231200d0824c1e9e3082a977dab3e0fc207290b370b9d92ee4980321331526c54e3f17bd443767f78a727cf0b36c1195021194
+Homepage: https://github.com/makhort/vpsfort
+Description: Matrix bot delivering vpsfort's admin alerts, digests and reports, end-to-end
+ encrypted (Olm/Megolm), else as OpenPGP files
+ vpsfort-matrix-bot sends vpsfort's admin alerts, digests and abuse reports to
+ the admin's Matrix account, end-to-end encrypted (Olm/Megolm) to the devices
+ the admin verified; else as OpenPGP-encrypted files. It installs to
+ /opt/vpsfort-matrix-bot as its own system user, with config.env from the
+ template; nothing is started until it is filled in.
+
+Package: vpsfort-push-bot
+Architecture: armhf
+Version: 0.2.4-1
+Priority: optional
+Section: admin
+Maintainer: makhort <makhort@users.noreply.github.com>
+Installed-Size: 5023
+Depends: ca-certificates, systemd
+Filename: pool/main/vpsfort-push-bot_0.2.4-1_armhf.deb
+Size: 1757484
+MD5sum: a7b47b9deffdcc21b4f729bb470594be
+SHA1: 5cb2a9c3bb5fca1a6a5a85fab41ffaa0ef3752c2
+SHA256: 5a2c28c3467ed3f478a503abf8465d6645b4555f76260c129e051175842e8c72
+SHA512: 930ad87c927fa190563a35160039401ef05ba25e538c51795e765f5549a410eaae7d5b829712bec4708a16f025a05e56b349f3ec9a3abb8b06fdb43546fd648b
+Homepage: https://github.com/makhort/vpsfort
+Description: Push bot delivering vpsfort's admin alerts, digests and reports to ntfy, Gotify
+ or a webhook
+ vpsfort-push-bot sends vpsfort's admin alerts, digests and abuse reports to a
+ push service you run or trust (ntfy, Gotify) or any webhook: account names
+ become pseudonyms, servers appear by node id, and files go out
+ OpenPGP-encrypted to the admin's key. It installs to /opt/vpsfort-push-bot as
+ its own system user, with config.env from the template; nothing is started
+ until it is filled in.
+
+Package: vpsfort-signal-bot
+Architecture: armhf
+Version: 0.3.4-1
+Priority: optional
+Section: admin
+Maintainer: makhort <makhort@users.noreply.github.com>
+Installed-Size: 3665
+Depends: systemd
+Filename: pool/main/vpsfort-signal-bot_0.3.4-1_armhf.deb
+Size: 1267136
+MD5sum: be4df0c66f5ca629d94b4506a2e47ae3
+SHA1: 6e32037423861256526d8fe4a78321df73322559
+SHA256: 0031826e87eb5aaca5dee526e6ad211c7f88a546e24de52c9665d8a458198aa4
+SHA512: fac11f5e6e47e083d3cbddcd1de57967797d75d1f78eb20d4a6268615c1788cc0ab090b668f22a63b92e6e0e2a5ddff66e88fc6abb9e830324777f53c99f8caf
+Homepage: https://github.com/makhort/vpsfort
+Description: Signal bot delivering vpsfort's admin alerts, digests and reports through
+ signal-cli, else as OpenPGP files
+ vpsfort-signal-bot sends vpsfort's admin alerts, digests and abuse reports over
+ Signal through signal-cli (installed separately), as long as the safety number
+ with the admin is the pinned one; else as OpenPGP-encrypted files. It installs
+ to /opt/vpsfort-signal-bot as its own system user, with config.env from the
+ template; nothing is started until it is filled in.
+
+Package: vpsfort-tg-bot
+Architecture: armhf
+Version: 0.5.4-1
+Priority: optional
+Section: admin
+Maintainer: makhort <makhort@users.noreply.github.com>
+Installed-Size: 5204
+Depends: ca-certificates, systemd
+Filename: pool/main/vpsfort-tg-bot_0.5.4-1_armhf.deb
+Size: 1822252
+MD5sum: b15af839616fdb975a729e143eb250b7
+SHA1: aaa524dd84f774eb930a78e72bac48bfccabf31e
+SHA256: 73def24c6ae7a33b11520e8d646347aaa43a28e897ba99f6c11a0b079eb33620
+SHA512: 0a616157bbf8ddba5341a843276e03f7d6f77f110046a4a1028852715d8e10bd8bad2a0f8e59257354e0f03746effa8effc63cf279f13854ff848208ddac6f75
+Homepage: https://github.com/makhort/vpsfort
+Description: Telegram bot delivering vpsfort's admin alerts, digests and reports
+ vpsfort-tg-bot sends vpsfort's admin alerts, digests and abuse reports to the
+ admin's Telegram chat: account names become pseudonyms, servers appear by node
+ id, and files go out OpenPGP-encrypted to the admin's key. It installs to
+ /opt/vpsfort-tg-bot as its own system user, with config.env from the template;
+ nothing is started until it is filled in.
+
+Package: vpsfort-web
+Architecture: armhf
+Version: 0.7.2-1
+Priority: optional
+Section: admin
+Maintainer: makhort <makhort@users.noreply.github.com>
+Installed-Size: 3423
+Depends: systemd
+Filename: pool/main/vpsfort-web_0.7.2-1_armhf.deb
+Size: 1296240
+MD5sum: 91ca77809fa6f7719a9026bb4e051109
+SHA1: 0691e380809346a3e17beea3fd399d4758ed582f
+SHA256: dad1f1ec4782501cb93b3862c0d9b8a9487f27206f0f84870be7314c293871e5
+SHA512: ec3ede59a0ab7289ac167ba38b46d85e1c1053b3d2eca315371988257745f0abf81fde6980895b547f7303446b91f2885173589a3ad537845a6bfb12f318a68a
+Homepage: https://github.com/makhort/vpsfort
+Description: Read-only web console for a vpsfort cluster: every node's bans, alerts and
+ health on one HTTPS page, for one admin
+ vpsfort-web shows a vpsfort cluster to its admins over HTTPS, read only: every
+ node's bans, alerts, offenders, health and abuse reports. An agent on each node
+ hands its vpsfort's data (through vpsfort's read-only console socket) to the
+ console, sealed with a web key of its own. It installs to /opt/vpsfort-web with
+ config.env from the template; nothing is started until the settings, the web
+ key, the password and the one-time codes are in place.
+
+Package: vpsfort-xmpp-bot
+Architecture: armhf
+Version: 0.7.3-1
+Priority: optional
+Section: admin
+Maintainer: makhort <makhort@users.noreply.github.com>
+Installed-Size: 9277
+Depends: ca-certificates, systemd
+Filename: pool/main/vpsfort-xmpp-bot_0.7.3-1_armhf.deb
+Size: 2961460
+MD5sum: 1a09a9b64144b6383e3160ee14e61e3c
+SHA1: 2d83a705f2a1725325f462304c6b76798c7aa688
+SHA256: 06e384f430c4621dd13778267582871be12eaca96d7705971644a07456cb0d6b
+SHA512: 60f742645dad03b120f167134e784f541ae75afe7b6eec446baad8ef4219e59d34c8371aa64ff72bfe2a563f02248e826eac4f41477959e6b1eb0aae9a970476
+Homepage: https://github.com/makhort/vpsfort
+Description: XMPP bot for vpsfort: an admin bot exposing curated ejabberdctl commands, or a
+ client bot sending vpsfort's admin messages OMEMO-encrypted, else as OpenPGP
+ files
+ vpsfort-xmpp-bot carries vpsfort's admin alerts, digests and abuse reports over
+ XMPP, OMEMO-encrypted. On the XMPP server (admin mode, as the user ejabberd) it
+ also answers curated ejabberdctl commands in chat; anywhere else
+ (BOT_MODE=client, its own user) it only sends, with OpenPGP-encrypted files as
+ the fallback. It installs to /opt/vpsfort-xmpp-bot with config.env from the
+ template of the mode for this host; nothing is started until it is filled in.
+
+Package: vpsfort
+Architecture: armhf
+Version: 0.8.3-1
+Priority: optional
+Section: admin
+Maintainer: makhort <makhort@users.noreply.github.com>
+Installed-Size: 9662
+Depends: systemd
+Recommends: logrotate, curl
+Filename: pool/main/vpsfort_0.8.3-1_armhf.deb
+Size: 3182728
+MD5sum: dddc68d7c809b9886822aaef536b42b8
+SHA1: e52a2c187d0bcb18658bf063939b5ba16c285be8
+SHA256: 100cf2ed0efb6225664ab2cac7f7105f881080203d36799b3101f47ceb1c899b
+SHA512: 1f1f4300a0ab424522639a3b53549fa71e76d4eed3d310495f2c83e461d0ce239bcab8ac9b22b9e964db3c585fee0e16fface8f6063529fa3c32862be7ce5bf2
+Homepage: https://github.com/makhort/vpsfort
+Description: Near-realtime behaviour-based protection for SSH, ejabberd and UFW logs
+ vpsfort follows the systemd journal (sshd, ejabberd, the kernel's firewall log,
+ Nextcloud, common services), scores every remote address by what it does, and
+ bans attackers in nftables, firewalld, ufw, iptables or ipset within seconds.
+ Nodes share bans over an encrypted cluster link; optional bots and a web
+ console carry its alerts, digests and abuse reports. The config template goes
+ to /etc/vpsfort/vpsfort.toml on a new host; nothing is started until it is
+ edited.
+
