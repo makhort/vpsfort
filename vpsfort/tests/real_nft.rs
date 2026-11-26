@@ -117,6 +117,15 @@ fn bans_feeds_and_healing_on_a_real_kernel() {
     let again = e.apply(&mut change(ActionKind::Unban, "198.51.100.7", 0));
     assert!(again.is_ok(), "an element already gone is fine, but nft's answer wasn't read as that: {again:?}");
 
+    // an element vpsfort no longer holds, inside a subnet it bans now: replaced, not an
+    // "interval overlaps" for good
+    nft(&["add", "element", "inet", TABLE, "ban4", "{ 192.0.2.77 timeout 1h }"]);
+    let mut wider = change(ActionKind::Ban, "192.0.2.64/26", 3600);
+    let res = e.apply(&mut wider);
+    assert!(res.is_ok() && wider.applied, "{res:?}");
+    let ban4 = set("ban4");
+    assert!(timed(&ban4, "192.0.2.64/26") && !ban4.contains("192.0.2.77"), "{ban4}");
+
     // a blocklist feed
     let feed: vpsfort::net::Net = "198.18.0.0/15".parse().unwrap();
     assert!(e.load_feeds(&[feed]).unwrap());
@@ -152,4 +161,13 @@ fn bans_feeds_and_healing_on_a_real_kernel() {
     assert!(timed(&set("ban4"), "203.0.113.0/24") && timed(&set("ban6"), "2001:db8::7"), "{}{}", set("ban4"), set("ban6"));
     assert!(set("feed4").contains("198.18.0.0/15"));
     assert!(e.restore(&bans, now).is_empty(), "elements there already are no failure");
+
+    // a restart: elements vpsfort's state no longer has (folded into a subnet ban, lifted)
+    // are taken out, what it holds stays
+    nft(&["add", "element", "inet", TABLE, "ban4", "{ 198.51.100.9 timeout 1h }"]);
+    nft(&["add", "element", "inet", TABLE, "ban6", "{ 2001:db8::99 timeout 1h }"]);
+    assert!(e.restore(&bans, now).is_empty());
+    let (ban4, ban6) = (set("ban4"), set("ban6"));
+    assert!(!ban4.contains("198.51.100.9") && !ban6.contains("2001:db8::99"), "{ban4}{ban6}");
+    assert!(timed(&ban4, "203.0.113.0/24") && timed(&ban6, "2001:db8::7"), "{ban4}{ban6}");
 }

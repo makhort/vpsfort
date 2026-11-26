@@ -3,6 +3,18 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.7.2 - 2026-11-26
+
+Dependency updates.
+
+- The other dependencies are updated within their semver ranges (`cargo update`), rustls-webpki 0.103.17, rustls-pki-types 1.16.0, clap 4.6.10 among them. No advisory concerned 0.7.1's lockfile.
+
+## 0.7.1 - 2026-11-21
+
+A fix to the header.
+
+- The header's controls line up: the saved views' star sat 2 pixels above the address field and the buttons, and the icon buttons were a pixel shorter than the field and the node count.
+
 ## 0.7.0 - 2026-11-11
 
 The Honeypots tab for a node of a hundred ports: a filter by service type, folded port chips, the last 3 hours. Its answer is built once and kept, within the service's memory. A click on a new row acknowledges it. And the fixes of an audit of the whole console: share links are signed with a key of the console's own, so links made before this version are refused.
@@ -13,6 +25,9 @@ The Honeypots tab for a node of a hundred ports: a filter by service type, folde
 - The Honeypots tab's answer is built once per period and kept a minute (ten seconds while a node hasn't answered), by one request at a time, straight to JSON. Every request used to copy each node's hits, merge them and build the answer twice over in memory: two tabs asking for a week of a busy honeypot node at once could take the service past its 128 MB.
 - A node's hits are kept with at most 50,000 evidence lines in all, the newest first; the rest are counted, as the page says.
 - A click on a row marked new (Honeypots, Alerts, Activity) opens it and acknowledges it: the mark goes from that row at once and the "new" count drops, where it used to stay until the page was loaded again. The acknowledgment is kept in the browser until the next look makes the row old anyway.
+
+Found by the thirteenth audit (2026-11-10), a re-read of the whole console:
+
 - A share link's page asked at the rate limit made the console stop: the refusal was read twice, and the second reading could find none (a panic, which ends the service). Anyone holding a link, or guessing at one, could do it.
 - Share links are signed with a key of the console's own (`STATE_DIR/share.key`), not the web key every node holds: a node broken into could make links to any address's page. Links made before this version are refused; a link must also be among those listed, so one ended early stays ended.
 - An admin whose TOTP secret file is empty or shorter than 16 bytes can't log in (the codes of an empty secret are anyone's to compute). The last code used is kept across restarts, so a code seen once can't be used again after a crash. A changed password ends that admin's sessions at their next request. A full table of locked names still counts failures for a new name.
@@ -21,6 +36,9 @@ The Honeypots tab for a node of a hundred ports: a filter by service type, folde
 - A shared page names no node, a peer's name in a text included ("another node").
 - The page: a link with a filter value no control offers no longer leaves a tab broken in that browser (the tab's filters go back to their defaults, and a tab that can't be drawn says so while the others work); `#/constructor` and a stray `%` in a link are plain text; a time no date holds is "unknown time"; CSV cells holding `;` or a tab are quoted; a shared page whose link ended stops asking (each refusal counted towards a ban of its reader); the address in a request's path is an address. The policy lets the page ask Brazil's registry (`rdap.registro.br`).
 - `deploy.sh` and `rotate-web-key.sh` refuse a staging copy holding anything but regular files, as vpsfort's do; on Alpine the service's log file is made for its user; a secret file is written at its mode whatever the umask.
+
+After that audit, the same day:
+
 - A node's reply is read as it is unpacked, one reply at a time: up to 64 MB each used to be unpacked whole and then read into a second copy, for every node asked at once, in a service limited to 128 MB.
 
 ## 0.6.6 - 2026-11-09

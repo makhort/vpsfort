@@ -495,6 +495,11 @@ tbody tr.picked td:first-child::before { content: "◂ "; color: var(--accent); 
 .page-head h1.addr-title { font-family: var(--mono); letter-spacing: 0; }
 .top-right a.who { color: var(--ink-2); text-decoration: none; }
 .top-right a.who:hover { text-decoration: underline; }
+/* the header's controls on one line, one height: the address field, the saved views' star (a
+   summary, laid out inline unless told), the pill, the buttons */
+.top-right > details { display: flex; }
+.top-right .views > summary { display: inline-flex; align-items: center; }
+.top-right .go, .top-right .pill, .top-right .btn.small, .top-right .views > summary { height: 26px; box-sizing: border-box; }
 a.addr { color: inherit; text-decoration: underline dotted var(--axis); text-underline-offset: 2px; }
 a.addr:hover { color: var(--accent); text-decoration-style: solid; }
 .chart-head { display: inline-flex; gap: 10px; align-items: center; flex-wrap: wrap; }

@@ -1308,9 +1308,9 @@ Without a Rust toolchain: every version tag `vpsfort-v<version>` gets its bundle
 
 ```bash
 arch=x86_64-linux-musl     # the server's: aarch64-linux-musl (arm64), armv7-linux-musleabihf (32-bit ARM)
-gh release download vpsfort-v0.8.0 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
+gh release download vpsfort-v0.8.3 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
 sha256sum -c vpsfort-*-$arch.zip.sha256              # the download is intact (macOS: shasum -a 256 -c)
-gh attestation verify vpsfort-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-v0.8.0
+gh attestation verify vpsfort-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-v0.8.3
 ```
 
 `gh attestation verify` (after `gh auth login`) checks the signed build provenance: that this repository's CI built exactly this zip from that tag. With `--bundle vpsfort-*-$arch.zip.sigstore.json` it checks the attestation attached to the Release instead of fetching it from GitHub. Only a public repository's releases have one (GitHub offers attestations for private repositories only with Enterprise Cloud).
@@ -1335,7 +1335,7 @@ sudo ./install.sh                                # installs and starts vpsfort (
 The same release has a package per architecture, for the distribution's package manager instead of `install.sh`: `vpsfort_<version>-1_<arch>.deb` (`amd64`, `arm64`, `armhf`; Debian, Ubuntu and their derivatives) `vpsfort-<version>-1.<arch>.rpm` (`x86_64`, `aarch64`, `armv7hl`; Fedora, RHEL and its rebuilds) and `vpsfort-<version>-r0.<arch>.apk` (`x86_64`, `aarch64`, `armv7`; Alpine, with OpenRC: below), each with its `.sha256` and `.sigstore.json`, downloaded and verified as the bundle above (`--pattern "*.deb*"`, `"*.rpm*"` or `"*.apk*"`). CI keeps them for every commit as workflow artifacts, and `scripts/package.sh` builds them locally (`cargo install cargo-deb cargo-generate-rpm --locked` once, and python3 for the `.apk`, which `scripts/apk.py` at the repository's root writes; none needs dpkg, rpm or apk-tools, so it runs on macOS too; `--target aarch64-unknown-linux-musl` or `armv7-unknown-linux-musleabihf` for the ARM ones). Or from the signed apt and dnf repository on GitHub Pages, once it is set up (the repository README, "Deployment"), where `apt upgrade` and `dnf upgrade` then bring new versions.
 
 ```bash
-sudo apt install ./vpsfort_0.8.0-1_amd64.deb      # Debian, Ubuntu; Fedora, RHEL:  sudo dnf install ./vpsfort-0.8.0-1.x86_64.rpm
+sudo apt install ./vpsfort_0.8.3-1_amd64.deb      # Debian, Ubuntu; Fedora, RHEL:  sudo dnf install ./vpsfort-0.8.3-1.x86_64.rpm
 sudoedit /etc/vpsfort/vpsfort.toml               # a new host: the template is in place, nothing runs yet
 sudo vpsfort -c /etc/vpsfort/vpsfort.toml print-config > /dev/null && sudo systemctl enable --now vpsfort vpsfort-abuse-report.timer
 ```
@@ -1504,9 +1504,9 @@ Five nodes run live in enforce mode: one Ubuntu 22.04 (the VPN host, kernel 5.15
 - **A failed Nextcloud AIO login**: one wrong password for the admin account appeared in the TUI and the web console.
 - **SSH canary accounts**: real probers trying canary names on the VPN host were banned.
 - **Honeypot ports** on two nodes (21, 22, 2222 and 2323): real scanners banned on their completed handshakes, with what they sent in the ban's evidence and a day's abuse report. Most sent nothing within the 3 seconds: FTP and Telnet clients wait for the server, and so did four of five SSH scanners (a Go client sent `SSH-2.0-Go` first), which is what `honeypot_prompts` is for.
-- **A dedicated honeypot node** (Debian 13, the `vpsfort-honeypot.toml` layout): 55 honeypot ports, the first hits within minutes of opening them (an NFS probe among them); the Exposure tab reading ufw's rules of several ports each (`ALLOW 2323/tcp (of 21,22,23,25,110,143,2222,2323/tcp)`) after the fix that found them blocked.
+- **A dedicated honeypot node** (Debian 13, the `vpsfort-honeypot.toml` layout): 55 honeypot ports, later 92, the first hits within minutes of opening them and all but three of the 37 added ones hit within a week (an NFS probe among them); the Exposure tab reading ufw's rules of several ports each (`ALLOW 2323/tcp (of 21,22,23,25,110,143,2222,2323/tcp)`) after the fix that found them blocked.
 - **The decoy web site** on that node's nginx: scanners banned on their first request, seven addresses in the first hours, a browser's user agent on the bare address among them; the log followed from the moment nginx created it.
-- **Honeypot prompts** on that node, in a day's hits: Telnet bots typing the logins they try (55 of 71 connections), SSH clients' banners (`SSH-2.0-Go`, `SSH-2.0-libssh2_1.11.1`), `EHLO` after the SMTP greeting, a VNC client's `RFB 003.003` after the version line, a MySQL client logging in as `root` after the MariaDB greeting, and HTTP requests shown with their host and user agent in the evidence of real bans.
+- **Honeypot prompts** on that node, over a week of hits (3,424): Telnet bots typing the logins they try (380 of 504 connections, 145 different pairs), SSH clients' banners (464 of 694: `SSH-2.0-OpenSSH_7.4`, `SSH-2.0-Go`, `SSH-2.0-libssh2_1.11.1`), FTP logins after the `220` greeting (`USER anonymous` and `PASS`, `admin`/`admin`) and `AUTH TLS` refused with vsftpd's `530`, IMAP clients taking the answer to their `CAPABILITY` and going on to `LOGOUT` or `STARTTLS`, `EHLO` after the SMTP greeting, VNC clients' `RFB 003.008` and `RFB 003.003` after the version line (23), a MySQL client logging in as `root` after the MariaDB greeting, the method a JSON-RPC probe called (`getVersion` on Solana's 8899), and HTTP requests shown with their host and user agent in the evidence of real bans.
 - **Blocklist feeds** on both hosts: Spamhaus DROP (v4 and v6) and FireHOL level 1 download, about 4,700 networks after dropping overlaps, active in nftables. The 13 skipped entries are private or reserved ranges (FireHOL lists e.g. `10.0.0.0/8`), networks wider than `min_prefix_v4`/`v6`, and anything overlapping this host, a cluster peer or the allowlist.
 - **Geo database** downloads (DB-IP lite) and readable places in bans and alerts.
 - **Operator controls** over the control socket: an `allow` / `allowed` / `disallow` round trip (`unban` uses the same path).

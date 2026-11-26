@@ -3,6 +3,13 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.5.4 - 2026-11-26
+
+Dependency updates, url 2.5.9 for RUSTSEC-2026-0592.
+
+- url 2.5.9, for RUSTSEC-2026-0592: `Url::origin()` on a URL nested in many `blob:` prefixes overflowed the stack and aborted the process. The bot's own code doesn't call it.
+- The other dependencies are updated within their semver ranges (`cargo update`), pgp 0.21.1, hyper 1.13.0, rustls-webpki 0.103.17 among them.
+
 ## 0.5.3 - 2026-11-11
 
 Installer hardening, after vpsfort's audit of 2026-11-10.

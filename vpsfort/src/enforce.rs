@@ -665,6 +665,16 @@ pub fn nft_legacy_script(table: &str) -> String {
     format!("flush chain inet {table} pre\ndelete chain inet {table} pre\n")
 }
 
+/// The networks in an `nft list set` listing: `elements = { 192.0.2.7 timeout 1h expires
+/// 59m, 198.51.100.0/24 expires 2h, ... }`, over as many lines as nft likes. Ranges (which
+/// vpsfort never adds) are skipped.
+fn nft_set_elements(listing: &str) -> Vec<Net> {
+    let Some(start) = listing.find("elements = {") else { return vec![] };
+    let body = &listing[start + "elements = {".len()..];
+    let body = &body[..body.find('}').unwrap_or(body.len())];
+    body.split(',').filter_map(|e| e.split_whitespace().next()?.parse().ok()).collect()
+}
+
 /// Whether nft's complaint about a `delete element` says the element isn't there. The ban
 /// sets hold intervals, where nft looks the element up itself and says "element does not
 /// exist" (its newer versions); older ones, and sets without intervals, pass on the kernel's
@@ -977,6 +987,78 @@ impl Enforcer {
         Ok(())
     }
 
+    /// Adds a ban element. An interval set refuses one that overlaps an element there
+    /// already: with CIDR networks, one inside it or one around it. vpsfort takes out the
+    /// bans a subnet ban covers (`superseded`), but the ban sets outlive the daemon (only
+    /// the allow sets are flushed at start), so the kernel can hold one vpsfort no longer
+    /// knows (a ban lifted from its state while the element stayed). Such inner elements
+    /// are deleted with the add, in one transaction: no moment unbanned. One around it is
+    /// left alone (it may be a ban vpsfort holds), and the error stands.
+    fn nft_add(&self, net: &Net, secs: i64) -> Result<()> {
+        let add = nft_add_script(&self.table, net, secs);
+        let err = match self.run_nft(&add) {
+            Ok(()) => return Ok(()),
+            Err(e) if format!("{e:#}").contains("interval overlaps") && !net.is_host() => e,
+            Err(e) => return Err(e),
+        };
+        let Ok(listing) = self.nft_stdout(&["list", "set", "inet", &self.table, set_name(net)]) else { return Err(err) };
+        let inside: Vec<Net> = nft_set_elements(&listing).into_iter().filter(|e| e != net && net.contains_net(e)).collect();
+        if inside.is_empty() {
+            return Err(err);
+        }
+        let names: Vec<String> = inside.iter().map(Net::to_string).collect();
+        eprintln!("vpsfort: ban {net}: replacing {} element(s) inside it left in nftables: {}", inside.len(), names.join(", "));
+        let script: String = inside.iter().map(|n| nft_delete_script(&self.table, n)).chain([add]).collect();
+        self.run_nft(&script)
+    }
+
+    /// The ban sets outlive the daemon (only the allow sets are flushed at start), so after a
+    /// restart they can hold elements vpsfort's state no longer has: bans folded into a
+    /// subnet ban, or lifted, while an earlier process ran or since the state was written.
+    /// Such an element is never lifted by vpsfort, and one inside a subnet ban makes nft
+    /// refuse that ban ("interval overlaps"). So at start the elements of `ban4`/`ban6`
+    /// that aren't among `live` go, as ufw's leftover rules do. Ranges (which vpsfort
+    /// never adds) stay.
+    fn nft_drop_stale(&self, live: &[&Ban]) {
+        let mut stale = Vec::new();
+        for set in ["ban4", "ban6"] {
+            let Ok(listing) = self.nft_stdout(&["list", "set", "inet", &self.table, set]) else { continue };
+            stale.extend(nft_set_elements(&listing).into_iter().filter(|e| !live.iter().any(|b| b.net == *e)));
+        }
+        if stale.is_empty() {
+            return;
+        }
+        let names: Vec<String> = stale.iter().map(Net::to_string).collect();
+        eprintln!(
+            "vpsfort: removing {} ban element(s) from nftables that vpsfort no longer holds: {}",
+            stale.len(),
+            names.iter().take(20).cloned().collect::<Vec<_>>().join(", ") + if names.len() > 20 { ", ..." } else { "" }
+        );
+        // one transaction; if one is refused (expired meanwhile), one by one
+        let script: String = stale.iter().map(|n| nft_delete_script(&self.table, n)).collect();
+        if self.run_nft(&script).is_ok() {
+            return;
+        }
+        for n in &stale {
+            if let Err(e) = self.run_nft(&nft_delete_script(&self.table, n)) {
+                if !nft_element_gone(&format!("{e:#}")) {
+                    eprintln!("vpsfort: {n} stays in nftables until it times out: {e:#}");
+                }
+            }
+        }
+    }
+
+    /// Runs nft with `args`; its stdout.
+    fn nft_stdout(&self, args: &[&str]) -> Result<String> {
+        let mut cmd = Command::new(&self.nft);
+        cmd.args(args);
+        let out = crate::proc::run(cmd, None, FIREWALL_TIMEOUT).map_err(anyhow::Error::msg)?;
+        if !out.status.success() {
+            bail!("nft {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
     fn run_ipset(&self, script: &str) -> Result<()> {
         let mut cmd = Command::new(&self.ipset);
         cmd.args(["-exist", "restore"]);
@@ -1180,7 +1262,7 @@ impl Enforcer {
     fn add_rule(&self, net: &Net, until: Micros, now: Micros, reason: &str) -> Result<()> {
         match self.kind {
             Kind::Shadow => Ok(()),
-            Kind::Nft => self.run_nft(&nft_add_script(&self.table, net, (until - now) / SEC)),
+            Kind::Nft => self.nft_add(net, (until - now) / SEC),
             Kind::Ufw => {
                 let comment: String =
                     format!("vpsfort {reason}").chars().filter(|c| c.is_ascii_alphanumeric() || " ._:/=-".contains(*c)).take(60).collect();
@@ -1607,6 +1689,7 @@ impl Enforcer {
             }
             return failed;
         }
+        self.nft_drop_stale(&live);
         let items: Vec<(String, String)> =
             live.iter().map(|b| (b.net.to_string(), nft_add_script(&self.table, &b.net, (b.until - now) / SEC))).collect();
         for name in self.run_batch("ban", items) {
@@ -1621,6 +1704,95 @@ impl Enforcer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nft_set_listing_elements() {
+        let listing = "table inet vpsfort {\n\tset ban4 {\n\t\ttype ipv4_addr\n\t\tflags interval,timeout\n\t\t\
+                       elements = { 11.248.40.5 timeout 1h expires 59m58s, 11.248.33.0/24 expires 2h,\n\t\t\t     \
+                       192.0.2.1-192.0.2.9 expires 1m, 198.51.100.0/24 }\n\t}\n}\n";
+        let got: Vec<String> = nft_set_elements(listing).iter().map(Net::to_string).collect();
+        assert_eq!(got, ["11.248.40.5", "11.248.33.0/24", "198.51.100.0/24"]);
+        assert!(nft_set_elements("table inet vpsfort {\n\tset ban4 {\n\t\ttype ipv4_addr\n\t}\n}\n").is_empty());
+    }
+
+    #[test]
+    fn a_subnet_ban_replaces_elements_left_inside_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("vpsfort-overlap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (fake, calls) = (dir.join("nft"), dir.join("calls"));
+        // refuses an add alone, as the kernel does with 11.248.40.5 in the set
+        let script = format!(
+            "#!/bin/sh\nif [ \"$1\" = list ]; then\n  echo \"$*\" >> {calls}\n  \
+             printf 'table inet vpsfort {{\\n\\tset ban4 {{\\n\\t\\telements = {{ 11.248.40.5 expires 1h, 10.0.0.0/8 expires 1h, 11.248.0.0/16 expires 1m }}\\n\\t}}\\n}}\\n'\n  exit 0\nfi\n\
+             in=$(cat); echo \"$in\" >> {calls}\n\
+             case \"$in\" in *delete*) exit 0;; esac\n\
+             echo 'Error: interval overlaps with an existing one' >&2; exit 1\n",
+            calls = calls.display()
+        );
+        std::fs::write(&fake, script).unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut e = Enforcer::shadow();
+        e.kind = Kind::Nft;
+        e.nft = fake;
+        e.table = "vpsfort".into();
+        let net: Net = "11.248.32.0/19".parse().unwrap();
+        e.nft_add(&net, 600).unwrap();
+        let log = std::fs::read_to_string(&calls).unwrap();
+        assert!(log.contains("list set inet vpsfort ban4"), "{log}");
+        assert!(
+            log.contains("delete element inet vpsfort ban4 { 11.248.40.5 }\nadd element inet vpsfort ban4 { 11.248.32.0/19 timeout 600s }"),
+            "deleted and added in one transaction: {log}"
+        );
+        assert!(!log.contains("{ 11.248.0.0/16 }") && !log.contains("10.0.0.0/8"), "an element around it, or apart, stays: {log}");
+        // a host ban has nothing inside it: nft's error stands, nothing listed
+        let _ = std::fs::remove_file(&calls);
+        assert!(e.nft_add(&"11.248.40.6".parse().unwrap(), 600).is_err());
+        assert!(!std::fs::read_to_string(&calls).unwrap().contains("list set"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restore_removes_ban_elements_vpsfort_no_longer_holds() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("vpsfort-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (fake, calls) = (dir.join("nft"), dir.join("calls"));
+        let script = format!(
+            "#!/bin/sh\ncase \"$*\" in\n\
+             *'list set inet vpsfort ban4') printf '\\t\\telements = {{ 11.248.32.0/19 expires 7d, 11.248.40.0/23 expires 11d,\\n\\t\\t\\t     192.0.2.1-192.0.2.9 }}\\n'; exit 0;;\n\
+             *'list set inet vpsfort ban6') printf '\\t\\telements = {{ 2001:db8::9 expires 1h }}\\n'; exit 0;;\n\
+             esac\ncat >> {calls}\n",
+            calls = calls.display()
+        );
+        std::fs::write(&fake, script).unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut e = Enforcer::shadow();
+        e.kind = Kind::Nft;
+        e.nft = fake;
+        e.table = "vpsfort".into();
+        let now = crate::time::now();
+        let ban = Ban {
+            net: "11.248.32.0/19".parse().unwrap(),
+            since: now - 60 * SEC,
+            until: now + 600 * SEC,
+            offence: 4,
+            reason: "t".into(),
+            origin: None,
+            inner: vec![],
+        };
+        assert!(e.restore(&[ban], now).is_empty());
+        let log = std::fs::read_to_string(&calls).unwrap();
+        assert!(
+            log.starts_with("delete element inet vpsfort ban4 { 11.248.40.0/23 }\ndelete element inet vpsfort ban6 { 2001:db8::9 }\n"),
+            "the stale ones go first, in one transaction: {log}"
+        );
+        assert!(log.contains("add element inet vpsfort ban4 { 11.248.32.0/19 timeout 600s }"), "{log}");
+        assert!(!log.contains("delete element inet vpsfort ban4 { 11.248.32.0/19 }") && !log.contains("192.0.2."), "{log}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn nft_says_an_element_is_gone_in_two_ways() {

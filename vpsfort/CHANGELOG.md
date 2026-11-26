@@ -3,6 +3,27 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.8.3 - 2026-11-26
+
+Dependency updates.
+
+- The other dependencies are updated within their semver ranges (`cargo update`), regex 1.13.2, nix 0.31.4, pest 2.9.7, uuid 1.29.3, clap 4.6.10 among them. No advisory concerned 0.8.2's lockfile.
+
+## 0.8.2 - 2026-11-21
+
+What a week on a honeypot node left unnamed.
+
+- A web request sent to a honeypot's prompt (to a MySQL greeting, an SMTP one, a VNC banner) is shown as one, by its request line, host and user agent, as a plain capture is. A user agent the read hadn't come to yet is not called missing: after a greeting only the first lines are read.
+- An RTSP request (`DESCRIBE rtsp://...`, a camera's protocol, on 554 and elsewhere) is shown the same way: `sent RTSP request "..."`.
+- A Minecraft server list ping is named in a honeypot's evidence: 12 of 13 connections to 25565 in a week were one.
+- The honeypot node template no longer listens on 9034: in a week it caught no TCP connection there, so what the firewalls had counted on it was UDP. With sshd that is 99 open ports.
+
+## 0.8.1 - 2026-11-16
+
+A subnet ban that nftables refused for good, after a restart.
+
+- nftables refuses an element of a ban set that overlaps one there already, and vpsfort's ban sets outlive a restart: a ban folded into a subnet ban by a later process could still be in the set, and the subnet ban was then refused ("interval overlaps with an existing one") at every retry, a high alert each hour, for as long as it lasted. At start, the elements of `ban4` and `ban6` that vpsfort no longer holds are now removed, as ufw's leftover rules already were, and a subnet ban that is refused all the same replaces the elements inside it in the same nft transaction, so their addresses are never unbanned between the two.
+
 ## 0.8.0 - 2026-11-11
 
 A second day on a honeypot node: IMAP answers `CAPABILITY`, RPC probes show the method they call, the honeypot template opens 37 more ports. Then the fixes of two audits (the honeypots and what another user on the same host can do to vpsfort; a re-read of the whole of vpsfort) and of a re-read of the parsers. Defaults that change: `openvpn_hmac` and `openvpn_tls` score 0, `[[ratelimit]]` counts IPv6 sources per /64, and a login from inside a subnet shields it from a subnet ban only up to twice what a ban needs.
@@ -20,6 +41,9 @@ A second day on a honeypot node: IMAP answers `CAPABILITY`, RPC probes show the 
 - `/var/lib/vpsfort` is mode 0700 and `/var/log/vpsfort` 0750 under systemd (as the state directory was on Alpine, whose log directory follows): the scan results and the lists of scanned files were readable by every local user.
 - firewalld's entry files are written in the control socket's directory, root's own, not in `/tmp`: without systemd's private `/tmp` (OpenRC) another user could take a file's predictable name first and make the batch fail.
 - The README's "A compromised service" says what a local user without a service can and can't do.
+
+Found by the thirteenth audit (2026-11-10), a re-read of the whole of vpsfort and the console:
+
 - A followed log's line longer than 64 KB was cut, and what followed in it was then read as a line of its own: text a client chose (a path, a user agent), in a log whose lines ban addresses. The reader's position now moves past the whole line, and the rest of one still being written is dropped when it comes.
 - The SSH audit opened what sshd is told to read in a user's home (`authorized_keys`) as any file: a pipe there held the audit forever, a link to a terminal made it the daemon's own. It opens regular files only, without blocking, as the cron watch does.
 - With `[cluster] share` holding `log_digests`, the previous day's actions log was read, hashed and sent to the peers again every minute, all day: the day remembered was compared with the wrong date. Once a day now, and a failed attempt waits an hour.
@@ -33,6 +57,9 @@ A second day on a honeypot node: IMAP answers `CAPABILITY`, RPC probes show the 
 - `nan` and `inf` are refused as thresholds and weights, a ladder step of 0 and a duration beyond 100 years given as a number too. The digest's event counts are right after a restart (they stayed at zero until the new process had counted past the old one's totals). `log-digest` reads rotated copies by their number (`.10.gz` before `.9.gz`). A program vpsfort stops for taking too long is stopped with what it started. `verify` knows the push bot's outbox.
 - `deploy.sh` and `rotate-cluster-key.sh`: the command pasted into the root shell refuses a staging copy holding anything but regular files. A link left there by the SSH user passed the hash check through its target, which could be changed before `install.sh` ran as root.
 - The package's `postinst` enables the units again when the config is replaced by the template during a takeover of a bundle install (the daemon was gone after the next reboot). `vpsfort-avscan` writes its log with awk (BusyBox's sed has no `-u`) and asks systemctl only where there is one; the abuse report's unit may write the push bot's outbox, and a directory planted under a leftover's name no longer stops the report. `scripts/ci.sh` stops at a bundled config that doesn't parse.
+
+What that audit had left open, fixed the same day, and a re-read of the parsers:
+
 - **OpenVPN: `openvpn_hmac` and `openvpn_tls` score 0 by default** (they were 40 and 20). An OpenVPN server usually listens on UDP, where one packet with any source address its sender writes makes each of these lines: three packets banned whatever address they named. They are still counted (the Patterns tab); a server on TCP gives them points with `[sources.app_weights]`.
 - ProFTPD's failed logins are counted against the address in brackets, not the name before it: that name is what the address resolves to, the client's own DNS, and a name made of digits read as another address. An Exim relay refusal whose HELO name reads like the rest of the line (possible with `helo_accept_junk_hosts`) counts against nobody instead of the address written there.
 - A login from inside a subnet keeps it from a subnet ban only until it shows twice what a ban needs (six bad addresses by default): one account, where anyone can register one, and one login kept a whole /64 or /24 of attacking addresses open. A subnet whose ban ended is banned again for what comes from it after that, not for the scores its addresses still have: each such ban was a step up the ladder without one new line.
@@ -45,6 +72,9 @@ A second day on a honeypot node: IMAP answers `CAPABILITY`, RPC probes show the 
 - The set-uid search reads at most 500,000 entries of directories that aren't root's alone (users' and shared ones) and the rest in full: millions of files in `/tmp` or a home stopped it before `/usr`, and the programs it hadn't reached counted as gone. A search that stops keeps what was known.
 - A scan of changed files whose scanner failed says so in its own line, and a file without a finding isn't "clean" then. A program's path is judged whole (a deleted program with a path longer than 300 characters wasn't reported), and runc's memory copy is excused for root only.
 - Log lines waiting for the main loop are bounded by their size (24 MB), those held back at start too; the cron and integrity watch scans every five seconds at most, however often a user touches a watched directory; patterns' matches are counted as they are read here as well.
+
+And on 2026-11-11:
+
 - `vpsfort allow` for a network that is allowed already sets its new end (nftables kept the old one: the entry is replaced now).
 - A name in `[procwatch] ignore_processes` counts for a program whose file is root's and writable by root alone. A process names itself, so anything a user started under a listed name (`backup`, `firefox`) went unreported, connections and odd programs alike.
 - The cron and integrity watch keeps a file's hash under the identity of the file it read, taken from the open file: a user who swapped the directory above their script while it was scanned had another file's hash kept for it, and the script in place wasn't read again.

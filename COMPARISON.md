@@ -3,9 +3,9 @@
 **How vpsfort compares with the open-source and commercial tools you might use instead:
 a briefing for teams thinking about adopting it.**
 
-The state is as of 2026-11-11: vpsfort 0.8.0, its web console vpsfort-web 0.7.0, the bots
-(vpsfort-xmpp-bot 0.7.2, vpsfort-tg-bot and vpsfort-mail-bot 0.5.3, vpsfort-signal-bot and
-vpsfort-matrix-bot 0.3.3, vpsfort-push-bot 0.2.3) and vpsfort-sim 0.2.0 (the commit named under [Method and
+The state is as of 2026-11-26: vpsfort 0.8.3, its web console vpsfort-web 0.7.2, the bots
+(vpsfort-xmpp-bot 0.7.3, vpsfort-tg-bot 0.5.4, vpsfort-mail-bot 0.5.5, vpsfort-signal-bot and
+vpsfort-matrix-bot 0.3.4, vpsfort-push-bot 0.2.4) and vpsfort-sim 0.2.1 (the commit named under [Method and
 sources](#20-method-and-sources)), compared with the releases
 and documentation of the other tools as of 2026-10-25. Feature claims about vpsfort come from its
 [README](vpsfort/README.md) and code. Claims about the other tools come from their documentation,
@@ -138,7 +138,7 @@ journal ─► vpsfort ─► nftables / firewalld / ufw / iptables / ipset  ◄
 
 | tool | kind | license | language | model | state in Oct 2026 |
 |---|---|---|---|---|---|
-| **vpsfort** | ban manager and host watch | MIT | Rust | decaying scores per address across all services, own nftables table (or firewalld, ipset, ufw, iptables), peer-to-peer cluster | 0.8.0, new in Oct 2026 |
+| **vpsfort** | ban manager and host watch | MIT | Rust | decaying scores per address across all services, own nftables table (or firewalld, ipset, ufw, iptables), peer-to-peer cluster | 0.8.3, new in Oct 2026 |
 | **fail2ban** | ban manager | GPL-2.0 | Python | "jails": a regex filter and a firewall action per service | 1.1.0 is what distributions ship |
 | **sshguard** | ban manager | BSD-style | C | built-in attack parser, a score per address | 2.5.1 (2025) |
 | **reaction** | ban manager | AGPL-3.0 | – | streams, regex and actions; a smaller, newer fail2ban alternative | 2.x |
@@ -500,7 +500,7 @@ Know these before you adopt it:
 - **No CVE matching, hardening benchmark or compliance reports** (the hardening audit covers sshd and the kernel's sysctls only).
 - **Six alert channels:** XMPP, Telegram, e-mail, Signal, Matrix, and ntfy, Gotify or a webhook.
 - **A young package repository:** the signed apt and dnf repository on GitHub Pages is built by CI after each release (it needs a signing key in the repository's secrets); apt and dnf have installed from it, on one server each, and dnf has upgraded from it once. Without it: `.deb` and `.rpm` files from the releases, installed one by one, or a release zip with `install.sh`.
-- **Young:** version 0.8.0, running on the authors' own servers only, written by one maintainer
+- **Young:** version 0.8.3, running on the authors' own servers only, written by one maintainer
   in collaboration with an AI model (see the [README](README.md#authorship)). It has had internal
   security reviews, but no independent audit.
 - **Covered by tests, not yet run on a host:** the plain iptables backend, `sudo` and
@@ -528,11 +528,12 @@ server below, which stayed on). Seen there, with the details in the README's
   and TCP connections to banned addresses get their replies; IPv4 and IPv6 bans, and subnet
   bans growing from a /24 to a /22; the table rebuilt within 30 s after it was deleted; kernel
   rate limits; SSH canary bans; blocklist feeds and the geo database; operator controls.
-- **Honeypots:** a dedicated honeypot node (Debian 13) with hits within minutes of opening
-  its ports; prompts bringing out what clients try (Telnet bots typing their logins in 55 of
-  71 connections in a day, SSH banners, a MySQL client logging in as `root`, a VNC client's
-  version line); the decoy web site on that node's nginx banning scanners on their first
-  request.
+- **Honeypots:** a dedicated honeypot node (Debian 13, 92 ports) with hits within minutes of
+  opening its ports; prompts bringing out what clients try (in a week, Telnet bots typing their
+  logins in 380 of 504 connections, SSH banners in 464 of 694, FTP logins, IMAP clients taking
+  the answer to `CAPABILITY`, VNC clients' version lines, a MySQL client logging in as `root`,
+  an RPC probe's method); the decoy web site on that node's nginx banning scanners on their
+  first request.
 - **Cluster:** facts in both directions, with repeat offences escalating across nodes; node
   identities (every node signs its facts and pins the others' keys); forward secrecy between
   the real nodes (every peer answers the key exchange); a node reported when it stopped
@@ -715,7 +716,7 @@ vpsfort works well next to:
 
 ## 20. Method and sources
 
-The vpsfort facts and numbers come from its READMEs and code at the vpsfort 0.8.0 and vpsfort-web 0.7.0 release commit (2026-11-11); the
+The vpsfort facts and numbers come from its READMEs and code at the commit (2026-11-26); the
 measurements are the ones those READMEs report, the Fedora run included. The other tools were assessed from their
 documentation, release pages and advisories as of 2026-10-25. "✓" and "◐" mean what a tool
 offers out of the box or as a documented option, not everything a custom script could add. The

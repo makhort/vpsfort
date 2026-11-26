@@ -1,6 +1,6 @@
 [package]
 name = "vpsfort-sim"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "A simulated vpsfort cluster and its web console, from decision logs or a console export"
 license = "MIT"

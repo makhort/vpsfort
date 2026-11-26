@@ -522,13 +522,64 @@ fn ascii(bytes: &[u8], max: usize) -> String {
     text
 }
 
-/// What an HTTP request is shown by.
+/// A Minecraft handshake (what a server list ping opens with): its length and packet 0, the
+/// client's protocol version, the server's name and port, and the next state (1: status, 2:
+/// login), each length a varint and the whole as long as the first says.
+fn minecraft_ping(s: &[u8]) -> bool {
+    let varint = |mut i: usize| -> Option<(u64, usize)> {
+        let mut v = 0u64;
+        for k in 0..5 {
+            let b = *s.get(i)?;
+            i += 1;
+            v |= u64::from(b & 0x7f) << (7 * k);
+            if b & 0x80 == 0 {
+                return Some((v, i));
+            }
+        }
+        None
+    };
+    let Some((len, i)) = varint(0) else { return false };
+    if s.get(i) != Some(&0) {
+        return false;
+    }
+    let Some((_, j)) = varint(i + 1) else { return false };
+    let Some((name, k)) = varint(j) else { return false };
+    let Some(state) = usize::try_from(name).ok().and_then(|n| k.checked_add(n)?.checked_add(2)) else { return false };
+    usize::try_from(len).is_ok_and(|len| (1..=255).contains(&name) && state + 1 == i + len && matches!(s.get(state), Some(1 | 2)))
+}
+
+/// What an HTTP (or RTSP) request is shown by.
 struct HttpRequest<'a> {
+    /// "HTTP" or "RTSP", by the version on its request line.
+    proto: &'static str,
     request: &'a [u8],
     host: Option<&'a [u8]>,
     agent: Option<&'a [u8]>,
     /// The method its JSON-RPC body calls, if it has one ([`rpc_method`]).
     rpc: Option<&'a [u8]>,
+    /// Whether the blank line that ends the headers came: only then is a missing user agent missing.
+    ended: bool,
+}
+
+impl HttpRequest<'_> {
+    /// `HTTP request "GET / HTTP/1.1" for host "..." with user agent "..." (N bytes)`. `whole`:
+    /// the capture holds all the client sent; after a greeting only its first lines are read,
+    /// so a user agent not among them may still have been on its way.
+    fn text(&self, bytes: usize, whole: bool) -> String {
+        let mut text = format!("{} request \"{}\"", self.proto, ascii(self.request, SHOWN_FIELD));
+        if let Some(m) = self.rpc {
+            text += &format!(" calling \"{}\"", ascii(m, SHOWN_FIELD));
+        }
+        if let Some(h) = self.host {
+            text += &format!(" for host \"{}\"", ascii(h, SHOWN_FIELD));
+        }
+        match self.agent {
+            Some(a) => text += &format!(" with user agent \"{}\"", ascii(a, SHOWN_FIELD)),
+            None if whole || self.ended => text += " without a user agent",
+            None => {}
+        }
+        format!("{text} ({bytes} bytes)")
+    }
 }
 
 /// The method a JSON-RPC body calls (`{"jsonrpc":"2.0","method":"eth_accounts"}`): what a
@@ -544,20 +595,23 @@ fn rpc_method(body: &[u8]) -> Option<&[u8]> {
 }
 
 /// The request line, `Host` and `User-Agent` of what looks like an HTTP request: a method in
-/// capitals, a target and `HTTP/` on the first line.
+/// capitals, a target and `HTTP/` on the first line; or an RTSP one (`RTSP/`), a camera's
+/// protocol, whose requests read the same.
 fn http_request(sent: &[u8]) -> Option<HttpRequest<'_>> {
     let mut lines = sent.split(|&b| b == b'\n').map(|l| l.strip_suffix(b"\r").unwrap_or(l));
     let request = lines.next()?;
     let mut words = request.split(|&b| b == b' ');
     let (method, target, version) = (words.next()?, words.next()?, words.next()?);
-    if method.is_empty()
-        || method.len() > 12
-        || !method.iter().all(u8::is_ascii_uppercase)
-        || target.is_empty()
-        || !version.starts_with(b"HTTP/")
-    {
+    if method.is_empty() || method.len() > 12 || !method.iter().all(u8::is_ascii_uppercase) || target.is_empty() {
         return None;
     }
+    let proto = if version.starts_with(b"HTTP/") {
+        "HTTP"
+    } else if version.starts_with(b"RTSP/") {
+        "RTSP"
+    } else {
+        return None;
+    };
     let (mut host, mut agent) = (None, None);
     for l in lines.take_while(|l| !l.is_empty()) {
         let Some(colon) = l.iter().position(|&b| b == b':') else { continue };
@@ -573,7 +627,7 @@ fn http_request(sent: &[u8]) -> Option<HttpRequest<'_>> {
         [b'\n', b'\n', body @ ..] | [b'\n', b'\r', b'\n', body @ ..] => Some(body),
         _ => None,
     });
-    Some(HttpRequest { request, host, agent, rpc: body.and_then(rpc_method) })
+    Some(HttpRequest { proto, request, host, agent, rpc: body.and_then(rpc_method), ended: body.is_some() })
 }
 
 /// The captured bytes as one line of plain ASCII (see [`ascii`]), cut to [`SHOWN`]
@@ -588,6 +642,10 @@ pub fn describe(sent: &[u8], prompts: Option<Prompts>) -> String {
             if let Some(user) = mysql_login_user(sent).filter(|_| p == Prompts::Mysql) {
                 let (user, after) = (ascii(user, SHOWN_FIELD), ascii(&sent[MYSQL_NAME_AT..], SHOWN));
                 return format!("answered the mysql greeting with a login as \"{user}\" ({} bytes): \"{after}\"", sent.len());
+            }
+            // a web request sent to whatever answers (a MySQL greeting, an SMTP one) reads as one
+            if let Some(r) = http_request(sent) {
+                return format!("answered the {} {} with {}", p.name(), p.what(), r.text(sent.len(), false));
             }
             // a reply that is another protocol's opening (TLS tried after the greeting) is
             // named too; not what the prompt asks for (a client's banner after SSH's or
@@ -606,19 +664,8 @@ pub fn describe(sent: &[u8], prompts: Option<Prompts>) -> String {
         (None, true) => return "sent nothing".to_string(),
         (None, false) => {}
     }
-    if let Some(HttpRequest { request, host, agent, rpc }) = http_request(sent) {
-        let mut text = format!("sent HTTP request \"{}\"", ascii(request, SHOWN_FIELD));
-        if let Some(m) = rpc {
-            text += &format!(" calling \"{}\"", ascii(m, SHOWN_FIELD));
-        }
-        if let Some(h) = host {
-            text += &format!(" for host \"{}\"", ascii(h, SHOWN_FIELD));
-        }
-        match agent {
-            Some(a) => text += &format!(" with user agent \"{}\"", ascii(a, SHOWN_FIELD)),
-            None => text += " without a user agent",
-        }
-        return format!("{text} ({} bytes)", sent.len());
+    if let Some(r) = http_request(sent) {
+        return format!("sent {}", r.text(sent.len(), true));
     }
     match protocol(sent) {
         Some(what) => format!("sent {what} ({} bytes): \"{}\"", sent.len(), ascii(sent, SHOWN)),
@@ -717,6 +764,8 @@ fn protocol(s: &[u8]) -> Option<&'static str> {
     } else if at(0) == Some(0x81) && at(1) == Some(0) && at(4) == Some(0x20) && whole(be16(2).map(|l| l + 4)) {
         // port 139's opening before SMB: the header, then the called name's length (always 32)
         "a NetBIOS session request"
+    } else if minecraft_ping(s) {
+        "a Minecraft server ping"
     } else if at(0) == Some(3) && at(1) == Some(0) && whole(be16(2)) && at(5) == Some(0xe0) {
         // by its cookie, or without one by the RDP negotiation request right after the header
         if has(b"mstshash") || s.get(11..15) == Some(b"\x01\x00\x08\x00") {
@@ -1237,6 +1286,28 @@ mod tests {
         let netbios = b"\x81\x00\x00D CKFDENECFDEFFCFGEFFCCACACACACACA\x00 CKFDENECEDEMEJEFEOFECACACACACAAA\x00";
         assert_eq!(netbios.len(), 72);
         assert_eq!(name(netbios), "sent a NetBIOS session request");
+        // seen on a honeypot node's 25565: a server list ping, by a name or by an address
+        assert_eq!(name(b"\n\x00\xf8\x05\x03aaac\xdd\x01\x01\x00"), "sent a Minecraft server ping");
+        assert_eq!(name(b"\x14\x00\xff\x05\rexample.org12c\xdd\x01\x01\x00"), "sent a Minecraft server ping");
+        assert!(!name(b"\n\x00\xf8\x05\x03aaac\xdd\x07\x01\x00").contains("Minecraft"), "no such next state");
+        assert!(!name(b"\n\x00\xf8\x05\x03aa").contains("Minecraft"), "cut short");
+        // a camera's protocol reads like HTTP
+        let rtsp = b"DESCRIBE rtsp://example.org:554/x RTSP/1.0\r\nCSeq: 2\r\n\r\n";
+        assert_eq!(
+            describe(rtsp, None),
+            format!("sent RTSP request \"DESCRIBE rtsp://example.org:554/x RTSP/1.0\" without a user agent ({} bytes)", rtsp.len())
+        );
+        // a web request to whatever answers: named after a greeting too, and a cut one isn't
+        // said to have no user agent
+        let get = b"GET / HTTP/1.1\r\nHost: example.org\r\n";
+        assert_eq!(
+            describe(get, Some(Prompts::Smtp)),
+            format!("answered the smtp prompts with HTTP request \"GET / HTTP/1.1\" for host \"example.org\" ({} bytes)", get.len())
+        );
+        let full = b"GET / HTTP/1.1\r\nHost: example.org\r\nUser-Agent: Mozilla/5.0\r\n\r\n";
+        assert!(describe(full, Some(Prompts::Mysql)).starts_with(
+            "answered the mysql greeting with HTTP request \"GET / HTTP/1.1\" for host \"example.org\" with user agent \"Mozilla/5.0\""
+        ));
         assert_eq!(name(&netbios[..40]), "sent a NetBIOS session request", "cut by the capture");
         assert!(!name(b"\x81\x00\x00\x01 xy").contains("NetBIOS"), "a length shorter than what came");
         assert_eq!(describe(b"information\n", None), "sent 12 bytes: \"information\\n\"", "lower case: only the whole command");

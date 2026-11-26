@@ -3,6 +3,12 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.3.4 - 2026-11-26
+
+Dependency updates.
+
+- The other dependencies are updated within their semver ranges (`cargo update`), pgp 0.21.1, clap 4.6.10, zeroize 1.9.2 among them. No advisory concerned 0.3.3's lockfile beyond the two it already ignores.
+
 ## 0.3.3 - 2026-11-11
 
 Installer hardening, after vpsfort's audit of 2026-11-10.

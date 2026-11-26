@@ -3,6 +3,19 @@
 Each release's section is what its GitHub Release shows; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.5.5 - 2026-11-26
+
+Dependency updates, url 2.5.9 for RUSTSEC-2026-0592.
+
+- url 2.5.9, for RUSTSEC-2026-0592: `Url::origin()` on a URL nested in many `blob:` prefixes overflowed the stack and aborted the process. The bot's own code doesn't call it.
+- The other dependencies are updated within their semver ranges (`cargo update`), pgp 0.21.1, email_address 0.2.10, rustls-webpki 0.103.17 among them.
+
+## 0.5.4 - 2026-11-21
+
+lettre 0.11.24, for six advisories in the SMTP client.
+
+- lettre, the bot's SMTP client, is 0.11.24: 0.11.23 let a man in the middle forge the server's replies through the STARTTLS response (RUSTSEC-2026-0560), sent a bare CR or LF in a message without dot-stuffing it, so a message's text could carry SMTP commands (RUSTSEC-2026-0561), sent mail for an address with a quoted local part to another address (RUSTSEC-2026-0563), and could be made to panic or run out of memory by a server's reply or a display name (RUSTSEC-2026-0562, -0564, -0565).
+
 ## 0.5.3 - 2026-11-11
 
 Installer hardening, after vpsfort's audit of 2026-11-10.

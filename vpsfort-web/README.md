@@ -528,9 +528,9 @@ architecture (`uname -m`) and check it:
 
 ```bash
 arch=x86_64-linux-musl     # the server's: aarch64-linux-musl (arm64), armv7-linux-musleabihf (32-bit ARM)
-gh release download vpsfort-web-v0.7.0 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
+gh release download vpsfort-web-v0.7.2 --repo makhort/vpsfort --pattern "*-$arch.zip*"   # the zip, its .sha256 and .sigstore.json
 sha256sum -c vpsfort-web-*-$arch.zip.sha256          # the download is intact (macOS: shasum -a 256 -c)
-gh attestation verify vpsfort-web-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-web-v0.7.0
+gh attestation verify vpsfort-web-*-$arch.zip --repo makhort/vpsfort --source-ref refs/tags/vpsfort-web-v0.7.2
 ```
 
 Then on the server:
@@ -546,7 +546,7 @@ sudo ./install.sh rollback   # back to the previous version
 The same release has a package per architecture, for the distribution's package manager instead of `install.sh`: `vpsfort-web_<version>-1_<arch>.deb` (`amd64`, `arm64`, `armhf`; Debian, Ubuntu and their derivatives) `vpsfort-web-<version>-1.<arch>.rpm` (`x86_64`, `aarch64`, `armv7hl`; Fedora, RHEL and its rebuilds) and `vpsfort-web-<version>-r0.<arch>.apk` (`x86_64`, `aarch64`, `armv7`; Alpine, with OpenRC: below), each with its `.sha256` and `.sigstore.json`, downloaded and verified as the bundle above (`--pattern "*.deb*"`, `"*.rpm*"` or `"*.apk*"`). CI keeps them for every commit as workflow artifacts, and `scripts/package.sh` builds them locally (`cargo install cargo-deb cargo-generate-rpm --locked` once, and python3 for the `.apk`, which `scripts/apk.py` at the repository's root writes; none needs dpkg, rpm or apk-tools, so it runs on macOS too; `--target aarch64-unknown-linux-musl` or `armv7-unknown-linux-musleabihf` for the ARM ones). Or from the signed apt and dnf repository on GitHub Pages, once it is set up (the repository README, "Deployment"), where `apt upgrade` and `dnf upgrade` then bring new versions.
 
 ```bash
-sudo apt install ./vpsfort-web_0.7.0-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-web-0.7.0-1.x86_64.rpm
+sudo apt install ./vpsfort-web_0.7.2-1_amd64.deb     # Fedora, RHEL:  sudo dnf install ./vpsfort-web-0.7.2-1.x86_64.rpm
 sudoedit /opt/vpsfort-web/config.env                 # the first install put the template there; then the keys, password, codes ("Setup")
 sudo dpkg-reconfigure vpsfort-web                    # rpm: sudo dnf reinstall ./vpsfort-web-*.rpm  (step 7: owners, modes, the certificate)
 /opt/vpsfort-web/vpsfort-web check && sudo systemctl enable --now vpsfort-web
@@ -591,7 +591,9 @@ rendered from its markup.
 through their agents): the unit under systemd's sandboxing, vpsfort's real console socket,
 `install.sh`, a browser reaching the console without a tunnel with its self-signed certificate;
 every node's alerts and bans on one page; a node's stale state during its agent's restart, the
-"since the last snapshot" line as its data came back, the filters above the tables.
+"since the last snapshot" line as its data came back, the filters above the tables; the
+Honeypots tab reading the nodes' actions logs for 24 hours and for 7 days (a week's 3,645 hits
+from two nodes, exported as CSV and JSON).
 
 **Reviewed** (2026-10-29): an audit of the whole crate (the proof of work first): six fixes,
 each with a test, listed in the commit `vpsfort-web: audit fixes`; the rest of what was read
